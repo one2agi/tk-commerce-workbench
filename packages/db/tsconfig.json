@@ -2,7 +2,11 @@
   "extends": "../../tsconfig.base.json",
   "compilerOptions": {
     "noEmit": true,
-    "incremental": true
+    "incremental": true,
+    // Repositories do a lot of single-row query decoding; turning off
+    // noUncheckedIndexedAccess keeps the SQL boundary ergonomic without weakening
+    // other strict checks.
+    "noUncheckedIndexedAccess": false
   },
   "include": ["src/**/*"],
   "exclude": ["node_modules"]
