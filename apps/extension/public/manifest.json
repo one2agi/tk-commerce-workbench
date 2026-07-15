@@ -1,0 +1,30 @@
+{
+  "manifest_version": 3,
+  "name": "TK Commerce Workbench Collector",
+  "version": "0.1.0",
+  "description": "Selects 1688 products and submits them to the local ingest API.",
+  "permissions": ["storage", "activeTab"],
+  "host_permissions": [
+    "https://detail.1688.com/*",
+    "http://127.0.0.1:*/*"
+  ],
+  "background": {
+    "service_worker": "background.js",
+    "type": "module"
+  },
+  "content_scripts": [
+    {
+      "matches": ["https://detail.1688.com/*"],
+      "js": ["content.js"],
+      "run_at": "document_idle"
+    }
+  ],
+  "options_ui": {
+    "page": "options.html",
+    "open_in_tab": true
+  },
+  "action": {
+    "default_popup": "popup.html",
+    "default_title": "TK Commerce Workbench Collector"
+  }
+}
