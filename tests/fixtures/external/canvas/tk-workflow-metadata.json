@@ -1,4 +1,9 @@
 {
+  "_fixture": {
+    "source": "2026-07-15 observed workflow response fields documented in docs/canvas-n8n-api.md",
+    "synthetic_fields": ["workflows[].workflow_version"],
+    "note": "workflow_version is synthetic and exists only to exercise explicit-version handling"
+  },
   "workflows": [
     {
       "workflow_id": "workflow_1",

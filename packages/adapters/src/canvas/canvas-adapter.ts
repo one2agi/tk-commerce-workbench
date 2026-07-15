@@ -6,6 +6,7 @@ import {
   type CanvasSubmitResult
 } from "@tk/contracts";
 import { createHash } from "node:crypto";
+import { createSafeImageDownloader } from "../security/safe-image-download.js";
 
 export interface CanvasAdapterConfig {
   readonly baseUrl: string;
@@ -15,6 +16,7 @@ export interface CanvasAdapterConfig {
   readonly timeoutMs?: number;
   readonly fetchImpl?: typeof fetch;
   readonly now?: () => string;
+  readonly downloadImage?: (url: string) => Promise<{ bytes: Uint8Array; finalUrl: string }>;
 }
 
 type WorkflowMetadata = {
@@ -35,7 +37,7 @@ export function createCanvasAdapter(config: CanvasAdapterConfig): CanvasPort {
   const baseUrl = config.baseUrl.replace(/\/+$/, "");
   const fetchImpl = config.fetchImpl ?? globalThis.fetch;
   const timeoutMs = config.timeoutMs ?? 30_000;
-  const capacityByWorkflow = new Map<string, CanvasReadCapacityResult>();
+  const downloadImage = config.downloadImage ?? createSafeImageDownloader({ timeoutMs });
 
   async function request(path: string, init?: RequestInit): Promise<unknown> {
     const controller = new AbortController();
@@ -56,8 +58,7 @@ export function createCanvasAdapter(config: CanvasAdapterConfig): CanvasPort {
     }
   }
 
-  return {
-    async readWorkflowCapacity(workflowId): Promise<CanvasReadCapacityResult> {
+  async function readWorkflowCapacity(workflowId: string): Promise<CanvasReadCapacityResult> {
       const raw = await request(`/api/automation/canvases/${encodeURIComponent(config.canvasId)}/workflows`) as { workflows?: WorkflowMetadata[] } | WorkflowMetadata[];
       const workflows = Array.isArray(raw) ? raw : raw.workflows ?? [];
       const workflow = workflows.find((item) => item.workflow_id === workflowId || item.workflow_key === workflowId || item.name === workflowId);
@@ -68,15 +69,16 @@ export function createCanvasAdapter(config: CanvasAdapterConfig): CanvasPort {
         throw externalFailure("needs_input", "canvas.workflow_topology_changed", "Canvas workflow topology requires review");
       }
       const result = Object.freeze({ workflowId: workflow.workflow_id ?? workflowId, workflowVersion: workflow.workflow_version ?? deriveTopologyVersion(workflow), inputCapacity, expectedOutputCount });
-      capacityByWorkflow.set(workflowId, result);
-      capacityByWorkflow.set(result.workflowId, result);
       return result;
-    },
+  }
+
+  return {
+    readWorkflowCapacity,
 
     async submit(input): Promise<CanvasSubmitResult> {
-      const observed = capacityByWorkflow.get(input.workflowId);
-      if (!observed || observed.workflowVersion !== input.workflowVersion) {
-        throw externalFailure("needs_input", "canvas.capacity_not_observed", "Read the current Canvas workflow capacity before submitting");
+      const observed = await readWorkflowCapacity(input.workflowId);
+      if (observed.workflowVersion !== input.workflowVersion) {
+        throw externalFailure("needs_input", "canvas.workflow_version_changed", "Canvas workflow changed after it was reviewed");
       }
       const imageUrls = [...input.imageUrls, ...input.referenceImageUrls];
       if (imageUrls.length < 1 || imageUrls.length > observed.inputCapacity) {
@@ -89,6 +91,7 @@ export function createCanvasAdapter(config: CanvasAdapterConfig): CanvasPort {
         method: "POST",
         headers: { "content-type": "application/json", "idempotency-key": String(input.idempotencyKey) },
         body: JSON.stringify({
+          workflow: { prompt_context: { source_locale: input.promptContext.sourceLocale, target_locale: input.promptContext.targetLocale, style: input.promptContext.style } },
           canvas_id: config.canvasId,
           canvas_workflow_id: observed.workflowId,
           canvas_workflow_name: config.workflowName ?? "",
@@ -115,7 +118,7 @@ export function createCanvasAdapter(config: CanvasAdapterConfig): CanvasPort {
         throw externalFailure("fatal", "canvas.remote_failed", "Canvas generation failed");
       }
       const candidates = raw.outputs ?? (Array.isArray(raw.result) ? raw.result : raw.result?.outputs) ?? [];
-      const hydrated = await Promise.all(candidates.map((candidate) => normalizeOutput(candidate, baseUrl, fetchImpl, timeoutMs)));
+      const hydrated = await Promise.all(candidates.map((candidate) => normalizeOutput(candidate, baseUrl, downloadImage)));
       const outputs = hydrated.filter((item): item is NonNullable<typeof item> => item !== null);
       if (outputs.length === 0) throw externalFailure("fatal", "canvas.no_valid_outputs", "Canvas returned no valid generated images");
       return Object.freeze({ outputs });
@@ -139,30 +142,19 @@ function deriveTopologyVersion(workflow: WorkflowMetadata): number {
   return (hash >>> 0) || 1;
 }
 
-async function normalizeOutput(candidate: OutputCandidate, baseUrl: string, fetchImpl: typeof fetch, timeoutMs: number) {
+async function normalizeOutput(candidate: OutputCandidate, baseUrl: string, downloadImage: (url: string) => Promise<{ bytes: Uint8Array; finalUrl: string }>) {
   const object = typeof candidate === "string" ? { url: candidate } : candidate;
   if (!object.url || !/^\/{1}(?!\/)|^https?:\/\//i.test(object.url)) return null;
   const url = new URL(object.url, `${baseUrl}/`).toString();
-  const width = object.width ?? 0;
-  const height = object.height ?? 0;
-  const sha256 = object.sha256 ?? "";
-  if (width > 0 && height > 0 && /^[a-f0-9]{64}$/i.test(sha256)) {
-    return Object.freeze({ url, width, height, sha256: sha256.toLowerCase() });
-  }
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), timeoutMs);
   try {
-    // Output URLs can be on a different host. Never forward the Canvas API key here.
-    const response = await fetchImpl(url, { signal: controller.signal });
-    if (!response.ok) return null;
-    const bytes = new Uint8Array(await response.arrayBuffer());
+    // Never trust remote dimensions or hashes. The secure downloader pins validated DNS and
+    // never receives the Canvas API key.
+    const { bytes, finalUrl } = await downloadImage(url);
     const dimensions = readImageDimensions(bytes);
     if (!dimensions) return null;
-    return Object.freeze({ url, ...dimensions, sha256: createHash("sha256").update(bytes).digest("hex") });
+    return Object.freeze({ url: finalUrl, ...dimensions, sha256: createHash("sha256").update(bytes).digest("hex") });
   } catch {
     return null;
-  } finally {
-    clearTimeout(timer);
   }
 }
 

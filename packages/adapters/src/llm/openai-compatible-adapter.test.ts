@@ -14,14 +14,32 @@ const input = {
   idempotencyKey: idempotencyKey("llm:product_1:revision_1")
 };
 
+function groundedOutput(overrides: Record<string, unknown> = {}) {
+  return {
+    title: "กางเกงขาสั้นผู้ชาย",
+    description: "น้ำหนักเบาและสวมใส่สบาย",
+    translatedAttributes: [{ name: "สี", value: "ดำ" }],
+    styleApplied: "neutral",
+    fallbackUsed: false,
+    evidenceCitations: [
+      { outputPath: "title", sourceQuote: "男士宽松短裤" },
+      { outputPath: "description", sourceQuote: "轻薄舒适" },
+      { outputPath: "translatedAttributes.0.name", sourceQuote: "颜色" },
+      { outputPath: "translatedAttributes.0.value", sourceQuote: "黑色" }
+    ],
+    ...overrides
+  };
+}
+
 describe("OpenAI-compatible listing adapter", () => {
   it("returns grounded structured listing output", async () => {
-    const fetchImpl = vi.fn(async () => llmResponse({ title: "กางเกงขาสั้นผู้ชาย", description: "น้ำหนักเบาและสวมใส่สบาย", translatedAttributes: [{ name: "สี", value: "ดำ" }], styleApplied: "neutral", fallbackUsed: false }));
+    const fetchImpl = vi.fn(async () => llmResponse(groundedOutput()));
     const adapter = createOpenAiCompatibleAdapter({ baseUrl: "https://llm.test/v1", apiKey: "secret", model: "model-1", fetchImpl });
     await expect(adapter.generateListing(input)).resolves.toMatchObject({ title: "กางเกงขาสั้นผู้ชาย", fallbackUsed: false });
     const init = (fetchImpl.mock.calls as unknown as Array<[string, RequestInit]>)[0]?.[1] as RequestInit;
     expect((init.headers as Record<string, string>).authorization).toBe("Bearer secret");
     expect(JSON.parse(String(init.body)).response_format.type).toBe("json_schema");
+    expect(JSON.parse(String(init.body)).response_format.json_schema.schema.required).toContain("evidenceCitations");
   });
 
   it.each([
@@ -30,20 +48,31 @@ describe("OpenAI-compatible listing adapter", () => {
     ["efficacy", "antibacterial and waterproof shorts"],
     ["parameter", "30 cm length shorts"]
   ])("rejects an invented %s claim absent from evidence", async (_kind, title) => {
-    const fetchImpl = vi.fn(async () => llmResponse({ title, description: "comfortable", translatedAttributes: [], styleApplied: "neutral", fallbackUsed: false }));
+    const fetchImpl = vi.fn(async () => llmResponse({ ...groundedOutput({ title, description: "comfortable", translatedAttributes: [] }), evidenceCitations: [{ outputPath: "title", sourceQuote: "男士宽松短裤" }, { outputPath: "description", sourceQuote: "轻薄舒适" }] }));
     const adapter = createOpenAiCompatibleAdapter({ baseUrl: "https://llm.test/v1", apiKey: "TEST_LLM_SECRET_DO_NOT_LOG", model: "model-1", fetchImpl });
     await expect(adapter.generateListing(input)).rejects.toMatchObject({ kind: "fatal", code: "llm.ungrounded_claim" });
   });
 
   it("rejects an invented Thai material claim absent from Chinese evidence", async () => {
-    const fetchImpl = vi.fn(async () => llmResponse({ title: "กางเกงขาสั้นผ้าฝ้าย", description: "ใส่สบาย", translatedAttributes: [], styleApplied: "neutral", fallbackUsed: false }));
+    const fetchImpl = vi.fn(async () => llmResponse({ ...groundedOutput({ title: "กางเกงขาสั้นผ้าฝ้าย", description: "ใส่สบาย", translatedAttributes: [] }), evidenceCitations: [{ outputPath: "title", sourceQuote: "男士宽松短裤" }, { outputPath: "description", sourceQuote: "轻薄舒适" }] }));
     const adapter = createOpenAiCompatibleAdapter({ baseUrl: "https://llm.test/v1", apiKey: "secret", model: "model-1", fetchImpl });
     await expect(adapter.generateListing(input)).rejects.toMatchObject({ code: "llm.ungrounded_claim" });
   });
 
   it("allows a Thai translation of a material explicitly present in Chinese evidence", async () => {
-    const fetchImpl = vi.fn(async () => llmResponse({ title: "กางเกงขาสั้นผ้าฝ้าย", description: "ใส่สบาย", translatedAttributes: [{ name: "วัสดุ", value: "ผ้าฝ้าย" }], styleApplied: "neutral", fallbackUsed: false }));
+    const fetchImpl = vi.fn(async () => llmResponse({ ...groundedOutput({ title: "กางเกงขาสั้นผ้าฝ้าย", description: "ใส่สบาย", translatedAttributes: [{ name: "วัสดุ", value: "ผ้าฝ้าย" }] }), evidenceCitations: [{ outputPath: "title", sourceQuote: "男士宽松短裤" }, { outputPath: "description", sourceQuote: "轻薄舒适" }, { outputPath: "translatedAttributes.0.name", sourceQuote: "材质" }, { outputPath: "translatedAttributes.0.value", sourceQuote: "纯棉" }] }));
     const adapter = createOpenAiCompatibleAdapter({ baseUrl: "https://llm.test/v1", apiKey: "secret", model: "model-1", fetchImpl });
     await expect(adapter.generateListing({ ...input, evidence: { ...input.evidence, sourceAttributes: [{ name: "材质", value: "纯棉" }] } })).resolves.toMatchObject({ title: "กางเกงขาสั้นผ้าฝ้าย" });
+  });
+
+  it("requires an exact source citation for every generated field", async () => {
+    const missing = createOpenAiCompatibleAdapter({ baseUrl: "https://llm.test/v1", apiKey: "secret", model: "model-1", fetchImpl: vi.fn(async () => llmResponse({ ...groundedOutput(), evidenceCitations: [{ outputPath: "title", sourceQuote: "not in evidence" }] })) });
+    await expect(missing.generateListing(input)).rejects.toMatchObject({ code: "llm.ungrounded_claim" });
+  });
+
+  it("rejects arbitrary uncited numeric facts without relying on a claim blacklist", async () => {
+    const output = groundedOutput({ title: "กางเกงขาสั้น 7 ชิ้น" });
+    const adapter = createOpenAiCompatibleAdapter({ baseUrl: "https://llm.test/v1", apiKey: "secret", model: "model-1", fetchImpl: vi.fn(async () => llmResponse(output)) });
+    await expect(adapter.generateListing(input)).rejects.toMatchObject({ code: "llm.ungrounded_claim" });
   });
 });

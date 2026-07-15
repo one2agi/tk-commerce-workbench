@@ -49,7 +49,7 @@ export function createOpenAiCompatibleAdapter(config: OpenAiCompatibleAdapterCon
             model: config.model,
             temperature: 0,
             messages: [
-              { role: "system", content: "Translate and rewrite only from supplied evidence. Never add material, certification, efficacy, dimensions, quantities, or technical parameters. Return JSON only." },
+              { role: "system", content: "Translate and rewrite only from supplied evidence. Every non-empty output field must cite an exact source quote in evidenceCitations. Never add facts, dimensions, quantities, or technical parameters. Return JSON only." },
               { role: "user", content: JSON.stringify({ sourceLocale: input.sourceLocale, targetLocale: input.targetLocale, style: input.style, evidence: input.evidence }) }
             ],
             response_format: { type: "json_schema", json_schema: { name: "listing_candidate", strict: true, schema: listingSchema } }
@@ -75,9 +75,9 @@ export function createOpenAiCompatibleAdapter(config: OpenAiCompatibleAdapterCon
       } catch {
         throw externalFailure("fatal", "llm.invalid_response", "Listing model returned invalid structured output");
       }
-      const output = parseListing(candidate, input.style);
-      assertGrounded(output, input.evidence);
-      return Object.freeze(output);
+      const parsed = parseListing(candidate, input.style);
+      assertGrounded(parsed.output, parsed.evidenceCitations, input.evidence);
+      return Object.freeze(parsed.output);
     }
   };
 }
@@ -85,27 +85,43 @@ export function createOpenAiCompatibleAdapter(config: OpenAiCompatibleAdapterCon
 const listingSchema = {
   type: "object",
   additionalProperties: false,
-  required: ["title", "description", "translatedAttributes", "styleApplied", "fallbackUsed"],
+  required: ["title", "description", "translatedAttributes", "styleApplied", "fallbackUsed", "evidenceCitations"],
   properties: {
     title: { type: "string" }, description: { type: "string" },
     translatedAttributes: { type: "array", items: { type: "object", additionalProperties: false, required: ["name", "value"], properties: { name: { type: "string" }, value: { type: "string" } } } },
-    styleApplied: { type: "string" }, fallbackUsed: { const: false }
+    styleApplied: { type: "string" }, fallbackUsed: { const: false },
+    evidenceCitations: { type: "array", items: { type: "object", additionalProperties: false, required: ["outputPath", "sourceQuote"], properties: { outputPath: { type: "string" }, sourceQuote: { type: "string" } } } }
   }
 } as const;
 
-function parseListing(value: unknown, requestedStyle: string): LlmStructuredOutputV1 {
+type EvidenceCitation = { outputPath: string; sourceQuote: string };
+
+function parseListing(value: unknown, requestedStyle: string): { output: LlmStructuredOutputV1; evidenceCitations: EvidenceCitation[] } {
   if (!value || typeof value !== "object") throw externalFailure("fatal", "llm.invalid_response", "Listing model returned invalid structured output");
-  const item = value as Partial<LlmStructuredOutputV1>;
+  const item = value as Partial<LlmStructuredOutputV1> & { evidenceCitations?: EvidenceCitation[] };
   const attrs = item.translatedAttributes;
-  if (typeof item.title !== "string" || !item.title.trim() || typeof item.description !== "string" || !Array.isArray(attrs) || attrs.some((attr) => !attr || typeof attr.name !== "string" || typeof attr.value !== "string") || item.fallbackUsed !== false) {
+  if (typeof item.title !== "string" || !item.title.trim() || typeof item.description !== "string" || !Array.isArray(attrs) || attrs.some((attr) => !attr || typeof attr.name !== "string" || typeof attr.value !== "string") || item.fallbackUsed !== false || !Array.isArray(item.evidenceCitations) || item.evidenceCitations.some((citation) => !citation || typeof citation.outputPath !== "string" || typeof citation.sourceQuote !== "string")) {
     throw externalFailure("fatal", "llm.invalid_response", "Listing model returned invalid structured output");
   }
-  return { title: item.title.trim(), description: item.description.trim(), translatedAttributes: attrs, styleApplied: typeof item.styleApplied === "string" ? item.styleApplied : requestedStyle, fallbackUsed: false };
+  return { output: { title: item.title.trim(), description: item.description.trim(), translatedAttributes: attrs, styleApplied: typeof item.styleApplied === "string" ? item.styleApplied : requestedStyle, fallbackUsed: false }, evidenceCitations: item.evidenceCitations };
 }
 
-function assertGrounded(output: LlmStructuredOutputV1, evidence: Parameters<LlmPort["generateListing"]>[0]["evidence"]): void {
+function assertGrounded(output: LlmStructuredOutputV1, citations: EvidenceCitation[], evidence: Parameters<LlmPort["generateListing"]>[0]["evidence"]): void {
   const source = `${evidence.sourceTitle} ${evidence.sourceDescription} ${evidence.sourceAttributes.map((attr) => `${attr.name} ${attr.value}`).join(" ")}`.toLowerCase();
+  const sourceSegments = new Set([evidence.sourceTitle, evidence.sourceDescription, ...evidence.sourceAttributes.flatMap((attr) => [attr.name, attr.value])].map((segment) => segment.trim().toLowerCase()).filter(Boolean));
   const generated = `${output.title} ${output.description} ${output.translatedAttributes.map((attr) => `${attr.name} ${attr.value}`).join(" ")}`.toLowerCase();
+  const requiredPaths = ["title", ...(output.description ? ["description"] : []), ...output.translatedAttributes.flatMap((_attr, index) => [`translatedAttributes.${index}.name`, `translatedAttributes.${index}.value`])];
+  const citedPaths = new Set<string>();
+  for (const citation of citations) {
+    const quote = citation.sourceQuote.trim().toLowerCase();
+    if (!requiredPaths.includes(citation.outputPath) || !quote || !sourceSegments.has(quote)) {
+      throw externalFailure("fatal", "llm.ungrounded_claim", "Listing model introduced a claim absent from source evidence");
+    }
+    citedPaths.add(citation.outputPath);
+  }
+  if (requiredPaths.some((path) => !citedPaths.has(path))) {
+    throw externalFailure("fatal", "llm.ungrounded_claim", "Listing model introduced a claim absent from source evidence");
+  }
   for (const aliases of CLAIM_GROUPS) {
     if (aliases.some((term) => includesClaim(generated, term)) && !aliases.some((term) => includesClaim(source, term))) {
       throw externalFailure("fatal", "llm.ungrounded_claim", "Listing model introduced a claim absent from source evidence");
@@ -114,6 +130,10 @@ function assertGrounded(output: LlmStructuredOutputV1, evidence: Parameters<LlmP
   const sourceParameters = new Set(source.match(PARAMETER_PATTERN) ?? []);
   for (const parameter of generated.match(PARAMETER_PATTERN) ?? []) {
     if (!sourceParameters.has(parameter)) throw externalFailure("fatal", "llm.ungrounded_claim", "Listing model introduced a parameter absent from source evidence");
+  }
+  const sourceNumbers = new Set(source.match(/\p{N}+(?:[.,]\p{N}+)?/gu) ?? []);
+  for (const numericFact of generated.match(/\p{N}+(?:[.,]\p{N}+)?/gu) ?? []) {
+    if (!sourceNumbers.has(numericFact)) throw externalFailure("fatal", "llm.ungrounded_claim", "Listing model introduced a numeric fact absent from source evidence");
   }
 }
 

@@ -1,4 +1,6 @@
 import type { AppConfig } from "@tk/config";
+import { readFile } from "node:fs/promises";
+import { extname, resolve, sep } from "node:path";
 import type { AssetStagingPort, CanvasPort, ExchangeRatePort, LlmPort } from "@tk/contracts";
 import { createCanvasAdapter } from "./canvas/canvas-adapter.js";
 import { createExchangeRateAdapter } from "./exchange-rate/exchange-rate-adapter.js";
@@ -54,7 +56,18 @@ function constructLiveAdapters(config: AdapterFactoryConfig, _context: LiveComma
     canvas: createCanvasAdapter({ baseUrl: config.canvasBaseUrl, apiKey: config.canvasApiKey, canvasId: "0f91cb2d8f2846c091829af30ea2d18d", workflowName: "TK工作流" }),
     llm: createOpenAiCompatibleAdapter({ baseUrl: config.llmBaseUrl, apiKey: config.llmApiKey, model: config.llmModel }),
     exchangeRate: createExchangeRateAdapter({ baseUrl: config.exchangeRateBaseUrl }),
-    assetStaging: createAssetStagingAdapter({ publicBaseUrl: "http://127.0.0.1:3000/api/v1/assets" }),
+    assetStaging: createAssetStagingAdapter({
+      uploadUrl: `${config.canvasBaseUrl.replace(/\/+$/, "")}/api/automation/upload`,
+      apiKey: config.canvasApiKey,
+      resolveLocalAsset: async (localAssetId) => {
+        const root = resolve(config.assetRoot);
+        const filePath = resolve(root, localAssetId);
+        if (filePath !== root && !filePath.startsWith(`${root}${sep}`)) throw new Error("asset staging: asset id escapes asset root");
+        const extension = extname(filePath).toLowerCase();
+        if (extension !== ".png" && extension !== ".jpg" && extension !== ".jpeg") throw new Error("asset staging: unsupported local image type");
+        return { bytes: await readFile(filePath), fileName: localAssetId.split(/[\\/]/).at(-1) ?? "asset", contentType: extension === ".png" ? "image/png" : "image/jpeg" };
+      }
+    }),
     counters: () => Object.freeze({ canvas: 0, llm: 0, exchangeRate: 0, assetStaging: 0 })
   };
 }

@@ -34,11 +34,13 @@ export function createExchangeRateAdapter(config: ExchangeRateAdapterConfig): Ex
       const rate = typeof rateValue === "number" || typeof rateValue === "string" ? String(rateValue) : "";
       if (!isPositiveDecimal(rate)) throw externalFailure("fatal", "exchange_rate.invalid_response", "Exchange-rate provider returned invalid data");
       const observedAt = typeof raw.timestamp === "string" ? raw.timestamp : typeof raw.observedAt === "string" ? raw.observedAt : now();
-      latest = Object.freeze({ base, target, rate, source: "provider", observedAt, isStale: Date.parse(now()) - Date.parse(observedAt) > (config.staleAfterMs ?? 86_400_000) });
+      latest = withCurrentStaleness({ base, target, rate, source: "provider", observedAt, isStale: false }, now(), config.staleAfterMs ?? 86_400_000);
       return latest;
     },
     async latestSnapshot({ base, target }) {
-      return latest?.base === base && latest.target === target ? latest : null;
+      if (!latest || latest.base !== base || latest.target !== target) return null;
+      latest = withCurrentStaleness(latest, now(), config.staleAfterMs ?? 86_400_000);
+      return latest;
     },
     async recordManualOverride({ base, target, rate }) {
       if (!isPositiveDecimal(rate)) throw externalFailure("needs_input", "exchange_rate.invalid_manual_rate", "Manual exchange rate must be a positive decimal");
@@ -46,6 +48,13 @@ export function createExchangeRateAdapter(config: ExchangeRateAdapterConfig): Ex
       return latest;
     }
   };
+}
+
+function withCurrentStaleness(snapshot: ExchangeRateSnapshotWire, currentTime: string, staleAfterMs: number): ExchangeRateSnapshotWire {
+  const current = Date.parse(currentTime);
+  const observed = Date.parse(snapshot.observedAt);
+  const isStale = !Number.isFinite(current) || !Number.isFinite(observed) || current - observed > staleAfterMs;
+  return Object.freeze({ ...snapshot, isStale });
 }
 
 function isPositiveDecimal(value: string): boolean {
