@@ -1,3 +1,6 @@
+import { ProductWorkbench } from "../components/products/product-workbench";
+import { fixtures } from "../lib/fixtures";
+
 export default function HomePage() {
-  return <main>TK Commerce Workbench</main>;
+  return <ProductWorkbench initialItems={fixtures.productPool} />;
 }

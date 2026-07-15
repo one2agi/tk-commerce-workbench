@@ -4,7 +4,11 @@
     "noEmit": true,
     "jsx": "preserve",
     "incremental": true,
-    "plugins": [{ "name": "next" }]
+    "plugins": [{ "name": "next" }],
+    "paths": {
+      "@tk/contracts": ["../../packages/contracts/src/index.ts"],
+      "@tk/contracts/*": ["../../packages/contracts/src/*"]
+    }
   },
   "include": ["next-env.d.ts", "src/**/*", ".next/types/**/*.ts"],
   "exclude": ["node_modules", ".next"]

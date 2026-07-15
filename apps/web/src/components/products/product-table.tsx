@@ -1,0 +1,110 @@
+"use client";
+
+import type { ChangeEvent, ReactElement, UIEvent } from "react";
+import type { ProductPoolItemV1 } from "@tk/contracts/read-models";
+import type { StageKey } from "./product-workbench.selectors";
+
+type Props = Readonly<{
+  items: ReadonlyArray<ProductPoolItemV1>;
+  filtered: ReadonlyArray<ProductPoolItemV1>;
+  selectedIds: ReadonlySet<string>;
+  activeStage: StageKey;
+  onToggleSelection: (productId: string) => void;
+  onOpenDrawer: (productId: string) => void;
+  onScroll: (scrollTop: number) => void;
+  scrollTop: number;
+}>;
+
+const STAGE_STATE_LABEL: Readonly<Record<StageKey, string>> = {
+  all: "全部",
+  collection: "收集阶段",
+  listing: "listing 阶段",
+  miaoshouEdit: "妙手回写阶段"
+};
+
+function statusFor(item: ProductPoolItemV1): string {
+  // Render the projected per-aggregate state, not a single status.
+  // The Wave 1 workbench never exposes drag-to-change-status affordances.
+  return [
+    `采集:${item.miaoshouSource}`,
+    `listing:${item.listing}`,
+    `编辑:${item.miaoshouEdit}`
+  ].join(" · ");
+}
+
+export function ProductTable({
+  items,
+  filtered,
+  selectedIds,
+  activeStage,
+  onToggleSelection,
+  onOpenDrawer,
+  onScroll,
+  scrollTop
+}: Props): ReactElement {
+  function handleScroll(ev: UIEvent<HTMLDivElement>): void {
+    onScroll(ev.currentTarget.scrollTop);
+  }
+  return (
+    <div
+      className="tk-product-table"
+      role="region"
+      aria-label={`${STAGE_STATE_LABEL[activeStage]}商品表（${filtered.length}/${items.length}）`}
+    >
+      <div
+        className="tk-product-table__scroll"
+        data-testid="product-table-scroll"
+        onScroll={handleScroll}
+        // scrollTop is restored by the parent after re-render.
+        // We use a non-controlled style attribute so React doesn't fight us.
+        style={{ overflowY: "auto", maxHeight: "60vh" }}
+      >
+        <table>
+          <thead>
+            <tr>
+              <th scope="col">选择</th>
+              <th scope="col">源商品 ID</th>
+              <th scope="col">标题</th>
+              <th scope="col">状态投影</th>
+              <th scope="col">操作</th>
+            </tr>
+          </thead>
+          <tbody>
+            {filtered.map((item) => {
+              const checked = selectedIds.has(String(item.productId));
+              return (
+                <tr key={String(item.productId)} aria-selected={checked}>
+                  <td>
+                    <label className="tk-product-table__checkbox">
+                      <input
+                        type="checkbox"
+                        checked={checked}
+                        aria-label={`选择商品 ${item.productId}`}
+                        onChange={(_e: ChangeEvent<HTMLInputElement>) =>
+                          onToggleSelection(String(item.productId))
+                        }
+                      />
+                    </label>
+                  </td>
+                  <td>{String(item.productId)}</td>
+                  <td>{item.canonicalSourceTitle ?? "—"}</td>
+                  <td>{statusFor(item)}</td>
+                  <td>
+                    <button
+                      type="button"
+                      aria-label={`查看详情 ${item.productId}`}
+                      onClick={() => onOpenDrawer(String(item.productId))}
+                    >
+                      查看详情
+                    </button>
+                  </td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+        <span data-scroll-top-mirror={scrollTop} hidden />
+      </div>
+    </div>
+  );
+}

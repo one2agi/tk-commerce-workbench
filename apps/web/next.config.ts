@@ -6,7 +6,12 @@ const config: NextConfig = {
     serverActions: {
       allowedOrigins: ["127.0.0.1", "localhost"]
     }
-  }
+  },
+  // Web may only consume @tk/contracts (a pure-types + zod package). All
+  // other packages (@tk/db, @tk/adapters, @tk/domain) must stay outside the
+  // bundle. TranspilePackages lets Next/Turbopack actually walk into the
+  // .ts source of those workspace packages.
+  transpilePackages: ["@tk/contracts", "@tk/config"]
 };
 
 export default config;
