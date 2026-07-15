@@ -1,0 +1,18 @@
+{
+  "_fixture": {
+    "source": "docs/canvas-n8n-api.md status/result compatibility contract",
+    "synthetic_fields": ["task_id", "result.outputs[]"],
+    "note": "No paid run was made; URLs are synthetic but response shape intentionally contains URL-only outputs"
+  },
+  "task_id": "canvas_task_01",
+  "status": "succeeded",
+  "result": {
+    "outputs": [
+      "/assets/output/tk-01.png",
+      "https://canvas-n8n.ai2hook.com/assets/output/tk-02.png",
+      "/assets/output/tk-03.png",
+      "/assets/output/tk-04.png",
+      "/assets/output/tk-05.png"
+    ]
+  }
+}

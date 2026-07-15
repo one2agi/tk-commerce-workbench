@@ -1,0 +1,30 @@
+{
+  "_fixture": {
+    "source": "2026-07-15 observed workflow response fields documented in docs/canvas-n8n-api.md",
+    "synthetic_fields": ["workflows[].workflow_version"],
+    "note": "workflow_version is synthetic and exists only to exercise explicit-version handling"
+  },
+  "workflows": [
+    {
+      "workflow_id": "workflow_1",
+      "workflow_key": "81b6e6f6d40a80ac",
+      "legacy_workflow_key": "57e12298ff42cdb3",
+      "anchor_node_id": "llm_9a887ad5f269e8_1782461338791",
+      "name": "TK工作流",
+      "node_count": 18,
+      "connection_count": 17,
+      "input_image_count": 9,
+      "output_node_count": 1,
+      "workflow_version": 1,
+      "run_order": [
+        "llm_9a887ad5f269e8_1782461338791",
+        "jsonex_703b3f5dac44f8_1782463696709",
+        "generator_5bde80df06ff2_1782464333726",
+        "generator_1876526486ddd_1782461338791",
+        "generator_ef535ac1fff52_1782464332087",
+        "generator_f72f4d0193b9b8_1782464368666",
+        "generator_9d95c406259098_1782461338791"
+      ]
+    }
+  ]
+}
