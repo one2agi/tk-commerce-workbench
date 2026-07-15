@@ -10,10 +10,10 @@ export interface OverlayHandle {
 }
 
 export function createStoreOverlay(): OverlayHandle {
-  let host: HTMLElement | null = null;
   let store: ScanStore | null = null;
   let panel: HTMLDivElement | null = null;
   let unsub: (() => void) | null = null;
+  let batchId = createBatchId();
 
   function render(): void {
     if (!store || !panel) return;
@@ -42,15 +42,15 @@ export function createStoreOverlay(): OverlayHandle {
       const batch = store!.selectedBatch();
       // Send the selected-only batch to the background service worker.
       const chromeApi = (globalThis as { chrome?: { runtime?: { sendMessage: (msg: unknown) => void } } }).chrome;
-      chromeApi?.runtime?.sendMessage({ kind: "submit-selected", items: batch });
+      chromeApi?.runtime?.sendMessage(createSubmitSelectedMessage(batchId, batch));
     });
     panel.appendChild(submit);
   }
 
   return {
     mount(s, h) {
+      batchId = createBatchId();
       store = s;
-      host = h;
       panel = document.createElement("div");
       panel.dataset.tkOverlay = "store-listing";
       panel.style.position = "fixed";
@@ -72,8 +72,21 @@ export function createStoreOverlay(): OverlayHandle {
       unsub = null;
       panel?.remove();
       panel = null;
-      host = null;
       store = null;
     }
   };
+}
+
+export function createSubmitSelectedMessage(
+  batchId: string,
+  items: ReadonlyArray<ScannedCard>
+) {
+  return Object.freeze({ kind: "submit-selected" as const, batchId, items });
+}
+
+function createBatchId(): string {
+  const random =
+    globalThis.crypto?.randomUUID?.() ??
+    `${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`;
+  return `batch_${random}`;
 }

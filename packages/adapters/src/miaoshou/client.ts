@@ -6,8 +6,10 @@
 
 import { createHmac } from "node:crypto";
 
+export const MIAOSHOU_DEFAULT_BASE_URL = "https://openapi-erp.91miaoshou.com";
+
 export interface MiaoshouConfig {
-  readonly baseUrl: string; // e.g. https://open.api.miaoshou.com
+  readonly baseUrl: string;
   readonly appKey: string;
   readonly appSecret: string;
 }
@@ -18,9 +20,9 @@ export interface MiaoshouRequest {
 }
 
 export interface MiaoshouSignedHeaders {
-  readonly "X-App-Key": string;
-  readonly "X-Signature": string;
-  readonly "X-Timestamp": string;
+  readonly "x-app-key": string;
+  readonly "x-sign": string;
+  readonly "x-timestamp": string;
   readonly "content-type": "application/json";
 }
 
@@ -36,21 +38,23 @@ export function createMiaoshouClient(config: MiaoshouConfig): MiaoshouClient {
       const p = path.replace(/^\/+/, "");
       return `${base}/${p}`;
     },
-    sign(req, timestamp = Date.now()) {
+    sign(req, timestamp = Math.floor(Date.now() / 1_000)) {
       const ts = String(timestamp);
       const payload = JSON.stringify(req.body ?? {});
-      // Canonical: METHOD\nPATH\nTIMESTAMP\nBODY_SHA256_HEX
-      const bodyHash = createHmac("sha256", "")
-        .update(payload)
-        .digest("hex");
-      const canonical = `POST\n${req.path}\n${ts}\n${bodyHash}`;
+      const canonical =
+        config.appSecret +
+        req.path +
+        ts +
+        config.appKey +
+        payload +
+        config.appSecret;
       const sig = createHmac("sha256", config.appSecret)
         .update(canonical)
         .digest("hex");
       return Object.freeze({
-        "X-App-Key": config.appKey,
-        "X-Signature": sig,
-        "X-Timestamp": ts,
+        "x-app-key": config.appKey,
+        "x-sign": sig,
+        "x-timestamp": ts,
         "content-type": "application/json"
       });
     }

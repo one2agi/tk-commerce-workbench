@@ -18,7 +18,6 @@ export interface TokenSettings {
   load(): Promise<string | null>;
   save(token: string): Promise<void>;
   clear(): Promise<void>;
-  hashForDigest(token: string): string;
 }
 
 export function createTokenSettings(env: TokenSettingsEnv): TokenSettings {
@@ -35,28 +34,6 @@ export function createTokenSettings(env: TokenSettingsEnv): TokenSettings {
     },
     async clear() {
       await env.storage.local.remove(TOKEN_KEY);
-    },
-    hashForDigest(token) {
-      // Use the Web Crypto API where available, otherwise fall back to a
-      // non-cryptographic digest placeholder. We import here lazily so the
-      // module stays usable in non-browser test environments.
-      try {
-        // eslint-disable-next-line @typescript-eslint/no-require-imports
-        const crypto = (globalThis as { crypto?: { subtle?: { digest: (alg: string, data: Uint8Array) => Promise<ArrayBuffer> } } }).crypto;
-        if (crypto?.subtle) {
-          // Synchronous wrapper is not possible for subtle.digest; callers
-          // needing the digest should use an async helper.
-        }
-      } catch {
-        // ignore
-      }
-      // Lightweight non-crypto placeholder for display; real server stores
-      // SHA-256 via @tk/config hashing. Kept deterministic for test snapshots.
-      let h = 0;
-      for (let i = 0; i < token.length; i++) {
-        h = (h * 31 + token.charCodeAt(i)) | 0;
-      }
-      return `placeholder-${h}`;
     }
   };
 }

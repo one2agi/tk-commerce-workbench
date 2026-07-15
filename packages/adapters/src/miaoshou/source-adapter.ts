@@ -1,31 +1,14 @@
-// Miaoshou source adapter: implements the @tk/contracts MiaoshouSourcePort.
-// Strategy:
-//   1. POST /fetch_item with the source URL + idempotency key.
-//   2. If the response is "success", query the canonical detail.
-//   3. If the response is "skip" (产品已经采集过), query the common_collect_box
-//      list by sourceItemId, pick the most recent 'success' detail as
-//      canonicalSuccessDetailId, and NEVER query the known skip detail as if
-//      it were canonical.
-// All errors are surfaced as ExternalFailure; secrets never leak into
-// safeMessage.
-//
-// To keep this adapter runnable without re-importing the zod-using @tk/contracts
-// barrel in test contexts where zod is not installed, we import from the
-// subpath exports @tk/contracts/ports.js, @tk/contracts/errors.js,
-// @tk/contracts/ids.js, and @tk/contracts/quantities.js — these files do not
-// transitively require zod.
-
-import { normalize1688OfferUrl } from "../../../../apps/extension/src/shared/normalize-1688-url.js";
 import {
   CollectionWarningCodes,
+  externalFailure,
+  normalize1688OfferUrl,
+  sourceItemId as toSourceItemId,
   type CollectionWarningCode,
   type ExternalFailure,
   type MiaoshouCollectedDetail,
   type MiaoshouSourceCollectResult,
   type MiaoshouSourcePort,
-  type SourceItemId,
-  externalFailure,
-  sourceItemId as toSourceItemId
+  type SourceItemId
 } from "@tk/contracts";
 
 export interface MiaoshouConfig {
@@ -56,183 +39,268 @@ export interface MiaoshouSourceAdapter extends MiaoshouSourcePort {
 const FETCH_ITEM_PATH =
   "/open/v1/product/common_collect_box/common_collect_box/fetch_item";
 const LIST_PATH =
-  "/open/v1/product/common_collect_box/common_collect_box/list";
+  "/open/v1/product/common_collect_box/common_collect_box/get_common_collect_box_list";
 const DETAIL_PATH =
   "/open/v1/product/common_collect_box/common_collect_box/get_common_collect_box_detail";
 
-interface FetchItemData {
-  status: "success" | "skip" | "fail";
-  detailId: string;
-  sourceItemId: string;
+type ApiEnvelope<T> = {
+  result: "success" | "fail";
+  code: string | number;
   message?: string;
+  data?: T;
+};
+
+interface FetchItemData {
+  sourceItemIdAndDetailIdMap?: Record<string, string | number>;
+}
+
+interface SourceLink {
+  source?: string;
+  sourceItemId?: string;
+  sourceItemUrl?: string;
 }
 
 interface CollectBoxListItem {
-  detailId: string;
-  status: "success" | "skip" | "fail";
-  updatedAt: string;
+  commonCollectBoxDetailId: string | number;
+  status?: string;
+  reason?: string;
+  gmtModified?: string;
+  sourceList?: SourceLink[];
 }
 
 interface CollectBoxListData {
-  items: CollectBoxListItem[];
+  detailList?: CollectBoxListItem[];
 }
 
-interface DetailResponseData {
-  detailId: string;
-  sourceItemId: string;
-  sourceUrl: string;
-  title: string;
-  itemNumber: string | null;
-  description: string;
-  category: string | null;
-  sourcePrice: { amountMinor: string; currency: "CNY" } | null;
-  sourceStock: number | null;
-  weightKg: string | null;
-  mainImages: Array<{ url: string; width: number; height: number }>;
-  detailImages: Array<{ url: string; width: number; height: number }>;
-  sourceAttributes: Array<{ name: string; value: string }>;
-  saleAttributes: Array<{ name: string; value: string }>;
-  colors: string[];
-  sizes: string[];
-  skus: Array<{
-    skuId: string;
-    attributes: Record<string, string>;
-    price: { amountMinor: string; currency: "CNY" };
-    stock: number | null;
-    imageUrl: string | null;
-  }>;
+interface RawSku {
+  itemNum?: string | null;
+  price?: string | number | null;
+  stock?: number | null;
+  imgUrl?: string | null;
+  imageUrl?: string | null;
+}
+
+interface RawDetail {
+  commonCollectBoxDetailId: string | number;
+  title?: string;
+  itemNum?: string | null;
+  notesText?: string;
+  notes?: string;
+  price?: string | number | null;
+  stock?: number | null;
+  weight?: string | number | null;
+  packageLength?: string | number | null;
+  packageWidth?: string | number | null;
+  packageHeight?: string | number | null;
+  cateList?: string[];
+  imgUrls?: string[];
+  sourceAttrs?: Array<{ name: string; value: string }>;
+  colorPropName?: string;
+  colorMap?: Record<string, unknown>;
+  sizePropName?: string;
+  sizeMap?: Record<string, unknown>;
+  saleProp3Name?: string;
+  skuMap?: Record<string, RawSku>;
+  sourceList?: SourceLink[];
+  sizeChart?: string | null;
+  mainImgVideoUrl?: string | null;
+  productCertifications?: unknown[];
+}
+
+interface DetailData {
+  editCommonCollectBoxDetail?: RawDetail;
+}
+
+function requireSuccess<T>(response: ApiEnvelope<T>, code: string): T {
+  if (response.result !== "success" || !response.data) {
+    throw externalFailure("retryable", code, "Miaoshou API is temporarily unavailable");
+  }
+  return response.data;
+}
+
+function isSource(item: CollectBoxListItem, sourceItemId: string): boolean {
+  return (item.sourceList ?? []).some(
+    (source) => String(source.sourceItemId ?? "") === sourceItemId
+  );
+}
+
+function isUsable(item: CollectBoxListItem): boolean {
+  const status = (item.status ?? "").toLowerCase();
+  return status !== "collectfail" && status !== "fail" && !(item.reason ?? "").trim();
+}
+
+function decimalToMinor(value: string | number): string {
+  const text = String(value).trim();
+  if (!/^-?\d+(?:\.\d+)?$/.test(text)) {
+    throw externalFailure("fatal", "miaoshou.invalid_price", "Miaoshou returned an invalid price");
+  }
+  const negative = text.startsWith("-");
+  const unsigned = negative ? text.slice(1) : text;
+  const [whole = "0", fraction = ""] = unsigned.split(".");
+  const minor = BigInt(whole) * 100n + BigInt((fraction + "00").slice(0, 2));
+  return `${negative ? "-" : ""}${minor}`;
+}
+
+function skuAttributes(
+  key: string,
+  colorPropName?: string,
+  sizePropName?: string,
+  thirdPropName?: string
+): Record<string, string> {
+  const values = key.split(";").map((part) => part.trim()).filter(Boolean);
+  const names = [colorPropName, sizePropName, thirdPropName].filter(
+    (name): name is string => Boolean(name)
+  );
+  return Object.fromEntries(values.map((value, index) => [names[index] ?? `规格${index + 1}`, value]));
+}
+
+function mapDetail(raw: RawDetail): MiaoshouCollectedDetail {
+  const source = (raw.sourceList ?? []).find((item) => item.sourceItemId);
+  const sourceItemId = String(source?.sourceItemId ?? "");
+  if (!sourceItemId) {
+    throw externalFailure("retryable", "miaoshou.detail_pending", "Miaoshou detail is not ready yet");
+  }
+  const price = raw.price;
+  const dimensions = [raw.packageLength, raw.packageWidth, raw.packageHeight];
+  const hasDimensions = dimensions.every(
+    (value) => value !== null && value !== undefined && String(value).trim() !== ""
+  );
+  return Object.freeze({
+    detailId: String(raw.commonCollectBoxDetailId),
+    sourceItemId: toSourceItemId(sourceItemId),
+    sourceUrl: `https://detail.1688.com/offer/${sourceItemId}.html`,
+    title: raw.title ?? "",
+    itemNumber: raw.itemNum ?? null,
+    description: raw.notesText ?? raw.notes ?? "",
+    category: raw.cateList?.join(" > ") || null,
+    sourcePriceWire:
+      price === null || price === undefined
+        ? null
+        : { amountMinor: decimalToMinor(price), currency: "CNY" as const },
+    sourceStock: raw.stock ?? null,
+    weightKg:
+      raw.weight === null || raw.weight === undefined ? null : String(raw.weight),
+    dimensionsCm: hasDimensions
+      ? {
+          lengthCm: String(raw.packageLength),
+          widthCm: String(raw.packageWidth),
+          heightCm: String(raw.packageHeight)
+        }
+      : null,
+    mainImages: (raw.imgUrls ?? []).map((url) => ({ url, width: 0, height: 0 })),
+    detailImages: [],
+    sourceAttributes: raw.sourceAttrs ?? [],
+    saleAttributes: [
+      raw.colorPropName
+        ? { name: raw.colorPropName, value: Object.keys(raw.colorMap ?? {}).join(",") }
+        : null,
+      raw.sizePropName
+        ? { name: raw.sizePropName, value: Object.keys(raw.sizeMap ?? {}).join(",") }
+        : null
+    ].filter((item): item is { name: string; value: string } => item !== null),
+    colors: Object.keys(raw.colorMap ?? {}),
+    sizes: Object.keys(raw.sizeMap ?? {}),
+    skus: Object.entries(raw.skuMap ?? {}).map(([key, sku]) => ({
+      skuId: sku.itemNum || key,
+      attributes: skuAttributes(key, raw.colorPropName, raw.sizePropName, raw.saleProp3Name),
+      priceWire: {
+        amountMinor: decimalToMinor(sku.price ?? raw.price ?? 0),
+        currency: "CNY" as const
+      },
+      stock: sku.stock ?? null,
+      imageUrl: sku.imageUrl ?? sku.imgUrl ?? null
+    }))
+  });
 }
 
 export function createMiaoshouSourceAdapter(deps: SourceAdapterDeps): MiaoshouSourceAdapter {
   const { http } = deps;
-  const knownSkipDetailIds = new Set<string>();
 
-  async function fetchDetail(detailId: string, sourceItemId: string): Promise<MiaoshouCollectedDetail> {
-    const resp = await http.post<{ code: number; data: DetailResponseData }>(DETAIL_PATH, {
-      detailId,
-      sourceItemId
+  async function listRecords(sourceItemId: SourceItemId): Promise<CollectBoxListItem[]> {
+    const response = await http.post<ApiEnvelope<CollectBoxListData>>(LIST_PATH, {
+      pageNo: 1,
+      pageSize: 20,
+      filter: { tabPaneName: "all", sourceItemIdKeyword: sourceItemId }
     });
-    const data = resp.data;
-    return Object.freeze({
-      detailId: data.detailId,
-      sourceItemId: toSourceItemId(data.sourceItemId),
-      sourceUrl: data.sourceUrl,
-      title: data.title ?? "",
-      itemNumber: data.itemNumber ?? null,
-      description: data.description ?? "",
-      category: data.category ?? null,
-      sourcePriceWire: data.sourcePrice
-        ? { amountMinor: data.sourcePrice.amountMinor, currency: "CNY" as const }
-        : null,
-      sourceStock: data.sourceStock ?? null,
-      weightKg: data.weightKg ?? null,
-      dimensionsCm: null,
-      mainImages: data.mainImages ?? [],
-      detailImages: data.detailImages ?? [],
-      sourceAttributes: data.sourceAttributes ?? [],
-      saleAttributes: data.saleAttributes ?? [],
-      colors: data.colors ?? [],
-      sizes: data.sizes ?? [],
-      skus: (data.skus ?? []).map((s) =>
-        Object.freeze({
-          skuId: s.skuId,
-          attributes: s.attributes,
-          priceWire: { amountMinor: s.price.amountMinor, currency: "CNY" as const },
-          stock: s.stock,
-          imageUrl: s.imageUrl ?? null
-        })
-      )
-    });
+    return (requireSuccess(response, "miaoshou.list_failed").detailList ?? []).filter((item) =>
+      isSource(item, sourceItemId)
+    );
   }
 
-  async function resolveCanonicalSuccess(
-    sourceItemId: SourceItemId
-  ): Promise<{ canonicalSuccessDetailId: string; detail: MiaoshouCollectedDetail }> {
-    const listResp = await http.post<{ code: number; data: CollectBoxListData }>(LIST_PATH, {
-      sourceItemId
+  async function fetchDetail(detailId: string): Promise<MiaoshouCollectedDetail> {
+    const response = await http.post<ApiEnvelope<DetailData>>(DETAIL_PATH, {
+      commonCollectBoxDetailId: Number(detailId)
     });
-    const successes = (listResp.data.items ?? [])
-      .filter((it) => it.status === "success" && !knownSkipDetailIds.has(it.detailId))
-      .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
-    if (successes.length === 0) {
-      throw externalFailure(
-        "fatal",
-        "miaoshou.no_canonical_success",
-        "no canonical success detail found for source item"
-      );
+    const raw = requireSuccess(response, "miaoshou.detail_failed").editCommonCollectBoxDetail;
+    if (!raw) {
+      throw externalFailure("retryable", "miaoshou.detail_pending", "Miaoshou detail is not ready yet");
     }
-    const canonical = successes[0];
+    return mapDetail(raw);
+  }
+
+  async function resolveCanonicalSuccess(sourceItemId: SourceItemId) {
+    const records = await listRecords(sourceItemId);
+    const canonical = records
+      .filter(isUsable)
+      .sort((a, b) => (b.gmtModified ?? "").localeCompare(a.gmtModified ?? ""))[0];
     if (!canonical) {
-      throw externalFailure(
-        "fatal",
-        "miaoshou.no_canonical_success",
-        "no canonical success detail found for source item"
-      );
+      throw externalFailure("retryable", "miaoshou.detail_pending", "Miaoshou detail is not ready yet");
     }
-    const detail = await fetchDetail(canonical.detailId, sourceItemId);
-    return { canonicalSuccessDetailId: canonical.detailId, detail };
+    const canonicalSuccessDetailId = String(canonical.commonCollectBoxDetailId);
+    return {
+      canonicalSuccessDetailId,
+      detail: await fetchDetail(canonicalSuccessDetailId)
+    };
   }
 
   return {
-    async fetchItem({ sourceUrl, idempotencyKey }) {
+    async fetchItem({ sourceUrl }) {
       let normalized;
       try {
         normalized = normalize1688OfferUrl(sourceUrl);
       } catch {
-        return {
-          fetchDetailId: null,
-          skippedDetailId: null,
-          canonicalSuccessDetailId: "",
-          detail: emptyDetail("", sourceUrl)
-        };
-      }
-      const sid = toSourceItemId(normalized.sourceItemId);
-      const fetchResp = await http.post<{ code: number; data: FetchItemData }>(
-        FETCH_ITEM_PATH,
-        { sourceItemId: normalized.sourceItemId, idempotencyKey }
-      );
-      const fetched = fetchResp.data;
-      if (fetched.status === "skip") {
-        knownSkipDetailIds.add(fetched.detailId);
-        const resolved = await resolveCanonicalSuccess(sid);
-        return {
-          fetchDetailId: fetched.detailId,
-          skippedDetailId: fetched.detailId,
-          canonicalSuccessDetailId: resolved.canonicalSuccessDetailId,
-          detail: resolved.detail
-        };
-      }
-      if (fetched.status !== "success") {
         throw externalFailure(
-          "fatal",
-          "miaoshou.fetch_failed",
-          `fetch_item returned status ${fetched.status}`
+          "needs_input",
+          "miaoshou.invalid_source_url",
+          "Please provide a 1688 product detail URL"
         );
       }
-      const detail = await fetchDetail(fetched.detailId, normalized.sourceItemId);
+      const response = await http.post<ApiEnvelope<FetchItemData>>(FETCH_ITEM_PATH, {
+        collectLinks: [normalized.canonicalUrl]
+      });
+      const data = requireSuccess(response, "miaoshou.fetch_failed");
+      const mappedId = data.sourceItemIdAndDetailIdMap?.[normalized.sourceItemId];
+      if (mappedId === null || mappedId === undefined) {
+        throw externalFailure("retryable", "miaoshou.detail_pending", "Miaoshou detail is not ready yet");
+      }
+      const fetchDetailId = String(mappedId);
+      const sid = toSourceItemId(normalized.sourceItemId);
+      const resolved = await resolveCanonicalSuccess(sid);
+      const skippedDetailId =
+        fetchDetailId === resolved.canonicalSuccessDetailId ? null : fetchDetailId;
       return {
-        fetchDetailId: fetched.detailId,
-        skippedDetailId: null,
-        canonicalSuccessDetailId: fetched.detailId,
-        detail
+        fetchDetailId,
+        skippedDetailId,
+        canonicalSuccessDetailId: resolved.canonicalSuccessDetailId,
+        detail: resolved.detail
       };
     },
     async resolveCanonicalSuccessDetail({ sourceItemId }) {
       return resolveCanonicalSuccess(sourceItemId);
     },
     summarize(result) {
-      const d = result.detail;
+      const detail = result.detail;
       const warnings: CollectionWarningCode[] = [];
-      if (!d.title) warnings.push(CollectionWarningCodes.MissingTitle);
-      if (!d.sourcePriceWire) warnings.push(CollectionWarningCodes.MissingSourcePrice);
-      if (d.skus.length === 0) warnings.push(CollectionWarningCodes.MissingSku);
-      if (!d.weightKg) warnings.push(CollectionWarningCodes.MissingWeight);
+      if (!detail.title) warnings.push(CollectionWarningCodes.MissingTitle);
+      if (!detail.sourcePriceWire) warnings.push(CollectionWarningCodes.MissingSourcePrice);
+      if (detail.skus.length === 0) warnings.push(CollectionWarningCodes.MissingSku);
+      if (!detail.weightKg) warnings.push(CollectionWarningCodes.MissingWeight);
+      if (!detail.dimensionsCm) warnings.push(CollectionWarningCodes.MissingDimensions);
+      warnings.push(CollectionWarningCodes.MissingSizeChart);
+      warnings.push(CollectionWarningCodes.MissingVideo);
+      warnings.push(CollectionWarningCodes.MissingCertification);
       const status: SourceSummary["status"] =
-        warnings.length === 0
-          ? "ok"
-          : d.mainImages.length === 0
-            ? "invalid"
-            : "partial";
+        detail.mainImages.length === 0 ? "invalid" : warnings.length === 0 ? "ok" : "partial";
       return Object.freeze({ status, warnings });
     },
     describeFailure(detail) {
@@ -243,27 +311,4 @@ export function createMiaoshouSourceAdapter(deps: SourceAdapterDeps): MiaoshouSo
       );
     }
   };
-}
-
-function emptyDetail(detailId: string, sourceUrl: string): MiaoshouCollectedDetail {
-  return Object.freeze({
-    detailId,
-    sourceItemId: toSourceItemId(""),
-    sourceUrl,
-    title: "",
-    itemNumber: null,
-    description: "",
-    category: null,
-    sourcePriceWire: null,
-    sourceStock: null,
-    weightKg: null,
-    dimensionsCm: null,
-    mainImages: [],
-    detailImages: [],
-    sourceAttributes: [],
-    saleAttributes: [],
-    colors: [],
-    sizes: [],
-    skus: []
-  });
 }

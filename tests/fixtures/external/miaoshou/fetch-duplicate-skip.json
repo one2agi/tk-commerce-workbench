@@ -1,10 +1,10 @@
 {
-  "code": 0,
-  "msg": "ok",
+  "result": "success",
+  "code": "success",
+  "message": "",
   "data": {
-    "status": "skip",
-    "detailId": "3801638000",
-    "sourceItemId": "892408514788",
-    "message": "产品已经采集过"
+    "sourceItemIdAndDetailIdMap": {
+      "892408514788": 3801638367
+    }
   }
 }

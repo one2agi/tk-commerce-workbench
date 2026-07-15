@@ -1,10 +1,10 @@
 {
-  "code": 0,
-  "msg": "ok",
+  "result": "success",
+  "code": "success",
+  "message": "",
   "data": {
-    "status": "success",
-    "detailId": "3801638367",
-    "sourceItemId": "892408514788",
-    "message": "采集成功"
+    "sourceItemIdAndDetailIdMap": {
+      "892408514788": 3799770548
+    }
   }
 }

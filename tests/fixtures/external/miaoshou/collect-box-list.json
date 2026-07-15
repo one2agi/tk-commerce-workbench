@@ -1,23 +1,34 @@
 {
-  "code": 0,
-  "msg": "ok",
+  "result": "success",
+  "code": "200",
   "data": {
-    "items": [
+    "detailList": [
       {
-        "detailId": "3801638367",
-        "status": "skip",
-        "updatedAt": "2026-07-10T08:00:00Z"
+        "commonCollectBoxDetailId": 3801638367,
+        "status": "collectFail",
+        "reason": "产品已经采集过",
+        "gmtModified": "2026-07-15 09:00:00",
+        "sourceList": [{
+          "source": "1688",
+          "sourceSite": "cn",
+          "sourceItemId": "892408514788",
+          "sourceItemUrl": "https://detail.1688.com/offer/892408514788.html"
+        }]
       },
       {
-        "detailId": "3799770548",
-        "status": "success",
-        "updatedAt": "2026-07-12T10:00:00Z"
-      },
-      {
-        "detailId": "3795000000",
-        "status": "fail",
-        "updatedAt": "2026-07-01T10:00:00Z"
+        "commonCollectBoxDetailId": 3799770548,
+        "status": "noClaimed",
+        "reason": "",
+        "gmtModified": "2026-07-14 09:00:00",
+        "sourceList": [{
+          "source": "1688",
+          "sourceSite": "cn",
+          "sourceItemId": "892408514788",
+          "sourceItemUrl": "http://detail.1688.com/offer/892408514788.html"
+        }]
       }
-    ]
+    ],
+    "total": 2,
+    "isCommonCollectHuger": false
   }
 }
