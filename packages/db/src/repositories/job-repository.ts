@@ -206,7 +206,8 @@ export class JobRepository {
              SELECT payload->>'approvalSnapshotId'
              FROM ${schema.jobs}
              WHERE id = ANY($1::text[]) AND kind = 'miaoshou_edit'
-           )`,
+           )
+             AND sync.state IN ('queued', 'syncing', 'result_unknown')`,
           [releasedIds]
         );
       }

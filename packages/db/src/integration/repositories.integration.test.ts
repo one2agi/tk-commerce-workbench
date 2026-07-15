@@ -437,6 +437,80 @@ describe("integration: job repository claim semantics", () => {
     expect(sync.rows[0].state).toBe("result_unknown");
     expect(sync.rows[0].error.code).toBe("reconcile_required");
   });
+
+  test.each(["succeeded", "failed"] as const)(
+    "expired miaoshou edit does not downgrade terminal sync state %s",
+    async (terminalState) => {
+      const operatorId = await catalog.upsertLocalOperator({
+        handle: `terminal-${terminalState}`,
+        displayName: `Terminal ${terminalState}`
+      });
+      const productId = await catalog.insertProduct({
+        operatorId,
+        sourceUrl: `https://detail.1688.com/offer/terminal-${terminalState}.html`,
+        sourceItemId: `terminal-${terminalState}`,
+        locale: "th-TH",
+        currency: "THB"
+      });
+      const revisionId = await catalog.insertRevision({
+        productId,
+        draftVersion: 1,
+        sourceTitle: "terminal",
+        workingDraft: {}
+      });
+      const snapshotId = `appr-terminal-${terminalState}`;
+      await handle.pool.query(
+        `INSERT INTO approval_snapshots
+          (id, product_id, revision_id, draft_version, listing_run_id, pricing_run_id,
+           template_version, ordered_final_asset_ids, source_platform, source_canonical_url,
+           source_item_id, canonical_success_detail_id, locale, currency, title, description,
+           attributes, price_minor, price_currency, stock, weight_kg, skus, state)
+         VALUES ($1, $2, $3, 1, 'listing-terminal', 'pricing-terminal', 1, '[]'::jsonb,
+                 '1688', $4, $5, 'canonical-terminal', 'th-TH', 'THB', 'title',
+                 'description', '[]'::jsonb, '100', 'THB', 1, '0.3', '[]'::jsonb,
+                 'approved')`,
+        [
+          snapshotId,
+          productId,
+          revisionId,
+          `https://detail.1688.com/offer/terminal-${terminalState}.html`,
+          `terminal-${terminalState}`
+        ]
+      );
+      await handle.pool.query(
+        `INSERT INTO miaoshou_syncs (id, approval_snapshot_id, state, error)
+         VALUES ($1, $2, $3, $4::jsonb)`,
+        [
+          `sync-terminal-${terminalState}`,
+          snapshotId,
+          terminalState,
+          JSON.stringify({ code: `terminal_${terminalState}` })
+        ]
+      );
+      const jobId = await jobs.enqueue({
+        kind: "miaoshou_edit",
+        businessKey: `miaoshou-edit:terminal:${terminalState}`,
+        payload: { version: 1, approvalSnapshotId: snapshotId }
+      });
+      const claim = await jobs.claim(
+        "worker-terminal",
+        new Date("2026-07-01T00:00:00Z"),
+        1_000
+      );
+      expect(claim?.jobId).toBe(jobId);
+
+      await jobs.releaseExpired(new Date("2026-07-01T00:00:02Z"));
+
+      const sync = await handle.pool.query(
+        "SELECT state, error FROM miaoshou_syncs WHERE approval_snapshot_id = $1",
+        [snapshotId]
+      );
+      expect(sync.rows[0]).toEqual({
+        state: terminalState,
+        error: { code: `terminal_${terminalState}` }
+      });
+    }
+  );
 });
 
 describe("integration: exchange rate snapshots", () => {
