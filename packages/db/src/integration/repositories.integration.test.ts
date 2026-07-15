@@ -293,6 +293,10 @@ describe("integration: durable pipeline repository", () => {
     expect(Number((await handle.pool.query("SELECT COUNT(*) AS count FROM products WHERE source_item_id = 'source-canonical'")).rows[0]?.count)).toBe(1);
     expect(Number((await handle.pool.query("SELECT COUNT(*) AS count FROM product_revisions WHERE product_id = (SELECT id FROM products WHERE source_item_id = 'source-canonical')")).rows[0]?.count)).toBe(1);
     expect(Number((await handle.pool.query("SELECT COUNT(*) AS count FROM miaoshou_source_records WHERE source_item_id = 'source-canonical'")).rows[0]?.count)).toBe(2);
+    const sourceStates = await handle.pool.query("SELECT state FROM miaoshou_source_records WHERE source_item_id = 'source-canonical' ORDER BY created_at, id");
+    expect(sourceStates.rows.map((row) => row.state).sort()).toEqual(["skipped_duplicate", "success"]);
+    const productState = await handle.pool.query("SELECT state_source FROM products WHERE source_item_id = 'source-canonical'");
+    expect(productState.rows[0]?.state_source).toBe("success");
   });
 
   test("reuses listing, pricing and Canvas result rows after write-before-complete recovery", async () => {
@@ -310,10 +314,77 @@ describe("integration: durable pipeline repository", () => {
     await invokeTwice("listing_generate", (fence) => pipeline.saveResult({ revisionId, title: "Title", description: "Description", attributes: [], styleApplied: "neutral", provider: "rules", fallbackUsed: true }, fence));
     await invokeTwice("pricing_calculate", (fence) => pipeline.saveReady({ revisionId, finalPrice: { amountMinor: "999", currency: "THB" }, breakdown: { ending: "9" } }, fence));
     await handle.pool.query("UPDATE product_revisions SET working_draft = working_draft || '{\"templateMatch\":{\"templateId\":\"default\",\"templateVersion\":1}}'::jsonb WHERE id = $1", [revisionId]);
-    await invokeTwice("canvas_generate", (fence) => pipeline.saveOutputs({ revisionId, remoteTaskId: "remote-1", outputs: [{ url: "https://out/1.jpg" }], state: "succeeded" }, fence));
+    await invokeTwice("canvas_generate", (fence) => pipeline.saveOutputs({
+      revisionId,
+      remoteTaskId: "remote-1",
+      assets: [{ remoteUrl: "https://out/1.jpg", sha256: "generated-hash", path: "/data/assets/ge/generated-hash.jpg", extension: "jpg", width: 1024, height: 1024 }],
+      state: "succeeded"
+    }, fence));
     expect(Number((await handle.pool.query("SELECT COUNT(*) AS count FROM listing_drafts WHERE revision_id = $1", [revisionId])).rows[0]?.count)).toBe(1);
     expect(Number((await handle.pool.query("SELECT COUNT(*) AS count FROM pricing_runs WHERE revision_id = $1", [revisionId])).rows[0]?.count)).toBe(1);
     expect(Number((await handle.pool.query("SELECT COUNT(*) AS count FROM canvas_runs WHERE revision_id = $1", [revisionId])).rows[0]?.count)).toBe(1);
+    const generated = await handle.pool.query<{ id: string; revision_id: string; kind: string; local_path: string }>(
+      "SELECT id, revision_id, kind, local_path FROM assets WHERE revision_id = $1 AND kind = 'generated'",
+      [revisionId]
+    );
+    expect(generated.rows).toHaveLength(1);
+    expect(generated.rows[0]).toMatchObject({ revision_id: revisionId, kind: "generated", local_path: "/data/assets/ge/generated-hash.jpg" });
+    const canvas = await handle.pool.query<{ outputs: string[] }>("SELECT outputs FROM canvas_runs WHERE revision_id = $1", [revisionId]);
+    expect(canvas.rows[0]?.outputs).toEqual([generated.rows[0]?.id]);
+  });
+
+  test("loads source minor units without losing precision above Number.MAX_SAFE_INTEGER", async () => {
+    const operatorId = await catalog.upsertLocalOperator({ handle: "large-money", displayName: "Large Money" });
+    const productId = await catalog.insertProduct({ operatorId, sourceUrl: "https://detail.1688.com/offer/large.html", locale: "th-TH", currency: "THB" });
+    const revisionId = await catalog.insertRevision({
+      productId,
+      draftVersion: 1,
+      sourceTitle: "large",
+      workingDraft: { pricingInputs: {} }
+    });
+    await handle.pool.query(
+      `UPDATE product_revisions SET source_payload = $2::jsonb WHERE id = $1`,
+      [revisionId, JSON.stringify({ sourcePriceWire: { amountMinor: "900719925474099312345", currency: "CNY" }, weightKg: "1" })]
+    );
+    expect((await pipeline.loadInputs(revisionId)).sourceCostCny).toBe("9007199254740993123.45");
+  });
+
+  test("persists archive quality evidence and only loads genuinely ready scored images", async () => {
+    const operatorId = await catalog.upsertLocalOperator({ handle: "quality-chain", displayName: "Quality Chain" });
+    const productId = await catalog.insertProduct({ operatorId, sourceUrl: "https://detail.1688.com/offer/quality.html", locale: "th-TH", currency: "THB" });
+    const revisionId = await catalog.insertRevision({ productId, draftVersion: 1, sourceTitle: "quality", workingDraft: {} });
+    const jobId = await jobs.enqueue({ kind: "asset_archive", businessKey: "quality:archive", payload: { version: 1, revisionId } });
+    const claim = await jobs.claim("quality-worker", new Date(), 30_000);
+    expect(await pipeline.saveArchive({
+      revisionId,
+      state: "partial",
+      assets: [
+        {
+          remoteUrl: "https://cdn.test/accepted.jpg", sha256: "accepted", path: "/assets/accepted.jpg", extension: "jpg",
+          width: 1200, height: 1000, perceptualHash: "same-hash", clarity: 0.91, duplicateDistance: 8,
+          watermarkProbability: 0.01, collageProbability: 0.02, nonProductProbability: 0.03,
+          score: 0.87, chosenRole: "primary", rejectionReason: null
+        },
+        {
+          remoteUrl: "https://cdn.test/rejected.jpg", sha256: "rejected", path: "/assets/rejected.jpg", extension: "jpg",
+          width: 320, height: 320, perceptualHash: "rejected-hash", clarity: 0.8, duplicateDistance: 9,
+          watermarkProbability: 0.01, collageProbability: 0.01, nonProductProbability: 0.01,
+          score: 0.4, chosenRole: "detail", rejectionReason: "low_resolution"
+        }
+      ]
+    }, { jobId, owner: "quality-worker", leaseToken: claim!.leaseToken })).toBe(true);
+
+    const stored = await handle.pool.query(
+      "SELECT remote_url, state, width, height, perceptual_hash, clarity, duplicate_distance, watermark_probability, collage_probability, non_product_probability, visual_score, chosen_role, rejection_reason FROM assets WHERE revision_id = $1 ORDER BY remote_url",
+      [revisionId]
+    );
+    expect(stored.rows).toEqual([
+      expect.objectContaining({ remote_url: "https://cdn.test/accepted.jpg", state: "ready", width: 1200, height: 1000, perceptual_hash: "same-hash", chosen_role: "primary", rejection_reason: null }),
+      expect.objectContaining({ remote_url: "https://cdn.test/rejected.jpg", state: "rejected", width: 320, height: 320, perceptual_hash: "rejected-hash", chosen_role: "detail", rejection_reason: "low_resolution" })
+    ]);
+    expect((await pipeline.loadSelectionInputs(revisionId)).candidates).toEqual([
+      { assetId: expect.any(String), url: "/assets/accepted.jpg", role: "primary", score: 0.87, perceptualHash: "same-hash" }
+    ]);
   });
 });
 
@@ -410,6 +481,22 @@ describe("integration: job repository claim semantics", () => {
     const unknownWithoutRemoteId = await jobs.enqueue({ kind: "canvas_generate", businessKey: "control:unknown-without-id", payload: { version: 1 } });
     await handle.pool.query("UPDATE jobs SET status = 'needs_input', remote_task_id = NULL, error = '{\"code\":\"reconcile_required\"}'::jsonb WHERE id = $1", [unknownWithoutRemoteId]);
     expect(await jobs.retrySafe(unknownWithoutRemoteId, new Date("2026-07-16T00:00:00Z"))).toBe(false);
+  });
+
+  test("expired paid or external jobs require review instead of being automatically charged again", async () => {
+    const startedAt = new Date("2026-07-16T00:00:00Z");
+    const expiredAt = new Date("2026-07-16T00:00:01Z");
+    for (const kind of ["listing_generate", "exchange_rate_refresh"]) {
+      const id = await jobs.enqueue({ kind, businessKey: `paid-expiry:${kind}`, payload: { version: 1 } });
+      expect((await jobs.claim(`worker-${kind}`, startedAt, 10))?.jobId).toBe(id);
+      expect(await jobs.releaseExpired(expiredAt)).toBe(1);
+      const row = await handle.pool.query("SELECT status, error FROM jobs WHERE id = $1", [id]);
+      expect(row.rows[0]).toMatchObject({
+        status: "needs_input",
+        error: { kind: "reconcile_required", code: "reconcile_required" }
+      });
+      expect(await jobs.retrySafe(id, expiredAt)).toBe(false);
+    }
   });
 
   test("two concurrent claims with same owner/now/lease return only ONE job", async () => {

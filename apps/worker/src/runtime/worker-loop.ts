@@ -235,10 +235,17 @@ export async function runWorkerLoop(input: {
             safeMessage: "Additional user input or review is required"
           });
         } else if (error instanceof ExternalResultUnknownError) {
-          await input.jobs.markResultUnknown(job, input.workerId, input.clock.now(), error.remoteTaskId, {
-            code: "reconcile_required",
-            safeMessage: "External request result must be reconciled before retry"
-          });
+          if (job.remoteTaskId) {
+            await input.jobs.markNeedsInput(job, input.workerId, input.clock.now(), {
+              code: "reconcile_failed",
+              safeMessage: "Automatic reconciliation failed; review the external task before trying again"
+            });
+          } else {
+            await input.jobs.markResultUnknown(job, input.workerId, input.clock.now(), error.remoteTaskId, {
+              code: "reconcile_required",
+              safeMessage: "External request result must be reconciled before retry"
+            });
+          }
         } else {
           await input.jobs.fail(job, input.workerId, input.clock.now(), {
             code: "worker.handler_failed",

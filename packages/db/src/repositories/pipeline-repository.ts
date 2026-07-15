@@ -17,6 +17,13 @@ function object(value: unknown): Record<string, unknown> {
   return value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : {};
 }
 
+function minorToMajor(amountMinor: string): string | null {
+  if (!/^-?\d+$/.test(amountMinor)) return null;
+  const negative = amountMinor.startsWith("-");
+  const digits = (negative ? amountMinor.slice(1) : amountMinor).replace(/^0+(?=\d)/, "").padStart(3, "0");
+  return `${negative ? "-" : ""}${digits.slice(0, -2)}.${digits.slice(-2)}`;
+}
+
 export class PipelineRepository {
   constructor(private readonly pool: DbPool, private readonly operatorHandle = "local-operator") {}
 
@@ -61,11 +68,11 @@ export class PipelineRepository {
       const inserted = await client.query<{ id: string }>(
         `INSERT INTO ${schema.products}
          (id, operator_id, source_url, source_item_id, canonical_success_detail_id, locale, currency, state_source, state_automation)
-         VALUES ($1, $2, $3, $4, $5, 'th-TH', 'THB', 'collected', 'not_started')
+         VALUES ($1, $2, $3, $4, $5, 'th-TH', 'THB', 'success', 'not_started')
          ON CONFLICT (operator_id, source_item_id) WHERE source_item_id IS NOT NULL
          DO UPDATE SET source_url = EXCLUDED.source_url,
                        canonical_success_detail_id = EXCLUDED.canonical_success_detail_id,
-                       state_source = 'collected', updated_at = now()
+                       state_source = 'success', updated_at = now()
          RETURNING id`,
         [productId, operator.rows[0].id, value.sourceUrl, String(detail.sourceItemId), value.result.canonicalSuccessDetailId]
       );
@@ -107,9 +114,9 @@ export class PipelineRepository {
       await client.query(
         `INSERT INTO ${schema.miaoshouSourceRecords}
          (id, product_id, source_item_id, fetch_detail_id, skipped_detail_id, canonical_success_detail_id, fetched_payload, state)
-         VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb, 'collected')`,
+         VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb, $8)`,
         [newId("source"), canonicalProductId, String(detail.sourceItemId), value.result.fetchDetailId, value.result.skippedDetailId,
-          value.result.canonicalSuccessDetailId, JSON.stringify(value.result)]
+          value.result.canonicalSuccessDetailId, JSON.stringify(value.result), value.result.skippedDetailId ? "skipped_duplicate" : "success"]
       );
       return { revisionId };
     });
@@ -124,14 +131,28 @@ export class PipelineRepository {
         const asset = object(raw);
         const remoteUrl = String(asset.remoteUrl ?? asset.finalUrl ?? "");
         if (!remoteUrl) continue;
+        const rejectionReason = typeof asset.rejectionReason === "string" ? asset.rejectionReason : null;
         await client.query(
           `INSERT INTO ${schema.assets}
-           (id, product_id, revision_id, remote_url, kind, state, sha256, local_path, extension)
-           VALUES ($1, $2, $3, $4, 'main', 'ready', $5, $6, $7)
+           (id, product_id, revision_id, remote_url, kind, state, width, height, sha256, local_path, extension,
+            perceptual_hash, clarity, duplicate_distance, watermark_probability, collage_probability,
+            non_product_probability, visual_score, chosen_role, rejection_reason)
+           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20)
            ON CONFLICT (revision_id, remote_url) WHERE revision_id IS NOT NULL DO UPDATE
-           SET state = 'ready', sha256 = EXCLUDED.sha256,
-               local_path = EXCLUDED.local_path, extension = EXCLUDED.extension`,
-          [newId("asset"), revision.rows[0].product_id, revisionId, remoteUrl, asset.sha256 ?? null, asset.path ?? null, asset.extension ?? null]
+           SET kind = EXCLUDED.kind, state = EXCLUDED.state, width = EXCLUDED.width, height = EXCLUDED.height,
+               sha256 = EXCLUDED.sha256, local_path = EXCLUDED.local_path, extension = EXCLUDED.extension,
+               perceptual_hash = EXCLUDED.perceptual_hash, clarity = EXCLUDED.clarity,
+               duplicate_distance = EXCLUDED.duplicate_distance, watermark_probability = EXCLUDED.watermark_probability,
+               collage_probability = EXCLUDED.collage_probability, non_product_probability = EXCLUDED.non_product_probability,
+               visual_score = EXCLUDED.visual_score, chosen_role = EXCLUDED.chosen_role,
+               rejection_reason = EXCLUDED.rejection_reason`,
+          [
+            newId("asset"), revision.rows[0].product_id, revisionId, remoteUrl, asset.sourceKind ?? "main",
+            rejectionReason ? "rejected" : "ready", asset.width ?? null, asset.height ?? null, asset.sha256 ?? null,
+            asset.path ?? null, asset.extension ?? null, asset.perceptualHash ?? null, asset.clarity ?? null,
+            asset.duplicateDistance ?? null, asset.watermarkProbability ?? null, asset.collageProbability ?? null,
+            asset.nonProductProbability ?? null, asset.score ?? null, asset.chosenRole ?? null, rejectionReason
+          ]
         );
       }
       await client.query(`UPDATE ${schema.products} SET state_asset_archive = $2, updated_at = now() WHERE id = $1`, [revision.rows[0].product_id, value.state]);
@@ -205,7 +226,7 @@ export class PipelineRepository {
       `SELECT id, rate FROM ${schema.exchangeRateSnapshots} WHERE base = 'CNY' AND target = 'THB' ORDER BY (source = 'manual') DESC, observed_at DESC LIMIT 1`
     );
     const amountMinor = String(sourcePrice.amountMinor ?? "");
-    const sourceCostCny = amountMinor && /^\d+$/.test(amountMinor) ? (Number(amountMinor) / 100).toFixed(2) : null;
+    const sourceCostCny = minorToMajor(amountMinor);
     return {
       weightKg: typeof source.weightKg === "string" ? source.weightKg : null,
       sourceCostCny,
@@ -277,13 +298,18 @@ export class PipelineRepository {
       `SELECT product_id, working_draft FROM ${schema.productRevisions} WHERE id = $1`, [revisionId]
     );
     assert(revision.rows[0], "revision not found");
-    const rows = await this.pool.query<{ id: string; local_path: string; chosen_role: string | null; visual_score: number | null; perceptual_hash: string | null }>(
+    const rows = await this.pool.query<{ id: string; local_path: string; chosen_role: "primary" | "angle" | "detail" | "sku"; visual_score: number; perceptual_hash: string }>(
       `SELECT id, local_path, chosen_role, visual_score, perceptual_hash FROM ${schema.assets}
-       WHERE product_id = $1 AND revision_id = $2 AND state = 'ready' AND local_path IS NOT NULL`,
+       WHERE product_id = $1 AND revision_id = $2 AND state = 'ready' AND rejection_reason IS NULL
+         AND local_path IS NOT NULL AND width IS NOT NULL AND height IS NOT NULL
+         AND perceptual_hash IS NOT NULL AND perceptual_hash <> '' AND clarity IS NOT NULL
+         AND duplicate_distance IS NOT NULL AND watermark_probability IS NOT NULL
+         AND collage_probability IS NOT NULL AND non_product_probability IS NOT NULL
+         AND visual_score IS NOT NULL AND chosen_role IS NOT NULL`,
       [revision.rows[0].product_id, revisionId]
     );
     return {
-      candidates: rows.rows.map((row) => ({ assetId: row.id, url: row.local_path, role: (row.chosen_role ?? "primary") as "primary", score: row.visual_score ?? 1, perceptualHash: row.perceptual_hash ?? row.id })),
+      candidates: rows.rows.map((row) => ({ assetId: row.id, url: row.local_path, role: row.chosen_role, score: row.visual_score, perceptualHash: row.perceptual_hash })),
       referenceUrls: [],
       capacity: Number(object(revision.rows[0].working_draft).canvasInputCapacity ?? 9)
     };
@@ -304,13 +330,17 @@ export class PipelineRepository {
     const selection = object(draft.imageSelection);
     const match = object(draft.templateMatch);
     const assetIds = Array.isArray(selection.assetIds) ? selection.assetIds.map(String) : [];
-    const assets = assetIds.length === 0 ? { rows: [] } : await this.pool.query<{ id: string; local_path: string; chosen_role: string | null; visual_score: number | null; perceptual_hash: string | null }>(
-      `SELECT id, local_path, chosen_role, visual_score, perceptual_hash FROM ${schema.assets} WHERE id = ANY($1::text[])`, [assetIds]
+    const assets = assetIds.length === 0 ? { rows: [] } : await this.pool.query<{ id: string; local_path: string; chosen_role: "primary" | "angle" | "detail" | "sku"; visual_score: number; perceptual_hash: string }>(
+      `SELECT id, local_path, chosen_role, visual_score, perceptual_hash FROM ${schema.assets}
+       WHERE id = ANY($1::text[]) AND revision_id = $2 AND state = 'ready' AND rejection_reason IS NULL
+         AND local_path IS NOT NULL AND chosen_role IS NOT NULL
+         AND visual_score IS NOT NULL AND perceptual_hash IS NOT NULL AND perceptual_hash <> ''`,
+      [assetIds, revisionId]
     );
     return {
       workflowId: String(draft.workflowId ?? "TK工作流"),
       templateVersion: Number(match.templateVersion ?? 1),
-      productImages: assets.rows.map((row) => ({ assetId: row.id, url: row.local_path, role: (row.chosen_role ?? "primary") as "primary", score: row.visual_score ?? 1, perceptualHash: row.perceptual_hash ?? row.id })),
+      productImages: assets.rows.map((row) => ({ assetId: row.id, url: row.local_path, role: row.chosen_role, score: row.visual_score, perceptualHash: row.perceptual_hash })),
       referenceUrls: Array.isArray(selection.referenceUrls) ? selection.referenceUrls.map(String) : [],
       localAssetIds: assetIds,
       sourceLocale: String(draft.sourceLocale ?? "zh-CN"),
@@ -328,6 +358,29 @@ export class PipelineRepository {
       );
       assert(revision.rows[0], "revision not found");
       const match = object(object(revision.rows[0].working_draft).templateMatch);
+      const assetIds: string[] = [];
+      for (const raw of Array.isArray(value.assets) ? value.assets : []) {
+        const asset = object(raw);
+        const remoteUrl = String(asset.remoteUrl ?? "");
+        const localPath = String(asset.path ?? "");
+        const sha256 = String(asset.sha256 ?? "");
+        const extension = String(asset.extension ?? "");
+        assert(remoteUrl && localPath && sha256 && extension, "generated asset must be locally archived");
+        const inserted = await client.query<{ id: string }>(
+          `INSERT INTO ${schema.assets}
+           (id, product_id, revision_id, remote_url, kind, state, width, height, sha256, local_path, extension)
+           VALUES ($1, $2, $3, $4, 'generated', 'ready', $5, $6, $7, $8, $9)
+           ON CONFLICT (revision_id, remote_url) WHERE revision_id IS NOT NULL DO UPDATE
+           SET kind = 'generated', state = 'ready', width = EXCLUDED.width,
+               height = EXCLUDED.height, sha256 = EXCLUDED.sha256,
+               local_path = EXCLUDED.local_path, extension = EXCLUDED.extension
+           RETURNING id`,
+          [newId("asset"), revision.rows[0].product_id, revisionId, remoteUrl,
+            asset.width ?? null, asset.height ?? null, sha256, localPath, extension]
+        );
+        assert(inserted.rows[0], "generated asset upsert must return an id");
+        assetIds.push(inserted.rows[0].id);
+      }
       await client.query(
         `INSERT INTO ${schema.canvasRuns}
          (id, product_id, revision_id, template_id, template_version, state, remote_task_id, outputs)
@@ -336,7 +389,7 @@ export class PipelineRepository {
          SET state = EXCLUDED.state, remote_task_id = EXCLUDED.remote_task_id,
              outputs = EXCLUDED.outputs, updated_at = now()`,
         [newId("canvas"), revision.rows[0].product_id, revisionId, String(match.templateId ?? "default"), Number(match.templateVersion ?? 1),
-          value.state ?? "partial", value.remoteTaskId ?? null, JSON.stringify(value.outputs ?? [])]
+          value.state ?? "partial", value.remoteTaskId ?? null, JSON.stringify(assetIds)]
       );
       await client.query(`UPDATE ${schema.products} SET state_canvas = $2, updated_at = now() WHERE id = $1`, [revision.rows[0].product_id, value.state]);
       return true;

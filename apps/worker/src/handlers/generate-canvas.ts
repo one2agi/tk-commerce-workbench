@@ -17,6 +17,7 @@ export interface CanvasPlan {
 export function createCanvasHandler(input: {
   canvas: CanvasPort;
   staging: AssetStagingPort;
+  store: { archive(remoteUrl: string): Promise<Record<string, unknown>> };
   repository: {
     loadPlan(revisionId: string): Promise<CanvasPlan>;
     saveOutputs(value: Record<string, unknown>, fence: LeaseFence): Promise<boolean>;
@@ -26,6 +27,27 @@ export function createCanvasHandler(input: {
   now: () => Date;
   maxRunsPerDay: number;
 }): WorkerHandler {
+  const archiveOutputs = async (
+    outputs: Array<{ url: string; width: number; height: number; sha256: string }>,
+    execution: Parameters<WorkerHandler>[1]
+  ) => {
+    const settled = await Promise.allSettled(outputs.map(async (output) => {
+      execution.assertLease();
+      const archived = await input.store.archive(output.url);
+      return {
+        ...archived,
+        remoteUrl: output.url,
+        width: output.width,
+        height: output.height,
+        providerSha256: output.sha256
+      };
+    }));
+    return {
+      assets: settled.flatMap((result) => result.status === "fulfilled" ? [result.value] : []),
+      failedCount: settled.filter((result) => result.status === "rejected").length
+    };
+  };
+
   return async (job, execution) => {
     const revisionId = String(job.payload.revisionId ?? "");
     if (job.remoteTaskId) {
@@ -43,12 +65,15 @@ export function createCanvasHandler(input: {
         }
         throw new ExternalResultUnknownError(job.remoteTaskId, "Canvas result is unknown after fetch");
       }
-      const state = fetched.outputs.length === 0 ? "failed" : fetched.outputs.length < plan.expectedOutputCount ? "partial" : "succeeded";
+      const archived = await archiveOutputs(fetched.outputs, execution);
+      const state = archived.assets.length === 0
+        ? "failed"
+        : archived.failedCount > 0 || archived.assets.length < plan.expectedOutputCount ? "partial" : "succeeded";
       execution.assertLease();
-      requireFencedWrite(await input.repository.saveOutputs({ revisionId, remoteTaskId: job.remoteTaskId, outputs: fetched.outputs, state }, execution.fence));
-      await input.audit.append({ action: "canvas.fetch.result", targetKind: "product_revision", targetId: revisionId, payload: { outputCount: fetched.outputs.length, state }, redacted: true });
-      if (fetched.outputs.length === 0) throw new NeedsInputError("canvas_zero_outputs", "Canvas returned no valid outputs");
-      return { next: [] };
+      requireFencedWrite(await input.repository.saveOutputs({ revisionId, remoteTaskId: job.remoteTaskId, assets: archived.assets, state }, execution.fence));
+      await input.audit.append({ action: "canvas.fetch.result", targetKind: "product_revision", targetId: revisionId, payload: { receivedCount: fetched.outputs.length, outputCount: archived.assets.length, state }, redacted: true });
+      if (archived.assets.length === 0) throw new NeedsInputError("canvas_zero_valid_outputs", "Canvas returned no locally valid outputs");
+      return { next: [{ kind: "final_preview", businessKey: `${revisionId}:preview`, payload: { version: 1, revisionId } }] };
     }
 
     const plan = await input.repository.loadPlan(revisionId);
@@ -123,11 +148,14 @@ export function createCanvasHandler(input: {
         throw error;
       }
       const expected = capacity.expectedOutputCount || plan.expectedOutputCount;
-      const state = fetched.outputs.length === 0 ? "failed" : fetched.outputs.length < expected ? "partial" : "succeeded";
+      const archived = await archiveOutputs(fetched.outputs, execution);
+      const state = archived.assets.length === 0
+        ? "failed"
+        : archived.failedCount > 0 || archived.assets.length < expected ? "partial" : "succeeded";
       execution.assertLease();
-      requireFencedWrite(await input.repository.saveOutputs({ revisionId, remoteTaskId: submitted.remoteTaskId, outputs: fetched.outputs, state }, execution.fence));
-      await input.audit.append({ action: "canvas.fetch.result", targetKind: "product_revision", targetId: revisionId, payload: { outputCount: fetched.outputs.length, state }, redacted: true });
-      if (fetched.outputs.length === 0) throw new NeedsInputError("canvas_zero_outputs", "Canvas returned no valid outputs");
+      requireFencedWrite(await input.repository.saveOutputs({ revisionId, remoteTaskId: submitted.remoteTaskId, assets: archived.assets, state }, execution.fence));
+      await input.audit.append({ action: "canvas.fetch.result", targetKind: "product_revision", targetId: revisionId, payload: { receivedCount: fetched.outputs.length, outputCount: archived.assets.length, state }, redacted: true });
+      if (archived.assets.length === 0) throw new NeedsInputError("canvas_zero_valid_outputs", "Canvas returned no locally valid outputs");
       return { next: [{ kind: "final_preview", businessKey: `${revisionId}:preview`, payload: { version: 1, revisionId } }] };
     } catch (error) {
       if (error instanceof NeedsInputError) throw error;

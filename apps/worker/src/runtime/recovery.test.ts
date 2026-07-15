@@ -255,6 +255,33 @@ describe("durable worker recovery", () => {
     expect(jobs.rows[0]?.status).toBe("succeeded");
   });
 
+  it("stops after one failed reconciliation instead of repeatedly fetching in one runtime", async () => {
+    const jobs = new DurableMemoryJobs();
+    await jobs.enqueue({ kind: "canvas_generate", businessKey: "canvas:bounded-reconcile", payload: {} });
+    await runWorkerLoop({
+      jobs,
+      handlers: { canvas_generate: async () => { throw new ExternalResultUnknownError("remote-bounded", "submitted"); } },
+      clock,
+      workerId: "submitter",
+      leaseMs: 30_000,
+      maxJobs: 1
+    });
+    let fetches = 0;
+    await runWorkerLoop({
+      jobs,
+      handlers: { canvas_generate: async () => {
+        fetches++;
+        throw new ExternalResultUnknownError("remote-bounded", "fetch failed");
+      } },
+      clock,
+      workerId: "reconciler",
+      leaseMs: 30_000,
+      maxJobs: 3
+    });
+    expect(fetches).toBe(1);
+    expect(jobs.rows[0]).toMatchObject({ status: "needs_input", error: { code: "reconcile_failed" } });
+  });
+
   it("observes a persisted global pause rather than a runtime flag", async () => {
     const jobs = new DurableMemoryJobs();
     await jobs.enqueue({ kind: "pricing_calculate", businessKey: "paused", payload: {} });

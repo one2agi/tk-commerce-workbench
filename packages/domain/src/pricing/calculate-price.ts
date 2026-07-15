@@ -5,9 +5,8 @@
 //   1. Sum src minor units (CNY fen).
 //   2. Apply FX rate -> target minor units (THB satang), rounded half-down.
 //   3. Add fixed target cost (in target minor units).
-//   4. Add platform+payment fees (apply rate to fx+fixed).
-//   5. Add target profit (apply rate to fx+fixed+fees).
-//   6. Snap the final to the requested ending digit.
+//   4. Divide by the retained revenue rate (1 - fees - target profit), rounding upward.
+//   5. Snap upward to the requested ending digit.
 
 import { strict as assert } from "node:assert";
 
@@ -56,13 +55,6 @@ function decimalRateToBps(value: string): bigint {
   return negative ? -bps : bps;
 }
 
-// Multiply two minor-unit ints with bps rate -> floor the product/10000.
-function applyRateBps(minor: bigint, bps: bigint): bigint {
-  // (minor * bps) / 10_000n, floored for positive values (we forbid negatives on fees)
-  const product = minor * bps;
-  return product / POW10_4;
-}
-
 // floor(x*rate) helper that mirrors standard accounting math.
 // rate is given as a normalized decimal string like "4.80" -> bps 48000.
 function applyFx(srcMinor: bigint, fxBps: bigint): bigint {
@@ -97,15 +89,14 @@ export function calculateTargetPrice(input: CalculateTargetPriceInput): MoneyWir
   // 3. Fixed target cost added in THB minor.
   const fixedMinor = decimalToMinor(input.fixedTargetCostThb);
 
-  // 4. Fees: apply platform+payment on (fxMinor + fixedMinor).
-  const combinedRateBps = platformBps + paymentBps;
-  const feesMinor = applyRateBps(fxMinor + fixedMinor, combinedRateBps);
-
-  // 5. Profit: apply target profit on (fx + fixed + fees).
-  const baseBeforeProfit = fxMinor + fixedMinor + feesMinor;
-  const profitMinor = applyRateBps(baseBeforeProfit, profitBps);
-
-  const raw = baseBeforeProfit + profitMinor;
+  // Fees and profit are percentages of the final selling price. Divide the
+  // landed cost by the retained share and round upward so the configured
+  // margin is never reduced by minor-unit truncation.
+  const retainedBps = POW10_4 - platformBps - paymentBps - profitBps;
+  assert(retainedBps > 0n, "combined fee and profit rates must be below 1");
+  const landedMinor = fxMinor + fixedMinor;
+  const numerator = landedMinor * POW10_4;
+  const raw = (numerator + retainedBps - 1n) / retainedBps;
   const snapped = snapEnding(raw, input.ending);
 
   return thb(snapped.toString());

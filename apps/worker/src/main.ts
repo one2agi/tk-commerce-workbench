@@ -54,6 +54,7 @@ export interface HandlerRegistryInput {
     finalPreview: Parameters<typeof createFinalPreviewHandler>[0]["repository"];
   };
   store: Parameters<typeof createArchiveAssetsHandler>[0]["store"];
+  analyzer: Parameters<typeof createArchiveAssetsHandler>[0]["analyzer"];
   quota: Parameters<typeof createCanvasHandler>[0]["quota"];
   audit: Parameters<typeof createCollectHandler>[0]["audit"];
   now: () => Date;
@@ -81,12 +82,12 @@ export function buildHandlerRegistry(input: HandlerRegistryInput): Readonly<Reco
   const staging = createAtomicStagingPort(input.ports.staging, (operation) => limiters.run("staging", operation));
   return Object.freeze({
     miaoshou_collect: createCollectHandler({ port: miaoshou, repository: input.repositories.collect, audit: input.audit }),
-    asset_archive: createArchiveAssetsHandler({ store: input.store, repository: input.repositories.archive, audit: input.audit }),
+    asset_archive: createArchiveAssetsHandler({ store: input.store, analyzer: input.analyzer, repository: input.repositories.archive, audit: input.audit }),
     listing_generate: createGenerateListingHandler({ llm, repository: input.repositories.listing, audit: input.audit }),
     pricing_calculate: createPricingHandler({ repository: input.repositories.pricing }),
     template_match: createTemplateMatchHandler({ repository: input.repositories.templates }),
     image_select: createImageSelectHandler({ repository: input.repositories.images }),
-    canvas_generate: createCanvasHandler({ canvas, staging, repository: input.repositories.canvas, quota: input.quota, audit: input.audit, now: input.now, maxRunsPerDay: input.maxCanvasRunsPerDay }),
+    canvas_generate: createCanvasHandler({ canvas, staging, store: input.store, repository: input.repositories.canvas, quota: input.quota, audit: input.audit, now: input.now, maxRunsPerDay: input.maxCanvasRunsPerDay }),
     final_preview: createFinalPreviewHandler({ repository: input.repositories.finalPreview }),
     exchange_rate_refresh: createExchangeRateRefreshHandler({ port: exchangeRate, repository: input.repositories.exchangeRate, audit: input.audit, now: input.now }),
     staging_cleanup: createStagingCleanupHandler({ staging, audit: input.audit })

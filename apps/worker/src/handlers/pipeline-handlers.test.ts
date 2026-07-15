@@ -118,15 +118,26 @@ describe("exchange-rate refresh", () => {
 });
 
 describe("Canvas handler", () => {
+  const store = () => ({
+    archive: vi.fn(async (remoteUrl: string) => ({
+      remoteUrl,
+      finalUrl: remoteUrl,
+      sha256: `local-${remoteUrl.split("/").at(-1)}`,
+      path: `/data/assets/${remoteUrl.split("/").at(-1)}`,
+      extension: "png",
+      bytes: 16
+    }))
+  });
+
   it("atomically reserves the daily limit before submit and pauses without a paid call when full", async () => {
     const ports = createFakePorts();
     const repository = {
       loadPlan: vi.fn(async () => ({ workflowId: "TKWorkflow", templateVersion: 1, productImages: [{ assetId: "a", url: "local:a", role: "primary" as const, score: 1, perceptualHash: "a" }], referenceUrls: [], localAssetIds: ["a"], sourceLocale: "zh-CN", targetLocale: "th-TH", style: "clean", expectedOutputCount: 5 })),
-      saveOutputs: vi.fn(async () => true)
+      saveOutputs: vi.fn(async (_value: Record<string, unknown>) => true)
     };
     const quota = { reserve: vi.fn(async () => false) };
     const audit = { append: vi.fn() };
-    const handler = createCanvasHandler({ canvas: ports.canvas, staging: ports.assetStaging, repository, quota, audit, now: () => new Date("2026-07-16T00:00:00Z"), maxRunsPerDay: 1 });
+    const handler = createCanvasHandler({ canvas: ports.canvas, staging: ports.assetStaging, store: store(), repository, quota, audit, now: () => new Date("2026-07-16T00:00:00Z"), maxRunsPerDay: 1 });
     await expect(invoke(handler, job("canvas_generate", { revisionId: "rev-1" }))).rejects.toBeInstanceOf(NeedsInputError);
     expect(quota.reserve).toHaveBeenCalledOnce();
     expect(ports.canvas.calls.filter((call) => call.method === "submit")).toHaveLength(0);
@@ -141,11 +152,11 @@ describe("Canvas handler", () => {
     const ports = createFakePorts();
     ports.canvas.readWorkflowCapacity = vi.fn(async () => { throw new Error("authorization header leaked by provider"); });
     const repository = {
-      loadPlan: vi.fn(async () => ({ workflowId: "TKWorkflow", templateVersion: 1, productImages: [], referenceUrls: [], localAssetIds: [], sourceLocale: "zh-CN", targetLocale: "th-TH", style: "clean", expectedOutputCount: 5 })),
-      saveOutputs: vi.fn(async () => true)
+      loadPlan: vi.fn(async () => ({ workflowId: "TKWorkflow", templateVersion: 1, productImages: [{ assetId: "a", url: "local:a", role: "primary" as const, score: 1, perceptualHash: "a" }], referenceUrls: [], localAssetIds: ["a"], sourceLocale: "zh-CN", targetLocale: "th-TH", style: "clean", expectedOutputCount: 5 })),
+      saveOutputs: vi.fn(async (_value: Record<string, unknown>) => true)
     };
     const audit = { append: vi.fn() };
-    const handler = createCanvasHandler({ canvas: ports.canvas, staging: ports.assetStaging, repository, quota: { reserve: vi.fn() }, audit, now: () => new Date("2026-07-16T00:00:00Z"), maxRunsPerDay: 10 });
+    const handler = createCanvasHandler({ canvas: ports.canvas, staging: ports.assetStaging, store: store(), repository, quota: { reserve: vi.fn() }, audit, now: () => new Date("2026-07-16T00:00:00Z"), maxRunsPerDay: 10 });
     await expect(invoke(handler, job("canvas_generate", { revisionId: "rev-1" }))).rejects.toThrow("authorization header leaked by provider");
     expect(audit.append.mock.calls.map(([event]) => event.action)).toEqual(["canvas.capacity.call", "canvas.capacity.result"]);
     expect(audit.append.mock.calls.at(-1)?.[0]).toMatchObject({ payload: { state: "failed", code: "external_request_failed" } });
@@ -160,14 +171,59 @@ describe("Canvas handler", () => {
       saveOutputs: vi.fn(async () => true)
     };
     const audit = { append: vi.fn() };
-    const handler = createCanvasHandler({ canvas: ports.canvas, staging: ports.assetStaging, repository, quota: { reserve: vi.fn() }, audit, now: () => new Date("2026-07-16T00:00:00Z"), maxRunsPerDay: 10 });
-    await invoke(handler, job("canvas_generate", { revisionId: "rev-1" }, "remote-existing"));
+    const outputStore = store();
+    const handler = createCanvasHandler({ canvas: ports.canvas, staging: ports.assetStaging, store: outputStore, repository, quota: { reserve: vi.fn() }, audit, now: () => new Date("2026-07-16T00:00:00Z"), maxRunsPerDay: 10 });
+    const result = await invoke(handler, job("canvas_generate", { revisionId: "rev-1" }, "remote-existing"));
     expect(ports.canvas.calls.map((call) => call.method)).toEqual(["fetchOutputs"]);
-    expect(repository.saveOutputs).toHaveBeenCalledWith(expect.objectContaining({ state: "succeeded" }), execution.fence);
+    expect(outputStore.archive).toHaveBeenCalledTimes(2);
+    expect(repository.saveOutputs).toHaveBeenCalledWith(expect.objectContaining({
+      state: "succeeded",
+      assets: [
+        expect.objectContaining({ remoteUrl: expect.stringContaining("/0.png"), path: "/data/assets/0.png" }),
+        expect.objectContaining({ remoteUrl: expect.stringContaining("/1.png"), path: "/data/assets/1.png" })
+      ]
+    }), execution.fence);
+    expect(result.next).toEqual([{ kind: "final_preview", businessKey: "rev-1:preview", payload: { version: 1, revisionId: "rev-1" } }]);
     expect(audit.append.mock.calls.map(([event]) => event.action)).toEqual(["canvas.fetch.call", "canvas.fetch.result"]);
   });
 
+  it("keeps locally archived Canvas outputs in order and marks a failed sibling partial", async () => {
+    const ports = createFakePorts();
+    const outputStore = store();
+    outputStore.archive.mockImplementation(async (remoteUrl: string) => {
+      if (remoteUrl.endsWith("/2.png")) throw new Error("invalid image");
+      return { remoteUrl, finalUrl: remoteUrl, sha256: `hash-${remoteUrl.at(-5)}`, path: `/data/${remoteUrl.at(-5)}.png`, extension: "png", bytes: 16 };
+    });
+    const repository = {
+      loadPlan: vi.fn(async () => ({ workflowId: "TKWorkflow", templateVersion: 1, productImages: [{ assetId: "a", url: "local:a", role: "primary" as const, score: 1, perceptualHash: "a" }], referenceUrls: [], localAssetIds: ["a"], sourceLocale: "zh-CN", targetLocale: "th-TH", style: "clean", expectedOutputCount: 5 })),
+      saveOutputs: vi.fn(async (_value: Record<string, unknown>) => true)
+    };
+    const result = await invoke(createCanvasHandler({ canvas: ports.canvas, staging: ports.assetStaging, store: outputStore, repository, quota: { reserve: vi.fn(async () => true) }, audit: { append: vi.fn() }, now: () => new Date("2026-07-16T00:00:00Z"), maxRunsPerDay: 10 }), job("canvas_generate", { revisionId: "rev-1" }));
+
+    expect(outputStore.archive).toHaveBeenCalledTimes(5);
+    expect(repository.saveOutputs).toHaveBeenCalledWith(expect.objectContaining({
+      state: "partial",
+      assets: expect.arrayContaining([expect.objectContaining({ remoteUrl: expect.stringContaining("/0.png") })])
+    }), execution.fence);
+    expect(repository.saveOutputs.mock.calls[0]?.[0].assets).toHaveLength(4);
+    expect(result.next[0]?.kind).toBe("final_preview");
+  });
+
+  it("persists failed Canvas state and stops when no remote output survives local validation", async () => {
+    const ports = createFakePorts();
+    const repository = {
+      loadPlan: vi.fn(async () => ({ workflowId: "TKWorkflow", templateVersion: 1, productImages: [], referenceUrls: [], localAssetIds: [], sourceLocale: "zh-CN", targetLocale: "th-TH", style: "clean", expectedOutputCount: 5 })),
+      saveOutputs: vi.fn(async () => true)
+    };
+    const rejectingStore = { archive: vi.fn(async () => { throw new Error("rejected image"); }) };
+    const handler = createCanvasHandler({ canvas: ports.canvas, staging: ports.assetStaging, store: rejectingStore, repository, quota: { reserve: vi.fn(async () => true) }, audit: { append: vi.fn() }, now: () => new Date("2026-07-16T00:00:00Z"), maxRunsPerDay: 10 });
+
+    await expect(invoke(handler, job("canvas_generate", { revisionId: "rev-1" }, "remote-existing"))).rejects.toMatchObject({ code: "canvas_zero_valid_outputs" });
+    expect(repository.saveOutputs).toHaveBeenCalledWith(expect.objectContaining({ state: "failed", assets: [] }), execution.fence);
+  });
+
   it("releases staged assets and fails closed when submit may have reached Canvas", async () => {
+    vi.mocked(execution.persistRemoteTask).mockClear();
     const ports = createFakePorts();
     ports.canvas.submit = vi.fn(async () => { throw new Error("connection reset after request body"); });
     const repository = {
@@ -175,7 +231,7 @@ describe("Canvas handler", () => {
       saveOutputs: vi.fn(async () => true)
     };
     const audit = { append: vi.fn() };
-    const handler = createCanvasHandler({ canvas: ports.canvas, staging: ports.assetStaging, repository, quota: { reserve: vi.fn(async () => true) }, audit, now: () => new Date("2026-07-16T00:00:00Z"), maxRunsPerDay: 10 });
+    const handler = createCanvasHandler({ canvas: ports.canvas, staging: ports.assetStaging, store: store(), repository, quota: { reserve: vi.fn(async () => true) }, audit, now: () => new Date("2026-07-16T00:00:00Z"), maxRunsPerDay: 10 });
 
     await expect(invoke(handler, job("canvas_generate", { revisionId: "rev-1" }))).rejects.toMatchObject({ code: "reconcile_required" });
     expect(ports.assetStaging.calls.map((call) => call.method)).toEqual(["stage", "release"]);
@@ -211,14 +267,51 @@ describe("Miaoshou collection handler", () => {
 });
 
 describe("asset archive handler", () => {
+  it("scores analyzer evidence and persists accepted and rejected quality fields", async () => {
+    const store = { archive: vi.fn(async (url: string) => ({
+      remoteUrl: url, finalUrl: url, sha256: `hash-${url}`, path: `/asset/${url}.jpg`, extension: "jpg", bytes: 4
+    })) };
+    const analyzer = { analyze: vi.fn(async ({ remoteUrl }: { remoteUrl: string }) => ({
+      width: remoteUrl.includes("small") ? 320 : 1200,
+      height: remoteUrl.includes("small") ? 320 : 1200,
+      perceptualHash: `phash-${remoteUrl}`,
+      clarity: 0.9,
+      duplicateDistance: 12,
+      watermarkProbability: 0.01,
+      collageProbability: 0.02,
+      nonProductProbability: 0.03,
+      visualScore: 0.88,
+      sourceKind: "main" as const
+    })) };
+    const repository = { saveArchive: vi.fn(async () => true) };
+    const audit = { append: vi.fn() };
+
+    await invoke(createArchiveAssetsHandler({ store, analyzer, repository, audit }), job("asset_archive", {
+      revisionId: "rev-quality", remoteUrls: ["good", "small"]
+    }));
+
+    expect(analyzer.analyze).toHaveBeenCalledTimes(2);
+    expect(repository.saveArchive).toHaveBeenCalledWith(expect.objectContaining({
+      state: "partial",
+      assets: expect.arrayContaining([
+        expect.objectContaining({ remoteUrl: "good", width: 1200, height: 1200, perceptualHash: "phash-good", chosenRole: "primary", rejectionReason: null }),
+        expect.objectContaining({ remoteUrl: "small", width: 320, height: 320, perceptualHash: "phash-small", rejectionReason: "low_resolution" })
+      ])
+    }), execution.fence);
+  });
+
   it("keeps successful assets when another image fails and continues the product", async () => {
     const store = { archive: vi.fn(async (url: string) => {
       if (url.endsWith("bad.jpg")) throw new Error("download failed");
       return { remoteUrl: url, finalUrl: url, sha256: "hash", path: "/asset/hash.jpg", extension: "jpg", bytes: 4 };
     }) };
+    const analyzer = { analyze: vi.fn(async () => ({
+      width: 1200, height: 1200, perceptualHash: "phash", clarity: 1, duplicateDistance: 10,
+      watermarkProbability: 0, collageProbability: 0, nonProductProbability: 0, visualScore: 1, sourceKind: "main" as const
+    })) };
     const repository = { saveArchive: vi.fn(async () => true) };
     const audit = { append: vi.fn() };
-    const result = await invoke(createArchiveAssetsHandler({ store, repository, audit }), job("asset_archive", { revisionId: "rev-1", remoteUrls: ["https://cdn/good.jpg", "https://cdn/bad.jpg"] }));
+    const result = await invoke(createArchiveAssetsHandler({ store, analyzer, repository, audit }), job("asset_archive", { revisionId: "rev-1", remoteUrls: ["https://cdn/good.jpg", "https://cdn/bad.jpg"] }));
     expect(repository.saveArchive).toHaveBeenCalledWith(expect.objectContaining({ state: "partial", assets: [expect.objectContaining({ sha256: "hash" })] }), execution.fence);
     expect(result.next[0]?.kind).toBe("listing_generate");
     expect(audit.append.mock.calls.map(([event]) => event.action)).toEqual([

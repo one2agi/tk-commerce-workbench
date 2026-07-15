@@ -454,15 +454,15 @@ export class JobRepository {
         `UPDATE ${schema.jobs}
        SET status = CASE
              WHEN remote_task_id IS NOT NULL
-               OR kind IN ('miaoshou_collect', 'canvas_generate', 'miaoshou_edit')
+               OR kind IN ('miaoshou_collect', 'listing_generate', 'exchange_rate_refresh', 'canvas_generate', 'miaoshou_edit')
                THEN 'needs_input'
              WHEN attempt >= max_attempts THEN 'failed'
              ELSE 'queued'
            END,
            error = CASE
              WHEN remote_task_id IS NOT NULL
-               OR kind IN ('miaoshou_collect', 'canvas_generate', 'miaoshou_edit')
-               THEN '{"code":"reconcile_required","message":"Lease expired after an external side effect; reconcile before retry"}'::jsonb
+               OR kind IN ('miaoshou_collect', 'listing_generate', 'exchange_rate_refresh', 'canvas_generate', 'miaoshou_edit')
+               THEN '{"kind":"reconcile_required","code":"reconcile_required","safeMessage":"External request may have started before the worker lease expired; review before retry"}'::jsonb
              WHEN attempt >= max_attempts
                THEN '{"code":"attempts_exhausted","message":"Maximum attempts exhausted"}'::jsonb
              ELSE error
