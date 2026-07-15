@@ -1,5 +1,6 @@
 # Worktree 隔离（按 using-git-worktrees 规范）
 .worktrees/
+.worktrees-coordination/
 
 # 需求原型产生的本地目录（不入仓）
 .superpowers/

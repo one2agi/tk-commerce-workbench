@@ -9,7 +9,7 @@
     "lint": "echo skip",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
-    "test:integration": "vitest run --project integration",
+    "test:integration": "vitest run src/integration/repositories.integration.test.ts",
     "db:generate": "echo drizzle placeholder",
     "db:migrate": "echo drizzle placeholder"
   },
