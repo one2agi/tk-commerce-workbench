@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { ConfirmMiaoshouEditV1, IngestLinksV1, StartAutomationV1 } from "./commands.js";
+import type { MiaoshouCollectPayloadV1 } from "./jobs.js";
 
 describe("command contracts", () => {
   it("accepts selected 1688 links only", () => {
@@ -14,6 +15,18 @@ describe("command contracts", () => {
       ]
     });
     expect(result.success).toBe(true);
+  });
+
+  it("keeps the Miaoshou collection job at the ingest-before-product boundary", () => {
+    const payload = {
+      version: 1,
+      batchId: "batch_01",
+      sourceUrl: "https://detail.1688.com/offer/892408514788.html",
+      idempotencyKey: "1688:892408514788:batch_01"
+    } satisfies MiaoshouCollectPayloadV1;
+
+    expect(payload.batchId).toBe("batch_01");
+    expect(payload).not.toHaveProperty("revisionId");
   });
 
   it("requires explicit commands for processing and Miaoshou edit", () => {
