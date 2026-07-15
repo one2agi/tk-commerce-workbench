@@ -157,8 +157,47 @@ CREATE TABLE IF NOT EXISTS assets (
   width            INTEGER,
   height           INTEGER,
   sha256           TEXT,
+  local_path       TEXT,
+  extension        TEXT,
+  perceptual_hash  TEXT,
+  clarity          DOUBLE PRECISION,
+  duplicate_distance INTEGER,
+  watermark_probability DOUBLE PRECISION,
+  collage_probability DOUBLE PRECISION,
+  non_product_probability DOUBLE PRECISION,
+  visual_score     DOUBLE PRECISION,
+  chosen_role      TEXT,
+  rejection_reason TEXT,
   created_at       TIMESTAMPTZ NOT NULL DEFAULT now()
 );
+
+ALTER TABLE assets ADD COLUMN IF NOT EXISTS local_path TEXT;
+ALTER TABLE assets ADD COLUMN IF NOT EXISTS extension TEXT;
+ALTER TABLE assets ADD COLUMN IF NOT EXISTS perceptual_hash TEXT;
+ALTER TABLE assets ADD COLUMN IF NOT EXISTS clarity DOUBLE PRECISION;
+ALTER TABLE assets ADD COLUMN IF NOT EXISTS duplicate_distance INTEGER;
+ALTER TABLE assets ADD COLUMN IF NOT EXISTS watermark_probability DOUBLE PRECISION;
+ALTER TABLE assets ADD COLUMN IF NOT EXISTS collage_probability DOUBLE PRECISION;
+ALTER TABLE assets ADD COLUMN IF NOT EXISTS non_product_probability DOUBLE PRECISION;
+ALTER TABLE assets ADD COLUMN IF NOT EXISTS visual_score DOUBLE PRECISION;
+ALTER TABLE assets ADD COLUMN IF NOT EXISTS chosen_role TEXT;
+ALTER TABLE assets ADD COLUMN IF NOT EXISTS rejection_reason TEXT;
+
+DROP INDEX IF EXISTS assets_product_remote_unique;
+
+WITH duplicate_assets AS (
+  SELECT id, ROW_NUMBER() OVER (
+    PARTITION BY COALESCE(revision_id, product_id), remote_url
+    ORDER BY created_at ASC, id ASC
+  ) AS duplicate_rank
+  FROM assets
+)
+DELETE FROM assets
+WHERE id IN (SELECT id FROM duplicate_assets WHERE duplicate_rank > 1);
+
+CREATE UNIQUE INDEX IF NOT EXISTS assets_revision_remote_unique
+  ON assets(revision_id, remote_url)
+  WHERE revision_id IS NOT NULL;
 
 CREATE TABLE IF NOT EXISTS listing_drafts (
   id               TEXT PRIMARY KEY,
@@ -190,6 +229,13 @@ CREATE TABLE IF NOT EXISTS listing_generation_runs (
   updated_at       TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
+WITH duplicate_listing_drafts AS (
+  SELECT id, ROW_NUMBER() OVER (PARTITION BY revision_id, draft_version ORDER BY created_at ASC, id ASC) AS duplicate_rank
+  FROM listing_drafts
+)
+DELETE FROM listing_drafts WHERE id IN (SELECT id FROM duplicate_listing_drafts WHERE duplicate_rank > 1);
+CREATE UNIQUE INDEX IF NOT EXISTS listing_drafts_revision_version_unique ON listing_drafts(revision_id, draft_version);
+
 CREATE TABLE IF NOT EXISTS pricing_runs (
   id               TEXT PRIMARY KEY,
   product_id       TEXT NOT NULL REFERENCES products(id) ON DELETE CASCADE,
@@ -216,6 +262,13 @@ CREATE TABLE IF NOT EXISTS exchange_rate_snapshots (
   created_at       TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
+WITH duplicate_pricing_runs AS (
+  SELECT id, ROW_NUMBER() OVER (PARTITION BY revision_id, draft_version ORDER BY created_at ASC, id ASC) AS duplicate_rank
+  FROM pricing_runs
+)
+DELETE FROM pricing_runs WHERE id IN (SELECT id FROM duplicate_pricing_runs WHERE duplicate_rank > 1);
+CREATE UNIQUE INDEX IF NOT EXISTS pricing_runs_revision_version_unique ON pricing_runs(revision_id, draft_version);
+
 CREATE TABLE IF NOT EXISTS automation_runs (
   id               TEXT PRIMARY KEY,
   revision_id      TEXT NOT NULL REFERENCES product_revisions(id) ON DELETE CASCADE,
@@ -240,6 +293,22 @@ CREATE TABLE IF NOT EXISTS canvas_runs (
   created_at       TIMESTAMPTZ NOT NULL DEFAULT now(),
   updated_at       TIMESTAMPTZ NOT NULL DEFAULT now()
 );
+
+CREATE TABLE IF NOT EXISTS canvas_daily_reservations (
+  day_key          DATE NOT NULL,
+  slot             INTEGER NOT NULL CHECK (slot > 0),
+  run_key          TEXT NOT NULL,
+  created_at       TIMESTAMPTZ NOT NULL DEFAULT now(),
+  PRIMARY KEY (day_key, slot),
+  UNIQUE (day_key, run_key)
+);
+
+WITH duplicate_canvas_runs AS (
+  SELECT id, ROW_NUMBER() OVER (PARTITION BY revision_id, template_version ORDER BY created_at ASC, id ASC) AS duplicate_rank
+  FROM canvas_runs
+)
+DELETE FROM canvas_runs WHERE id IN (SELECT id FROM duplicate_canvas_runs WHERE duplicate_rank > 1);
+CREATE UNIQUE INDEX IF NOT EXISTS canvas_runs_revision_template_unique ON canvas_runs(revision_id, template_version);
 
 CREATE TABLE IF NOT EXISTS approval_snapshots (
   id               TEXT PRIMARY KEY,
@@ -292,6 +361,8 @@ CREATE TABLE IF NOT EXISTS jobs (
   business_key     TEXT NOT NULL,
   idempotency_key  TEXT NOT NULL,
   payload          JSONB NOT NULL,
+  batch_key        TEXT,
+  pause_reason     TEXT,
   status           TEXT NOT NULL DEFAULT 'queued',
   attempt          INTEGER NOT NULL DEFAULT 0,
   max_attempts     INTEGER NOT NULL DEFAULT 3,
@@ -309,6 +380,8 @@ CREATE TABLE IF NOT EXISTS jobs (
 
 -- Forward-compatible for local Wave 1 databases that already created the table.
 ALTER TABLE jobs ADD COLUMN IF NOT EXISTS lease_token TEXT;
+ALTER TABLE jobs ADD COLUMN IF NOT EXISTS batch_key TEXT;
+ALTER TABLE jobs ADD COLUMN IF NOT EXISTS pause_reason TEXT;
 
 CREATE TABLE IF NOT EXISTS worker_instances (
   id               TEXT PRIMARY KEY,
@@ -354,4 +427,5 @@ CREATE TABLE IF NOT EXISTS workspace_settings (
   max_canvas_runs_per_day  INTEGER NOT NULL DEFAULT 50,
   asset_root               TEXT NOT NULL DEFAULT './var/assets'
 );
+ALTER TABLE workspace_settings ADD COLUMN IF NOT EXISTS worker_paused BOOLEAN NOT NULL DEFAULT false;
 `;

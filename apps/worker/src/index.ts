@@ -3,4 +3,7 @@
 // at import time so unit tests can `import "@tk/worker"` without spawning loops.
 
 export const workerPackageName = "@tk/worker";
-export const workerReady = false as const;
+export const workerReady = true as const;
+export * from "./main.js";
+export * from "./runtime/worker-loop.js";
+export * from "./runtime/adapter-limiter.js";

@@ -9,11 +9,14 @@
     "build": "tsc --noEmit",
     "lint": "eslint src --max-warnings=0",
     "typecheck": "tsc --noEmit",
-    "test": "vitest run"
+    "test": "vitest run --exclude '**/*.pg.test.ts'",
+    "test:integration": "vitest run --config vitest.integration.config.ts"
   },
   "dependencies": {
     "@tk/contracts": "workspace:*",
-    "@tk/config": "workspace:*"
+    "@tk/config": "workspace:*",
+    "@tk/db": "workspace:*",
+    "@tk/domain": "workspace:*"
   },
   "devDependencies": {
     "tsx": "4.23.1",

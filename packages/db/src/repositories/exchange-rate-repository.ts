@@ -64,6 +64,24 @@ export class ExchangeRateRepository {
     });
   }
 
+  async recordProvider(input: {
+    base: string;
+    target: string;
+    rate: string;
+    source?: string;
+    observedAt: string;
+    isStale?: boolean;
+  }): Promise<string> {
+    return this.record({
+      base: input.base,
+      target: input.target,
+      rate: input.rate,
+      source: "provider",
+      observedAt: input.observedAt,
+      isStale: input.isStale ?? false
+    });
+  }
+
   async listAll(): Promise<ExchangeRateRow[]> {
     const r = await this.pool.query(
       `SELECT id, base, target, rate, source, observed_at, is_stale, created_at
@@ -81,4 +99,41 @@ export class ExchangeRateRepository {
       createdAt: new Date(row.created_at)
     }));
   }
+
+  async latestEffective(base: string, target: string): Promise<ExchangeRateRow | null> {
+    const result = await this.pool.query(
+      `SELECT id, base, target, rate, source, observed_at, is_stale, created_at
+       FROM ${schema.exchangeRateSnapshots}
+       WHERE base = $1 AND target = $2
+       ORDER BY (source = 'manual') DESC, observed_at DESC
+       LIMIT 1`,
+      [base, target]
+    );
+    return result.rows[0] ? mapExchangeRate(result.rows[0]) : null;
+  }
+
+  async latestSuccessful(base: string, target: string): Promise<ExchangeRateRow | null> {
+    return this.latestEffective(base, target);
+  }
+
+  async markStale(snapshotId: string): Promise<boolean> {
+    const result = await this.pool.query(
+      `UPDATE ${schema.exchangeRateSnapshots} SET is_stale = true WHERE id = $1`,
+      [snapshotId]
+    );
+    return result.rowCount === 1;
+  }
+}
+
+function mapExchangeRate(row: Record<string, unknown>): ExchangeRateRow {
+  return {
+    id: String(row.id),
+    base: String(row.base),
+    target: String(row.target),
+    rate: String(row.rate),
+    source: String(row.source),
+    observedAt: new Date(String(row.observed_at)),
+    isStale: Boolean(row.is_stale),
+    createdAt: new Date(String(row.created_at))
+  };
 }
