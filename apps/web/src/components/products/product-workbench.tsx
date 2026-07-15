@@ -126,6 +126,7 @@ export function ProductWorkbench({
           item={drawerItem}
           open={state.drawerProductId !== null}
           startButtonLabel={state.drawerStartButtonLabel}
+          startButtonEnabled={state.drawerStartButtonEnabled}
           onClose={() => dispatch({ type: "close" })}
           onStart={handleStart}
         />

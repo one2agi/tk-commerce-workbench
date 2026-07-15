@@ -45,11 +45,6 @@ function require_(env: NodeJS.ProcessEnv, key: string): string {
   return v;
 }
 
-function isTestEnv(env: NodeJS.ProcessEnv): boolean {
-  const nodeEnv = (read(env, "NODE_ENV") ?? "development").toLowerCase();
-  return nodeEnv === "test";
-}
-
 function ensureLoopbackUnlessAllowLan(env: NodeJS.ProcessEnv): void {
   const allowLan = (read(env, "ALLOW_LAN") ?? "false").toLowerCase() === "true";
   if (allowLan) return;

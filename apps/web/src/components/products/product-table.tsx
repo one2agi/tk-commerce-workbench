@@ -3,6 +3,7 @@
 import type { ChangeEvent, ReactElement, UIEvent } from "react";
 import type { ProductPoolItemV1 } from "@tk/contracts/read-models";
 import type { StageKey } from "./product-workbench.selectors";
+import { canStartAutomation } from "./product-workbench.selectors";
 
 type Props = Readonly<{
   items: ReadonlyArray<ProductPoolItemV1>;
@@ -17,9 +18,11 @@ type Props = Readonly<{
 
 const STAGE_STATE_LABEL: Readonly<Record<StageKey, string>> = {
   all: "全部",
-  collection: "收集阶段",
-  listing: "listing 阶段",
-  miaoshouEdit: "妙手回写阶段"
+  pending: "待处理",
+  processing: "处理中",
+  review: "待确认",
+  needs_attention: "需处理",
+  synced: "已同步妙手"
 };
 
 function statusFor(item: ProductPoolItemV1): string {
@@ -79,6 +82,7 @@ export function ProductTable({
                       <input
                         type="checkbox"
                         checked={checked}
+                        disabled={!canStartAutomation(item)}
                         aria-label={`选择商品 ${item.productId}`}
                         onChange={(_e: ChangeEvent<HTMLInputElement>) =>
                           onToggleSelection(String(item.productId))

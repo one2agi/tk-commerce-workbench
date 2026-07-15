@@ -1,14 +1,3 @@
-// Project per-aggregate states onto a friendly UI "stage" label and counts.
-//
-// Rules:
-// - not_started is terminal when no paid service has been called.
-// - collecting once a paid source tool begins (miaoshouSource not in {not_started, ...}).
-// - approved once everything except miaoshou_edit is done AND approval = approved.
-// - published once miaoshou_edit succeeded.
-// - blocked whenever any axis is in a failed/result_unknown terminal state.
-//
-// Counts are *per-axis* — we never collapse into a single global status.
-
 import type {
   ApprovalState,
   AssetArchiveState,
@@ -20,12 +9,11 @@ import type {
 } from "@tk/contracts";
 
 export type UiStageLabel =
-  | "not_started"
-  | "collecting"
-  | "asset_ready"
-  | "approved"
-  | "published"
-  | "blocked";
+  | "pending"
+  | "processing"
+  | "review"
+  | "needs_attention"
+  | "synced";
 
 export interface ProductAxes {
   readonly miaoshouSource: MiaoshouSourceState;
@@ -35,108 +23,107 @@ export interface ProductAxes {
   readonly canvas: CanvasState;
   readonly approval: ApprovalState;
   readonly miaoshouEdit: MiaoshouEditState;
+  readonly hasUsableCanvasOutputs?: boolean;
 }
 
-const COLLECTING_STATES: ReadonlySet<MiaoshouSourceState> = new Set([
-  "submitted",
-  "pending",
-  "success",
-  "skipped_duplicate",
-  "failed"
-]);
+function needsAttention(input: ProductAxes): boolean {
+  return (
+    input.miaoshouSource === "failed" ||
+    input.automation === "needs_input" ||
+    input.automation === "failed" ||
+    input.automation === "cancelled" ||
+    input.assetArchive === "partial" ||
+    input.assetArchive === "failed" ||
+    input.listing === "needs_input" ||
+    input.listing === "failed" ||
+    input.canvas === "failed" ||
+    (input.canvas === "partial" && !input.hasUsableCanvasOutputs) ||
+    input.approval === "invalidated" ||
+    input.miaoshouEdit === "result_unknown" ||
+    input.miaoshouEdit === "failed"
+  );
+}
 
-const FAILED_TERMINAL: ReadonlyArray<string> = [
-  "failed",
-  "result_unknown",
-  "needs_input",
-  "needs_reconcile"
-];
-
-function isFailed(axis: string): boolean {
-  return FAILED_TERMINAL.includes(axis);
+function isProcessing(input: ProductAxes): boolean {
+  return (
+    input.miaoshouSource === "submitted" ||
+    input.miaoshouSource === "pending" ||
+    input.automation === "queued" ||
+    input.automation === "running" ||
+    input.automation === "paused" ||
+    input.automation === "ready" ||
+    input.assetArchive === "downloading" ||
+    input.listing === "generating" ||
+    input.canvas === "queued" ||
+    input.canvas === "running" ||
+    input.approval === "approved" ||
+    input.miaoshouEdit === "queued" ||
+    input.miaoshouEdit === "syncing"
+  );
 }
 
 export function projectUiStage(input: ProductAxes): { label: UiStageLabel } {
-  const axesForBlocked: ReadonlyArray<{ value: string }> = [
-    { value: input.miaoshouSource },
-    { value: input.assetArchive },
-    { value: input.listing },
-    { value: input.canvas },
-    { value: input.miaoshouEdit }
-  ];
-  if (axesForBlocked.some((a) => isFailed(a.value))) {
-    return { label: "blocked" };
+  if (input.miaoshouEdit === "succeeded") {
+    return { label: "synced" };
   }
 
-  // published wins once miaoshou edit succeeded.
-  if (input.miaoshouEdit === "succeeded" && input.approval === "approved") {
-    return { label: "published" };
+  if (needsAttention(input)) {
+    return { label: "needs_attention" };
   }
 
-  // approved once the product-side pipeline is ready AND approval = approved.
-  const pipelineReady =
+  const reviewReady =
     input.assetArchive === "ready" &&
     input.listing === "ready" &&
-    input.canvas === "succeeded";
-  if (pipelineReady && input.approval === "approved") {
-    return { label: "approved" };
+    (input.canvas === "succeeded" ||
+      (input.canvas === "partial" && input.hasUsableCanvasOutputs === true)) &&
+    input.approval === "unapproved";
+  if (reviewReady) {
+    return { label: "review" };
   }
 
-  if (input.assetArchive === "ready") {
-    return { label: "asset_ready" };
+  if (isProcessing(input)) {
+    return { label: "processing" };
   }
 
-  if (COLLECTING_STATES.has(input.miaoshouSource)) {
-    return { label: "collecting" };
-  }
-
-  if (input.automation !== "not_started") {
-    return { label: "collecting" };
-  }
-
-  return { label: "not_started" };
+  return { label: "pending" };
 }
 
 export interface StageCounts {
-  not_started: number;
-  collecting: number;
-  blocked: number;
-  assetReady: number;
-  approved: number;
-  published: number;
+  pending: number;
+  processing: number;
+  review: number;
+  needsAttention: number;
+  synced: number;
 }
 
 export function projectStageCounts(rows: ReadonlyArray<ProductAxes>): StageCounts {
   const counts: StageCounts = {
-    not_started: 0,
-    collecting: 0,
-    blocked: 0,
-    assetReady: 0,
-    approved: 0,
-    published: 0
+    pending: 0,
+    processing: 0,
+    review: 0,
+    needsAttention: 0,
+    synced: 0
   };
+
   for (const row of rows) {
-    const { label } = projectUiStage(row);
-    switch (label) {
-      case "not_started":
-        counts.not_started++;
+    switch (projectUiStage(row).label) {
+      case "pending":
+        counts.pending++;
         break;
-      case "collecting":
-        counts.collecting++;
+      case "processing":
+        counts.processing++;
         break;
-      case "blocked":
-        counts.blocked++;
+      case "review":
+        counts.review++;
         break;
-      case "asset_ready":
-        counts.assetReady++;
+      case "needs_attention":
+        counts.needsAttention++;
         break;
-      case "approved":
-        counts.approved++;
-        break;
-      case "published":
-        counts.published++;
+      case "synced":
+        counts.synced++;
         break;
     }
   }
+
   return counts;
 }

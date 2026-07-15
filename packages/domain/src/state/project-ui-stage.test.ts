@@ -1,5 +1,3 @@
-// RED-first test for projecting per-axis states into a UI stage.
-
 import { describe, expect, test } from "vitest";
 
 import type {
@@ -16,7 +14,7 @@ import { projectUiStage, projectStageCounts } from "./project-ui-stage.js";
 
 function base() {
   return {
-    miaoshouSource: "not_started" as MiaoshouSourceState,
+    miaoshouSource: "success" as MiaoshouSourceState,
     automation: "not_started" as AutomationState,
     assetArchive: "pending" as AssetArchiveState,
     listing: "pending" as ListingState,
@@ -27,65 +25,72 @@ function base() {
 }
 
 describe("projectUiStage", () => {
-  test("not_started is terminal for collection when nothing paid has been invoked", () => {
-    const stage = projectUiStage(base());
-    expect(stage.label).toBe("not_started");
+  test("projects a collected product that has not started automation as pending", () => {
+    expect(projectUiStage(base()).label).toBe("pending");
   });
 
-  test("promotes to collecting once a paid source tool begins", () => {
-    const stage = projectUiStage({ ...base(), miaoshouSource: "submitted" });
-    expect(stage.label).toBe("collecting");
+  test("projects active source, automation, and edit work as processing", () => {
+    expect(projectUiStage({ ...base(), automation: "running" }).label).toBe("processing");
+    expect(projectUiStage({ ...base(), miaoshouSource: "pending" }).label).toBe("processing");
+    expect(projectUiStage({ ...base(), approval: "approved", miaoshouEdit: "queued" }).label).toBe("processing");
   });
 
-  test("promotes to approved once approval is approved (independent of edit state)", () => {
+  test("projects a complete draft waiting for approval as review", () => {
     const stage = projectUiStage({
       ...base(),
+      automation: "ready",
       assetArchive: "ready",
       listing: "ready",
-      canvas: "succeeded",
-      approval: "approved",
-      miaoshouEdit: "queued"
+      canvas: "succeeded"
     });
-    expect(stage.label).toBe("approved");
+    expect(stage.label).toBe("review");
   });
 
-  test("promotes to published once miaoshou edit succeeded", () => {
-    const stage = projectUiStage({
+  test("projects partial Canvas output as review only when at least one output is usable", () => {
+    const draft = {
       ...base(),
-      assetArchive: "ready",
-      listing: "ready",
-      canvas: "succeeded",
-      approval: "approved",
-      miaoshouEdit: "succeeded"
-    });
-    expect(stage.label).toBe("published");
+      automation: "ready" as const,
+      assetArchive: "ready" as const,
+      listing: "ready" as const,
+      canvas: "partial" as const
+    };
+    expect(projectUiStage({ ...draft, hasUsableCanvasOutputs: true }).label).toBe("review");
+    expect(projectUiStage({ ...draft, hasUsableCanvasOutputs: false }).label).toBe("needs_attention");
   });
 
-  test("surfaces failed whenever any axis is in a failed/result_unknown terminal state", () => {
-    const stage = projectUiStage({
-      ...base(),
-      assetArchive: "failed"
-    });
-    expect(stage.label).toBe("blocked");
+  test("projects failed, needs-input, unknown, and invalidated work as needs attention", () => {
+    expect(projectUiStage({ ...base(), assetArchive: "failed" }).label).toBe("needs_attention");
+    expect(projectUiStage({ ...base(), automation: "needs_input" }).label).toBe("needs_attention");
+    expect(projectUiStage({ ...base(), miaoshouEdit: "result_unknown" }).label).toBe("needs_attention");
+    expect(projectUiStage({ ...base(), approval: "invalidated" }).label).toBe("needs_attention");
+  });
+
+  test("projects a successful Miaoshou edit as synced", () => {
+    expect(projectUiStage({ ...base(), approval: "approved", miaoshouEdit: "succeeded" }).label).toBe("synced");
   });
 });
 
 describe("projectStageCounts", () => {
-  test("computes per-axis counts without collapsing into one global status", () => {
+  test("counts every product in exactly one product-facing stage", () => {
     const rows = [
       base(),
-      { ...base(), miaoshouSource: "success" as const },
-      { ...base(), miaoshouSource: "failed" as const },
-      { ...base(), assetArchive: "ready" as const }
+      { ...base(), automation: "running" as const },
+      {
+        ...base(),
+        automation: "ready" as const,
+        assetArchive: "ready" as const,
+        listing: "ready" as const,
+        canvas: "succeeded" as const
+      },
+      { ...base(), automation: "needs_input" as const },
+      { ...base(), approval: "approved" as const, miaoshouEdit: "succeeded" as const }
     ];
-    const counts = projectStageCounts(rows);
-    expect(counts).toEqual({
-      not_started: 1,
-      collecting: 1,
-      blocked: 1,
-      assetReady: 1,
-      approved: 0,
-      published: 0
+    expect(projectStageCounts(rows)).toEqual({
+      pending: 1,
+      processing: 1,
+      review: 1,
+      needsAttention: 1,
+      synced: 1
     });
   });
 });

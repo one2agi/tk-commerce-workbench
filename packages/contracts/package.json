@@ -10,8 +10,8 @@
     "./*": "./src/*.ts"
   },
   "scripts": {
-    "build": "echo skip",
-    "lint": "echo skip",
+    "build": "tsc --noEmit",
+    "lint": "eslint src --max-warnings=0",
     "typecheck": "tsc --noEmit",
     "test": "vitest run"
   },
