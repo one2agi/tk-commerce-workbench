@@ -5,8 +5,7 @@
 import { describe, expect, it } from "vitest";
 import {
   createScanStore,
-  type ScanStoreListener,
-  type ScannedCard
+  type ScanStoreListener
 } from "./scan-store.js";
 
 interface StubElement {
@@ -135,10 +134,31 @@ class StubObserver {
   }
 }
 
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-(globalThis as any).MutationObserver = StubObserver;
+(globalThis as unknown as { MutationObserver: typeof StubObserver }).MutationObserver = StubObserver;
 
 describe("scan-store", () => {
+  it("supports the direct and render-key card shapes used by the local 1688 collector", () => {
+    const root = el("div");
+    const direct = el("a");
+    direct.attrs["class"] = "search-offer-wrapper";
+    direct.attrs["href"] = "https://detail.1688.com/offer/111111111111.html";
+    root.appendChild(direct);
+    const rendered = el("div");
+    rendered.attrs["class"] = "search-offer-wrapper";
+    rendered.attrs["data-renderkey"] = "offer-2";
+    const similar = el("a");
+    similar.attrs["href"] = "https://s.1688.com/similar_search.html?offerIds=222222222222";
+    rendered.appendChild(similar);
+    root.appendChild(rendered);
+
+    const store = createScanStore(root as unknown as HTMLElement);
+    store.start();
+    expect(store.snapshot().map((card) => card.sourceItemId)).toEqual([
+      "111111111111",
+      "222222222222"
+    ]);
+  });
+
   it("parses visible cards from a frozen DOM fixture", () => {
     const root = buildFixtureDom();
     const store = createScanStore(root as unknown as HTMLElement);

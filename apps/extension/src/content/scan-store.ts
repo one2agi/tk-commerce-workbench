@@ -10,7 +10,14 @@ export interface ScannedCard {
 
 export type ScanStoreListener = (cards: ReadonlyArray<ScannedCard>) => void;
 
-const CARD_SELECTOR = ".offer-card[data-card-id]";
+// Confirmed against the local tk-autopilot 1688 collector. 1688 has shipped
+// both a direct search-offer wrapper and a data-renderkey wrapper; the final
+// selector keeps compatibility with the original extension fixture.
+export const CARD_SELECTORS = [
+  ".search-offer-wrapper",
+  "[data-renderkey][class*='search-offer']",
+  ".offer-card[data-card-id]"
+] as const;
 
 export interface ScanStore {
   start(): void;
@@ -43,16 +50,33 @@ export function createScanStore(root: HTMLElement): ScanStore {
 
   function scanNode(node: ParentNode): void {
     if (!("querySelectorAll" in node)) return;
-    const els = (node as ParentNode).querySelectorAll(CARD_SELECTOR);
-    for (const el of Array.from(els)) {
+    const candidates = new Set<Element>();
+    for (const selector of CARD_SELECTORS) {
+      for (const element of Array.from((node as ParentNode).querySelectorAll(selector))) {
+        candidates.add(element);
+      }
+    }
+    for (const el of candidates) {
       const cardEl = el as HTMLElement;
-      const id = cardEl.getAttribute("data-card-id");
-      if (!id) continue;
-      const link = cardEl.querySelector("a[href*='/offer/']") as HTMLAnchorElement | null;
-      const url = link?.getAttribute("href") ?? "";
-      if (!url) continue;
-      const title = link?.textContent?.trim() || cardEl.textContent?.trim() || id;
-      cardsById.set(id, { sourceItemId: id, sourceUrl: url, title });
+      if (cardEl.classList?.contains("cardui-adOffer")) continue;
+      const hrefs = new Set<string>();
+      const ownHref = cardEl.getAttribute("href") ?? cardEl.getAttribute("data-href");
+      if (ownHref) hrefs.add(ownHref);
+      for (const link of Array.from(cardEl.querySelectorAll("a[href], [data-href]"))) {
+        const href = link.getAttribute("href") ?? link.getAttribute("data-href");
+        if (href) hrefs.add(href);
+      }
+      const legacyId = cardEl.getAttribute("data-card-id");
+      const sourceItemId = legacyId ?? extractOfferId(hrefs);
+      if (!sourceItemId) continue;
+      const titleElement = cardEl.querySelector(".title-text");
+      const title =
+        titleElement?.textContent?.trim() || cardEl.textContent?.trim() || sourceItemId;
+      cardsById.set(sourceItemId, {
+        sourceItemId,
+        sourceUrl: `https://detail.1688.com/offer/${sourceItemId}.html`,
+        title
+      });
     }
   }
 
@@ -103,4 +127,18 @@ export function createScanStore(root: HTMLElement): ScanStore {
       return () => listeners.delete(listener);
     }
   };
+}
+
+function extractOfferId(hrefs: ReadonlySet<string>): string | null {
+  for (const href of hrefs) {
+    const direct = /detail\.1688\.com\/offer\/(\d+)\.html/i.exec(href)?.[1];
+    if (direct) return direct;
+    try {
+      const similar = new URL(href, globalThis.location?.href).searchParams.get("offerIds");
+      if (similar && /^\d+$/.test(similar)) return similar;
+    } catch {
+      // Ignore malformed tracking links and keep scanning the other candidates.
+    }
+  }
+  return null;
 }

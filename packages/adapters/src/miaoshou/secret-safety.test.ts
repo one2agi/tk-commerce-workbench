@@ -46,12 +46,12 @@ describe("secret safety", () => {
         appKey: "test-key",
         appSecret: SENTINELS.miaoshou
       };
+      const fetchFixture = JSON.parse(readFileSync(`${FIXTURES_DIR}/fetch-success.json`, "utf8"));
+      const listFixture = JSON.parse(readFileSync(`${FIXTURES_DIR}/collect-box-list.json`, "utf8"));
       const detailFixture = JSON.parse(readFileSync(`${FIXTURES_DIR}/detail-3799770548.json`, "utf8"));
       const http = createFakeHttp({
-        "/open/v1/product/common_collect_box/common_collect_box/fetch_item": () => ({
-          code: 0,
-          data: { status: "success", detailId: "3801638367", sourceItemId: "892408514788" }
-        }),
+        "/open/v1/product/common_collect_box/common_collect_box/fetch_item": () => fetchFixture,
+        "/open/v1/product/common_collect_box/common_collect_box/get_common_collect_box_list": () => listFixture,
         "/open/v1/product/common_collect_box/common_collect_box/get_common_collect_box_detail": () => detailFixture
       });
       const adapter = createMiaoshouSourceAdapter({ http, config });

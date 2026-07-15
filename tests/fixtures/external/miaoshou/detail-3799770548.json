@@ -1,1 +1,92 @@
-{"code": 0, "msg": "ok", "data": {"detailId": "3799770548", "sourceItemId": "892408514788", "sourceUrl": "https://detail.1688.com/offer/892408514788.html", "title": "2026 春季新款纯棉休闲T恤", "itemNumber": null, "description": "高品质纯棉面料，舒适透气。", "category": "服装/上衣/T恤", "sourcePrice": {"amountMinor": "19900", "currency": "CNY"}, "sourceStock": 1234, "weightKg": "0.35", "mainImages": [{"url": "https://img.miaoshou.com/main/0.jpg", "width": 800, "height": 800}, {"url": "https://img.miaoshou.com/main/1.jpg", "width": 800, "height": 800}, {"url": "https://img.miaoshou.com/main/2.jpg", "width": 800, "height": 800}, {"url": "https://img.miaoshou.com/main/3.jpg", "width": 800, "height": 800}, {"url": "https://img.miaoshou.com/main/4.jpg", "width": 800, "height": 800}, {"url": "https://img.miaoshou.com/main/5.jpg", "width": 800, "height": 800}, {"url": "https://img.miaoshou.com/main/6.jpg", "width": 800, "height": 800}, {"url": "https://img.miaoshou.com/main/7.jpg", "width": 800, "height": 800}, {"url": "https://img.miaoshou.com/main/8.jpg", "width": 800, "height": 800}], "detailImages": [{"url": "https://img.miaoshou.com/detail/0.jpg", "width": 750, "height": 1000}, {"url": "https://img.miaoshou.com/detail/1.jpg", "width": 750, "height": 1000}, {"url": "https://img.miaoshou.com/detail/2.jpg", "width": 750, "height": 1000}, {"url": "https://img.miaoshou.com/detail/3.jpg", "width": 750, "height": 1000}, {"url": "https://img.miaoshou.com/detail/4.jpg", "width": 750, "height": 1000}], "sourceAttributes": [{"name": "attr_00", "value": "val_00"}, {"name": "attr_01", "value": "val_01"}, {"name": "attr_02", "value": "val_02"}, {"name": "attr_03", "value": "val_03"}, {"name": "attr_04", "value": "val_04"}, {"name": "attr_05", "value": "val_05"}, {"name": "attr_06", "value": "val_06"}, {"name": "attr_07", "value": "val_07"}, {"name": "attr_08", "value": "val_08"}, {"name": "attr_09", "value": "val_09"}, {"name": "attr_10", "value": "val_10"}, {"name": "attr_11", "value": "val_11"}, {"name": "attr_12", "value": "val_12"}, {"name": "attr_13", "value": "val_13"}, {"name": "attr_14", "value": "val_14"}, {"name": "attr_15", "value": "val_15"}, {"name": "attr_16", "value": "val_16"}, {"name": "attr_17", "value": "val_17"}, {"name": "attr_18", "value": "val_18"}, {"name": "attr_19", "value": "val_19"}, {"name": "attr_20", "value": "val_20"}, {"name": "attr_21", "value": "val_21"}, {"name": "attr_22", "value": "val_22"}, {"name": "attr_23", "value": "val_23"}, {"name": "attr_24", "value": "val_24"}, {"name": "attr_25", "value": "val_25"}, {"name": "attr_26", "value": "val_26"}, {"name": "attr_27", "value": "val_27"}, {"name": "attr_28", "value": "val_28"}, {"name": "attr_29", "value": "val_29"}, {"name": "attr_30", "value": "val_30"}, {"name": "attr_31", "value": "val_31"}, {"name": "attr_32", "value": "val_32"}, {"name": "attr_33", "value": "val_33"}, {"name": "attr_34", "value": "val_34"}, {"name": "attr_35", "value": "val_35"}, {"name": "attr_36", "value": "val_36"}, {"name": "attr_37", "value": "val_37"}, {"name": "attr_38", "value": "val_38"}, {"name": "attr_39", "value": "val_39"}, {"name": "attr_40", "value": "val_40"}, {"name": "attr_41", "value": "val_41"}, {"name": "attr_42", "value": "val_42"}], "saleAttributes": [{"name": "颜色", "value": "红色,蓝色,黑色,白色"}, {"name": "尺码", "value": "S,M,L,XL,XXL,XXXL,4XL"}], "colors": ["红色", "蓝色", "黑色", "白色"], "sizes": ["S", "M", "L", "XL", "XXL", "XXXL", "4XL"], "skus": [{"skuId": "sku_000", "attributes": {"颜色": "红色", "尺码": "S"}, "price": {"amountMinor": "19900", "currency": "CNY"}, "stock": 100, "imageUrl": "https://img.miaoshou.com/main/0.jpg"}, {"skuId": "sku_001", "attributes": {"颜色": "红色", "尺码": "M"}, "price": {"amountMinor": "19900", "currency": "CNY"}, "stock": 99, "imageUrl": "https://img.miaoshou.com/main/1.jpg"}, {"skuId": "sku_002", "attributes": {"颜色": "红色", "尺码": "L"}, "price": {"amountMinor": "19900", "currency": "CNY"}, "stock": 98, "imageUrl": "https://img.miaoshou.com/main/2.jpg"}, {"skuId": "sku_003", "attributes": {"颜色": "红色", "尺码": "XL"}, "price": {"amountMinor": "19900", "currency": "CNY"}, "stock": 97, "imageUrl": "https://img.miaoshou.com/main/3.jpg"}, {"skuId": "sku_004", "attributes": {"颜色": "红色", "尺码": "XXL"}, "price": {"amountMinor": "19900", "currency": "CNY"}, "stock": 96, "imageUrl": "https://img.miaoshou.com/main/4.jpg"}, {"skuId": "sku_005", "attributes": {"颜色": "红色", "尺码": "XXXL"}, "price": {"amountMinor": "19900", "currency": "CNY"}, "stock": 95, "imageUrl": "https://img.miaoshou.com/main/5.jpg"}, {"skuId": "sku_006", "attributes": {"颜色": "红色", "尺码": "4XL"}, "price": {"amountMinor": "19900", "currency": "CNY"}, "stock": 94, "imageUrl": "https://img.miaoshou.com/main/6.jpg"}, {"skuId": "sku_007", "attributes": {"颜色": "蓝色", "尺码": "S"}, "price": {"amountMinor": "19900", "currency": "CNY"}, "stock": 93, "imageUrl": "https://img.miaoshou.com/main/7.jpg"}, {"skuId": "sku_008", "attributes": {"颜色": "蓝色", "尺码": "M"}, "price": {"amountMinor": "19900", "currency": "CNY"}, "stock": 92, "imageUrl": "https://img.miaoshou.com/main/8.jpg"}, {"skuId": "sku_009", "attributes": {"颜色": "蓝色", "尺码": "L"}, "price": {"amountMinor": "19900", "currency": "CNY"}, "stock": 91, "imageUrl": "https://img.miaoshou.com/main/0.jpg"}, {"skuId": "sku_010", "attributes": {"颜色": "蓝色", "尺码": "XL"}, "price": {"amountMinor": "19900", "currency": "CNY"}, "stock": 90, "imageUrl": "https://img.miaoshou.com/main/1.jpg"}, {"skuId": "sku_011", "attributes": {"颜色": "蓝色", "尺码": "XXL"}, "price": {"amountMinor": "19900", "currency": "CNY"}, "stock": 89, "imageUrl": "https://img.miaoshou.com/main/2.jpg"}, {"skuId": "sku_012", "attributes": {"颜色": "蓝色", "尺码": "XXXL"}, "price": {"amountMinor": "19900", "currency": "CNY"}, "stock": 88, "imageUrl": "https://img.miaoshou.com/main/3.jpg"}, {"skuId": "sku_013", "attributes": {"颜色": "蓝色", "尺码": "4XL"}, "price": {"amountMinor": "19900", "currency": "CNY"}, "stock": 87, "imageUrl": "https://img.miaoshou.com/main/4.jpg"}, {"skuId": "sku_014", "attributes": {"颜色": "黑色", "尺码": "S"}, "price": {"amountMinor": "19900", "currency": "CNY"}, "stock": 86, "imageUrl": "https://img.miaoshou.com/main/5.jpg"}, {"skuId": "sku_015", "attributes": {"颜色": "黑色", "尺码": "M"}, "price": {"amountMinor": "19900", "currency": "CNY"}, "stock": 85, "imageUrl": "https://img.miaoshou.com/main/6.jpg"}, {"skuId": "sku_016", "attributes": {"颜色": "黑色", "尺码": "L"}, "price": {"amountMinor": "19900", "currency": "CNY"}, "stock": 84, "imageUrl": "https://img.miaoshou.com/main/7.jpg"}, {"skuId": "sku_017", "attributes": {"颜色": "黑色", "尺码": "XL"}, "price": {"amountMinor": "19900", "currency": "CNY"}, "stock": 83, "imageUrl": "https://img.miaoshou.com/main/8.jpg"}, {"skuId": "sku_018", "attributes": {"颜色": "黑色", "尺码": "XXL"}, "price": {"amountMinor": "19900", "currency": "CNY"}, "stock": 82, "imageUrl": "https://img.miaoshou.com/main/0.jpg"}, {"skuId": "sku_019", "attributes": {"颜色": "黑色", "尺码": "XXXL"}, "price": {"amountMinor": "19900", "currency": "CNY"}, "stock": 81, "imageUrl": "https://img.miaoshou.com/main/1.jpg"}, {"skuId": "sku_020", "attributes": {"颜色": "黑色", "尺码": "4XL"}, "price": {"amountMinor": "19900", "currency": "CNY"}, "stock": 80, "imageUrl": "https://img.miaoshou.com/main/2.jpg"}, {"skuId": "sku_021", "attributes": {"颜色": "白色", "尺码": "S"}, "price": {"amountMinor": "19900", "currency": "CNY"}, "stock": 79, "imageUrl": "https://img.miaoshou.com/main/3.jpg"}, {"skuId": "sku_022", "attributes": {"颜色": "白色", "尺码": "M"}, "price": {"amountMinor": "19900", "currency": "CNY"}, "stock": 78, "imageUrl": "https://img.miaoshou.com/main/4.jpg"}, {"skuId": "sku_023", "attributes": {"颜色": "白色", "尺码": "L"}, "price": {"amountMinor": "19900", "currency": "CNY"}, "stock": 77, "imageUrl": "https://img.miaoshou.com/main/5.jpg"}, {"skuId": "sku_024", "attributes": {"颜色": "白色", "尺码": "XL"}, "price": {"amountMinor": "19900", "currency": "CNY"}, "stock": 76, "imageUrl": "https://img.miaoshou.com/main/6.jpg"}, {"skuId": "sku_025", "attributes": {"颜色": "白色", "尺码": "XXL"}, "price": {"amountMinor": "19900", "currency": "CNY"}, "stock": 75, "imageUrl": "https://img.miaoshou.com/main/7.jpg"}, {"skuId": "sku_026", "attributes": {"颜色": "白色", "尺码": "XXXL"}, "price": {"amountMinor": "19900", "currency": "CNY"}, "stock": 74, "imageUrl": "https://img.miaoshou.com/main/8.jpg"}, {"skuId": "sku_027", "attributes": {"颜色": "白色", "尺码": "4XL"}, "price": {"amountMinor": "19900", "currency": "CNY"}, "stock": 73, "imageUrl": "https://img.miaoshou.com/main/0.jpg"}]}}
+{
+  "result": "success",
+  "code": "200",
+  "data": {
+    "editCommonCollectBoxDetail": {
+      "commonCollectBoxDetailId": 3799770548,
+      "title": "工装短裤男士夏季潮牌外穿休闲运动裤宽松薄款潮流百搭五分中裤子",
+      "itemNum": "26",
+      "notesText": "货源类别：现货\r\n品牌：其他\r\n面料名称：化纤类混纺",
+      "notes": "<p>详情</p><img src=\"https://cbu01.alicdn.com/detail/01.jpg\"><img data-src=\"//cbu01.alicdn.com/detail/02.jpg\"><img src=\"https://cbu01.alicdn.com/detail/03.jpg\"><img src=\"https://cbu01.alicdn.com/detail/04.jpg\"><img src=\"https://cbu01.alicdn.com/detail/05.jpg\">",
+      "price": 6,
+      "stock": 53203,
+      "weight": 0.3,
+      "packageLength": null,
+      "packageWidth": null,
+      "packageHeight": null,
+      "cateList": ["男装", "男式休闲裤"],
+      "imgUrls": [
+        "https://cbu01.alicdn.com/img/ibank/01.jpg",
+        "https://cbu01.alicdn.com/img/ibank/02.jpg",
+        "https://cbu01.alicdn.com/img/ibank/03.jpg",
+        "https://cbu01.alicdn.com/img/ibank/04.jpg",
+        "https://cbu01.alicdn.com/img/ibank/05.jpg",
+        "https://cbu01.alicdn.com/img/ibank/06.jpg",
+        "https://cbu01.alicdn.com/img/ibank/07.jpg",
+        "https://cbu01.alicdn.com/img/ibank/08.jpg",
+        "https://cbu01.alicdn.com/img/ibank/09.jpg"
+      ],
+      "sourceAttrs": [
+        {"name": "货源类别", "value": "现货"},
+        {"name": "面料名称", "value": "化纤类混纺"},
+        {"name": "是否跨境出口专供货源", "value": "是"}
+      ],
+      "colorPropName": "颜色",
+      "colorMap": {
+        "SB K057卡其色": {},
+        "SB K057绿色【速干】": {},
+        "SB K057黑色【速干】": {},
+        "短裤": {}
+      },
+      "sizePropName": "尺码",
+      "sizeMap": {
+        "M75-95斤": {},
+        "L95-110斤": {},
+        "XL110-125斤": {},
+        "2XL125-140斤": {},
+        "3XL140-155斤": {},
+        "4xL155-175斤": {},
+        "5XL175-195斤": {}
+      },
+      "skuMap": {
+        ";SB K057卡其色;M75-95斤;": {"price": 14.8, "stock": 1855},
+        ";SB K057卡其色;L95-110斤;": {"price": 14.8, "stock": 1785},
+        ";SB K057卡其色;XL110-125斤;": {"price": 14.8, "stock": 1728},
+        ";SB K057卡其色;2XL125-140斤;": {"price": 14.8, "stock": 1693},
+        ";SB K057卡其色;3XL140-155斤;": {"price": 14.8, "stock": 1905},
+        ";SB K057卡其色;4xL155-175斤;": {"price": 14.8, "stock": 1931},
+        ";SB K057卡其色;5XL175-195斤;": {"price": 14.8, "stock": 1962},
+        ";SB K057绿色【速干】;M75-95斤;": {"price": 14.8, "stock": 1853},
+        ";SB K057绿色【速干】;L95-110斤;": {"price": 14.8, "stock": 1834},
+        ";SB K057绿色【速干】;XL110-125斤;": {"price": 14.8, "stock": 1776},
+        ";SB K057绿色【速干】;2XL125-140斤;": {"price": 14.8, "stock": 1735},
+        ";SB K057绿色【速干】;3XL140-155斤;": {"price": 14.8, "stock": 1909},
+        ";SB K057绿色【速干】;4xL155-175斤;": {"price": 14.8, "stock": 1931},
+        ";SB K057绿色【速干】;5XL175-195斤;": {"price": 14.8, "stock": 1957},
+        ";SB K057黑色【速干】;M75-95斤;": {"price": 14.8, "stock": 1984},
+        ";SB K057黑色【速干】;L95-110斤;": {"price": 14.8, "stock": 1945},
+        ";SB K057黑色【速干】;XL110-125斤;": {"price": 14.8, "stock": 1891},
+        ";SB K057黑色【速干】;2XL125-140斤;": {"price": 14.8, "stock": 1900},
+        ";SB K057黑色【速干】;3XL140-155斤;": {"price": 14.8, "stock": 1882},
+        ";SB K057黑色【速干】;4xL155-175斤;": {"price": 14.8, "stock": 1903},
+        ";SB K057黑色【速干】;5XL175-195斤;": {"price": 14.8, "stock": 1921},
+        ";短裤;M75-95斤;": {"price": 6, "stock": 1964},
+        ";短裤;L95-110斤;": {"price": 6.6, "stock": 1994},
+        ";短裤;XL110-125斤;": {"price": 6.6, "stock": 1990},
+        ";短裤;2XL125-140斤;": {"price": 6.6, "stock": 1992},
+        ";短裤;3XL140-155斤;": {"price": 6.6, "stock": 1993},
+        ";短裤;4xL155-175斤;": {"price": 6.6, "stock": 1994},
+        ";短裤;5XL175-195斤;": {"price": 6.6, "stock": 1996}
+      },
+      "sizeChart": null,
+      "mainImgVideoUrl": null,
+      "productCertifications": [],
+      "sourceList": [{
+        "source": "1688",
+        "sourceSite": "cn",
+        "sourceItemId": "892408514788",
+        "sourceItemUrl": "http://detail.1688.com/offer/892408514788.html"
+      }]
+    }
+  }
+}

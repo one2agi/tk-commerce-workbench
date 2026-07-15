@@ -6,10 +6,15 @@
 
 import { createHmac } from "node:crypto";
 
+export const MIAOSHOU_DEFAULT_BASE_URL = "https://openapi-erp.91miaoshou.com";
+
 export interface MiaoshouConfig {
-  readonly baseUrl: string; // e.g. https://open.api.miaoshou.com
+  readonly baseUrl: string;
   readonly appKey: string;
   readonly appSecret: string;
+  readonly accountId?: string;
+  readonly authorization?: string;
+  readonly cookie?: string;
 }
 
 export interface MiaoshouRequest {
@@ -18,14 +23,15 @@ export interface MiaoshouRequest {
 }
 
 export interface MiaoshouSignedHeaders {
-  readonly "X-App-Key": string;
-  readonly "X-Signature": string;
-  readonly "X-Timestamp": string;
+  readonly "x-app-key": string;
+  readonly "x-sign": string;
+  readonly "x-timestamp": string;
   readonly "content-type": "application/json";
 }
 
 export interface MiaoshouClient {
   sign(req: MiaoshouRequest, timestamp?: number): MiaoshouSignedHeaders;
+  signSerialized(path: string, bodyJson: string, timestamp?: number): MiaoshouSignedHeaders;
   buildUrl(path: string): string;
 }
 
@@ -36,23 +42,71 @@ export function createMiaoshouClient(config: MiaoshouConfig): MiaoshouClient {
       const p = path.replace(/^\/+/, "");
       return `${base}/${p}`;
     },
-    sign(req, timestamp = Date.now()) {
+    sign(req, timestamp = Math.floor(Date.now() / 1_000)) {
+      return this.signSerialized(req.path, JSON.stringify(req.body ?? {}), timestamp);
+    },
+    signSerialized(path, payload, timestamp = Math.floor(Date.now() / 1_000)) {
       const ts = String(timestamp);
-      const payload = JSON.stringify(req.body ?? {});
-      // Canonical: METHOD\nPATH\nTIMESTAMP\nBODY_SHA256_HEX
-      const bodyHash = createHmac("sha256", "")
-        .update(payload)
-        .digest("hex");
-      const canonical = `POST\n${req.path}\n${ts}\n${bodyHash}`;
+      const canonical =
+        config.appSecret +
+        path +
+        ts +
+        config.appKey +
+        payload +
+        config.appSecret;
       const sig = createHmac("sha256", config.appSecret)
         .update(canonical)
         .digest("hex");
       return Object.freeze({
-        "X-App-Key": config.appKey,
-        "X-Signature": sig,
-        "X-Timestamp": ts,
+        "x-app-key": config.appKey,
+        "x-sign": sig,
+        "x-timestamp": ts,
         "content-type": "application/json"
       });
     }
   };
+}
+
+export interface MiaoshouHttp {
+  post<T>(path: string, body: unknown): Promise<T>;
+}
+
+export function createMiaoshouHttp(
+  config: MiaoshouConfig,
+  fetchImpl: typeof fetch = globalThis.fetch,
+  nowSeconds: () => number = () => Math.floor(Date.now() / 1_000)
+): MiaoshouHttp {
+  const client = createMiaoshouClient(config);
+  return {
+    async post<T>(path: string, body: unknown): Promise<T> {
+      const bodyJson = JSON.stringify(body ?? {});
+      const signed = client.signSerialized(path, bodyJson, nowSeconds());
+      const headers: Record<string, string> = { ...signed };
+      if (config.accountId) headers["x-account-id"] = config.accountId;
+      if (config.authorization) headers.authorization = config.authorization;
+      if (config.cookie) headers.cookie = config.cookie;
+      let response: Response;
+      try {
+        response = await fetchImpl(client.buildUrl(path), { method: "POST", headers, body: bodyJson });
+      } catch {
+        throw Object.freeze({ kind: "retryable", code: "miaoshou.network", safeMessage: "Miaoshou API is temporarily unavailable" });
+      }
+      if (!response.ok) {
+        throw Object.freeze({
+          kind: response.status >= 500 || response.status === 429 ? "retryable" : "fatal",
+          code: `miaoshou.http_${response.status}`,
+          safeMessage: "Miaoshou API request failed"
+        });
+      }
+      try {
+        return await response.json() as T;
+      } catch {
+        throw Object.freeze({ kind: "retryable", code: "miaoshou.invalid_response", safeMessage: "Miaoshou API returned an invalid response" });
+      }
+    }
+  };
+}
+
+export function createMiaoshouSourceHttp(config: MiaoshouConfig, fetchImpl?: typeof fetch): MiaoshouHttp {
+  return createMiaoshouHttp(config, fetchImpl);
 }
