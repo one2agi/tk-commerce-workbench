@@ -2,14 +2,19 @@ import { createSubmitter, type SubmitBatchInput, type SubmitResult } from "./sub
 
 interface SubmitterLike {
   submitBatch(input: SubmitBatchInput): Promise<SubmitResult>;
+  loadPausedBatch(): Promise<SubmitBatchInput | null>;
 }
 
 interface SubmitSelectedMessage extends SubmitBatchInput {
   readonly kind: "submit-selected";
 }
 
-export function createSubmitSelectedHandler(submitter: SubmitterLike) {
+export function createBackgroundMessageHandler(submitter: SubmitterLike) {
   return (message: unknown, sendResponse: (response: unknown) => void): boolean => {
+    if (isGetPausedMessage(message)) {
+      void submitter.loadPausedBatch().then(sendResponse).catch(() => sendResponse(null));
+      return true;
+    }
     if (!isSubmitSelectedMessage(message)) return false;
     void submitter
       .submitBatch({ batchId: message.batchId, items: message.items })
@@ -19,6 +24,12 @@ export function createSubmitSelectedHandler(submitter: SubmitterLike) {
       );
     return true;
   };
+}
+
+export const createSubmitSelectedHandler = createBackgroundMessageHandler;
+
+function isGetPausedMessage(message: unknown): boolean {
+  return Boolean(message && typeof message === "object" && (message as { kind?: string }).kind === "get-paused-submission");
 }
 
 function isSubmitSelectedMessage(message: unknown): message is SubmitSelectedMessage {
@@ -44,7 +55,7 @@ type ChromeStorage = Parameters<typeof createSubmitter>[0]["storage"];
 
 export function registerBackground(runtime: ChromeRuntime, storage: ChromeStorage): void {
   const submitter = createSubmitter({ apiBase: "http://127.0.0.1:3000", storage });
-  const handler = createSubmitSelectedHandler(submitter);
+  const handler = createBackgroundMessageHandler(submitter);
   runtime.onMessage.addListener((message, _sender, sendResponse) =>
     handler(message, sendResponse)
   );

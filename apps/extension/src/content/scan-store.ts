@@ -15,7 +15,7 @@ export type ScanStoreListener = (cards: ReadonlyArray<ScannedCard>) => void;
 // selector keeps compatibility with the original extension fixture.
 export const CARD_SELECTORS = [
   ".search-offer-wrapper",
-  "[data-renderkey]",
+  "[data-renderkey][class*='search-offer']",
   ".offer-card[data-card-id]"
 ] as const;
 

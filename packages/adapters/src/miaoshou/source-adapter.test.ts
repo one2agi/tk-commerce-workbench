@@ -86,7 +86,7 @@ describe("Miaoshou source adapter", () => {
     expect(result.detail.sourceStock).toBe(53_203);
     expect(result.detail.weightKg).toBe("0.3");
     expect(result.detail.mainImages).toHaveLength(9);
-    expect(result.detail.detailImages).toHaveLength(0);
+    expect(result.detail.detailImages).toHaveLength(5);
     expect(result.detail.skus).toHaveLength(28);
     expect(result.detail.colors).toHaveLength(4);
     expect(result.detail.sizes).toHaveLength(7);
@@ -142,6 +142,43 @@ describe("Miaoshou source adapter", () => {
         idempotencyKey: toIdempotencyKey("idem_pending")
       })
     ).rejects.toMatchObject({ kind: "retryable", code: "miaoshou.detail_pending" });
+  });
+
+  it("continues to page two to resolve the exact canonical source record", async () => {
+    let listPage = 0;
+    const unrelated = Array.from({ length: 20 }, (_, index) => ({
+      commonCollectBoxDetailId: 1000 + index,
+      status: "noClaimed",
+      sourceList: [{ sourceItemId: `other-${index}` }]
+    }));
+    const http = createFakeHttp({
+      [FETCH]: () => readFixture("fetch-duplicate-skip.json"),
+      [LIST]: () => ++listPage === 1
+        ? { result: "success", code: "200", data: { detailList: unrelated, total: 21 } }
+        : { result: "success", code: "200", data: { detailList: [{ commonCollectBoxDetailId: 3799770548, status: "noClaimed", gmtModified: "2026-07-14 09:00:00", sourceList: [{ sourceItemId: "892408514788" }] }], total: 21 } },
+      [DETAIL]: () => readFixture("detail-3799770548.json")
+    });
+    const adapter = createMiaoshouSourceAdapter({ http, config: BASE_CONFIG });
+    const result = await adapter.fetchItem({ sourceUrl: "https://detail.1688.com/offer/892408514788.html", idempotencyKey: toIdempotencyKey("idem_page_2") });
+    expect(result.canonicalSuccessDetailId).toBe("3799770548");
+    expect(http.calls.filter((call) => call.path === LIST).map((call) => call.body)).toEqual([
+      { pageNo: 1, pageSize: 20, filter: { tabPaneName: "all", sourceItemIdKeyword: "892408514788" } },
+      { pageNo: 2, pageSize: 20, filter: { tabPaneName: "all", sourceItemIdKeyword: "892408514788" } }
+    ]);
+  });
+
+  it.each([
+    ["signInvalid", "needs_input"],
+    ["appNoPermission", "needs_input"],
+    ["ipNotInWhitelist", "needs_input"],
+    ["missingRequiredField", "needs_input"],
+    ["productNotFound", "fatal"],
+    ["accountQpsRateLimit", "retryable"]
+  ])("classifies API code %s as %s", async (code, kind) => {
+    const http = createFakeHttp({ [FETCH]: () => ({ result: "fail", code, message: "unsafe upstream message" }) });
+    const adapter = createMiaoshouSourceAdapter({ http, config: BASE_CONFIG });
+    await expect(adapter.fetchItem({ sourceUrl: "https://detail.1688.com/offer/892408514788.html", idempotencyKey: toIdempotencyKey(`idem_${code}`) }))
+      .rejects.toMatchObject({ kind, code: `miaoshou.${code}` });
   });
 
   it("reports stable warnings for real missing fields", async () => {

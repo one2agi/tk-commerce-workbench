@@ -10,16 +10,9 @@ import {
   type MiaoshouSourcePort,
   type SourceItemId
 } from "@tk/contracts";
+import { createMiaoshouHttp, type MiaoshouConfig, type MiaoshouHttp } from "./client.js";
 
-export interface MiaoshouConfig {
-  readonly baseUrl: string;
-  readonly appKey: string;
-  readonly appSecret: string;
-}
-
-export interface MiaoshouHttp {
-  post<T>(path: string, body: unknown): Promise<T>;
-}
+export type { MiaoshouConfig, MiaoshouHttp } from "./client.js";
 
 export interface SourceAdapterDeps {
   readonly http: MiaoshouHttp;
@@ -70,6 +63,8 @@ interface CollectBoxListItem {
 
 interface CollectBoxListData {
   detailList?: CollectBoxListItem[];
+  total?: number;
+  hasNext?: boolean;
 }
 
 interface RawSku {
@@ -113,7 +108,11 @@ interface DetailData {
 
 function requireSuccess<T>(response: ApiEnvelope<T>, code: string): T {
   if (response.result !== "success" || !response.data) {
-    throw externalFailure("retryable", code, "Miaoshou API is temporarily unavailable");
+    const apiCode = String(response.code || code);
+    const needsInput = new Set(["signMissing", "signExpired", "signInvalid", "appNotFound", "appNoPermission", "ipNotInWhitelist", "missingRequiredField"]);
+    const retryable = new Set(["accountQpsRateLimit", "systemBusy", "timeout"]);
+    const kind = needsInput.has(apiCode) ? "needs_input" : retryable.has(apiCode) || /^5\d\d$/.test(apiCode) ? "retryable" : "fatal";
+    throw externalFailure(kind, `miaoshou.${apiCode}`, kind === "retryable" ? "Miaoshou API is temporarily unavailable" : "Miaoshou API request requires attention");
   }
   return response.data;
 }
@@ -188,7 +187,7 @@ function mapDetail(raw: RawDetail): MiaoshouCollectedDetail {
         }
       : null,
     mainImages: (raw.imgUrls ?? []).map((url) => ({ url, width: 0, height: 0 })),
-    detailImages: [],
+    detailImages: extractHtmlImages(raw.notes ?? ""),
     sourceAttributes: raw.sourceAttrs ?? [],
     saleAttributes: [
       raw.colorPropName
@@ -213,18 +212,35 @@ function mapDetail(raw: RawDetail): MiaoshouCollectedDetail {
   });
 }
 
+function extractHtmlImages(html: string): Array<{ url: string; width: number; height: number }> {
+  const urls = new Set<string>();
+  const pattern = /<img\b[^>]*\b(?:src|data-src)=["']([^"']+)["'][^>]*>/gi;
+  for (const match of html.matchAll(pattern)) {
+    const url = match[1]?.trim();
+    if (url) urls.add(url.startsWith("//") ? `https:${url}` : url);
+  }
+  return Array.from(urls, (url) => ({ url, width: 0, height: 0 }));
+}
+
 export function createMiaoshouSourceAdapter(deps: SourceAdapterDeps): MiaoshouSourceAdapter {
   const { http } = deps;
 
   async function listRecords(sourceItemId: SourceItemId): Promise<CollectBoxListItem[]> {
-    const response = await http.post<ApiEnvelope<CollectBoxListData>>(LIST_PATH, {
-      pageNo: 1,
-      pageSize: 20,
-      filter: { tabPaneName: "all", sourceItemIdKeyword: sourceItemId }
-    });
-    return (requireSuccess(response, "miaoshou.list_failed").detailList ?? []).filter((item) =>
-      isSource(item, sourceItemId)
-    );
+    const pageSize = 20;
+    const records: CollectBoxListItem[] = [];
+    for (let pageNo = 1; pageNo <= 25; pageNo += 1) {
+      const response = await http.post<ApiEnvelope<CollectBoxListData>>(LIST_PATH, {
+        pageNo,
+        pageSize,
+        filter: { tabPaneName: "all", sourceItemIdKeyword: sourceItemId }
+      });
+      const data = requireSuccess(response, "miaoshou.list_failed");
+      const page = data.detailList ?? [];
+      records.push(...page.filter((item) => isSource(item, sourceItemId)));
+      const hasMore = data.hasNext === true || (typeof data.total === "number" && pageNo * pageSize < data.total);
+      if (!hasMore) break;
+    }
+    return records;
   }
 
   async function fetchDetail(detailId: string): Promise<MiaoshouCollectedDetail> {
@@ -311,4 +327,8 @@ export function createMiaoshouSourceAdapter(deps: SourceAdapterDeps): MiaoshouSo
       );
     }
   };
+}
+
+export function createLiveMiaoshouSourceAdapter(config: MiaoshouConfig, fetchImpl?: typeof fetch): MiaoshouSourceAdapter {
+  return createMiaoshouSourceAdapter({ config, http: createMiaoshouHttp(config, fetchImpl) });
 }

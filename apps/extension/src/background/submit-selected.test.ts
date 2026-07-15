@@ -29,7 +29,8 @@ function makeChromeStorage(initial: Record<string, unknown>) {
       }),
       set: vi.fn(async (obj: Record<string, unknown>) => {
         for (const [k, v] of Object.entries(obj)) store.set(k, v);
-      })
+      }),
+      remove: vi.fn(async (key: string) => { store.delete(key); })
     }
   };
 }
@@ -103,5 +104,19 @@ describe("submit-selected", () => {
     const items = result.items ?? [];
     expect(items).toHaveLength(1);
     expect(items[0]?.sourceItemId).toBe("892408514788");
+    await expect(submitter.loadPausedBatch()).resolves.toMatchObject({ batchId: "batch_01" });
+  });
+
+  it("restores a paused batch after restart and clears it after retry", async () => {
+    const storage = makeChromeStorage({
+      extensionToken: "tok-secret",
+      pausedSubmission: { batchId: "batch_saved", items: [{ sourceItemId: "892408514788", sourceUrl: "https://detail.1688.com/offer/892408514788.html" }] }
+    });
+    const submitter = createSubmitter({ apiBase: env.apiBase, storage: storage as unknown as SubmitterEnv["storage"] });
+    const saved = await submitter.loadPausedBatch();
+    expect(saved).toMatchObject({ batchId: "batch_saved" });
+    globalThis.fetch = makeFetchMock([{ ok: true, status: 200, body: { accepted: 1 } }]) as unknown as typeof fetch;
+    await submitter.submitBatch(saved!);
+    await expect(submitter.loadPausedBatch()).resolves.toBeNull();
   });
 });
