@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { assertSafeRemoteUrl } from "./validate-remote-url.js";
+import { assertSafeRemoteUrl, isUnsafeAddress, resolveSafeRemoteUrl } from "./validate-remote-url.js";
 
 describe("assertSafeRemoteUrl", () => {
   it.each([
@@ -26,5 +26,31 @@ describe("assertSafeRemoteUrl", () => {
     await expect(
       assertSafeRemoteUrl("https://cdn.example/a.jpg", async () => ["93.184.216.34", "2606:2800:220:1:248:1893:25c8:1946"])
     ).resolves.toMatchObject({ hostname: "cdn.example" });
+  });
+
+  it.each([
+    "::ffff:127.0.0.1",
+    "::ffff:7f00:1",
+    "::ffff:a9fe:a9fe",
+    "64:ff9b::7f00:1",
+    "64:ff9b:1::1",
+    "2001::1",
+    "2002:7f00:1::",
+    "3fff::1",
+    "ff02::1",
+    "100::1",
+    "2001:db8::1",
+    "fec0::1"
+  ])("rejects mapped, multicast, and special-purpose IPv6 address %s", (address) => {
+    expect(isUnsafeAddress(address)).toBe(true);
+  });
+
+  it("returns the exact public addresses that were validated for connection pinning", async () => {
+    await expect(
+      resolveSafeRemoteUrl("https://cdn.example:8443/a.jpg", async () => ["93.184.216.34"])
+    ).resolves.toMatchObject({
+      url: expect.objectContaining({ hostname: "cdn.example" }),
+      addresses: ["93.184.216.34"]
+    });
   });
 });

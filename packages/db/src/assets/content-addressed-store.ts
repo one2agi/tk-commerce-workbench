@@ -1,7 +1,8 @@
 import { createHash, randomUUID } from "node:crypto";
 import { mkdir, open, rename, rm } from "node:fs/promises";
 import { join } from "node:path";
-import { assertSafeRemoteUrl, type ResolveHost } from "@tk/domain/assets/validate-remote-url";
+import { isIP } from "node:net";
+import { resolveSafeRemoteUrl, type ResolveHost } from "@tk/domain/assets/validate-remote-url";
 
 export interface AssetFetchResponse {
   status: number;
@@ -9,20 +10,29 @@ export interface AssetFetchResponse {
   body: AsyncIterable<Uint8Array> | null;
 }
 
-export type AssetFetch = (url: string) => Promise<AssetFetchResponse>;
+export interface AssetFetchRequest {
+  /** Original URL, retained for the HTTP request target and certificate checks. */
+  url: string;
+  /** Exact address returned by the validation lookup; clients must connect here. */
+  connectAddress: string;
+  /** HTTP Host header, including a non-default port. */
+  hostHeader: string;
+  /** TLS server name. Undefined for HTTP and IP-literal hosts. */
+  servername?: string;
+}
 
-function extensionFor(contentType: string | undefined, url: URL): string {
+export type AssetFetch = (request: AssetFetchRequest) => Promise<AssetFetchResponse>;
+
+function imageType(contentType: string | undefined): { extension: "jpg" | "png"; magicLength: number; validMagic: (bytes: Buffer) => boolean } {
   const normalized = contentType?.split(";", 1)[0]?.trim().toLowerCase();
-  const byType: Record<string, string> = {
-    "image/jpeg": "jpg",
-    "image/png": "png",
-    "image/webp": "webp",
-    "image/gif": "gif",
-    "image/avif": "avif"
-  };
-  if (normalized && byType[normalized]) return byType[normalized];
-  const match = url.pathname.toLowerCase().match(/\.(jpe?g|png|webp|gif|avif)$/)?.[1];
-  return match === "jpeg" ? "jpg" : match ?? "bin";
+  if (normalized === "image/jpeg") {
+    return { extension: "jpg", magicLength: 3, validMagic: (bytes) => bytes[0] === 0xff && bytes[1] === 0xd8 && bytes[2] === 0xff };
+  }
+  if (normalized === "image/png") {
+    const signature = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
+    return { extension: "png", magicLength: signature.length, validMagic: (bytes) => bytes.subarray(0, signature.length).equals(signature) };
+  }
+  throw new Error("asset Content-Type must be image/png or image/jpeg");
 }
 
 function header(response: AssetFetchResponse, name: string): string | undefined {
@@ -33,14 +43,17 @@ function header(response: AssetFetchResponse, name: string): string | undefined 
 
 export class ContentAddressedStore {
   private readonly maxRedirects: number;
+  private readonly maxBytes: number;
 
   constructor(private readonly options: {
     assetRoot: string;
     fetch: AssetFetch;
     resolveHost: ResolveHost;
     maxRedirects?: number;
+    maxBytes?: number;
   }) {
     this.maxRedirects = options.maxRedirects ?? 4;
+    this.maxBytes = options.maxBytes ?? 20 * 1024 * 1024;
   }
 
   async archive(remoteUrl: string): Promise<{
@@ -56,8 +69,15 @@ export class ContentAddressedStore {
     let response: AssetFetchResponse | undefined;
 
     for (let redirects = 0; redirects <= this.maxRedirects; redirects++) {
-      current = await assertSafeRemoteUrl(current.toString(), this.options.resolveHost);
-      response = await this.options.fetch(current.toString());
+      const validated = await resolveSafeRemoteUrl(current.toString(), this.options.resolveHost);
+      current = validated.url;
+      const hostname = current.hostname.replace(/^\[|\]$/g, "");
+      response = await this.options.fetch({
+        url: current.toString(),
+        connectAddress: validated.addresses[0]!,
+        hostHeader: current.host,
+        ...(current.protocol === "https:" && isIP(hostname) === 0 ? { servername: hostname } : {})
+      });
       if (response.status < 300 || response.status >= 400) break;
       const location = header(response, "location");
       if (!location) throw new Error("redirect response is missing Location");
@@ -69,18 +89,39 @@ export class ContentAddressedStore {
       throw new Error(`asset download failed with status ${response?.status ?? "unknown"}`);
     }
 
-    const extension = extensionFor(header(response, "content-type"), current);
+    const declaredLength = header(response, "content-length");
+    if (declaredLength !== undefined) {
+      const parsedLength = Number(declaredLength);
+      if (!Number.isSafeInteger(parsedLength) || parsedLength < 0 || parsedLength > this.maxBytes) {
+        throw new Error("asset response size exceeds limit");
+      }
+    }
+
+    const type = imageType(header(response, "content-type"));
+    const extension = type.extension;
     const temporaryPath = join(this.options.assetRoot, `.tmp-${randomUUID()}`);
     const hash = createHash("sha256");
     let bytes = 0;
+    let prefix = Buffer.alloc(0);
+    let magicValidated = false;
     const file = await open(temporaryPath, "wx", 0o600);
     try {
       for await (const rawChunk of response.body) {
         const chunk = Buffer.from(rawChunk);
-        hash.update(chunk);
         bytes += chunk.byteLength;
+        if (bytes > this.maxBytes) throw new Error("asset response size exceeds limit");
+        if (!magicValidated) {
+          const needed = type.magicLength - prefix.byteLength;
+          prefix = Buffer.concat([prefix, chunk.subarray(0, Math.max(0, needed))]);
+          if (prefix.byteLength >= type.magicLength) {
+            if (!type.validMagic(prefix)) throw new Error("asset bytes do not match declared PNG/JPEG Content-Type");
+            magicValidated = true;
+          }
+        }
+        hash.update(chunk);
         await file.write(chunk);
       }
+      if (!magicValidated) throw new Error("asset is too short to contain a valid PNG/JPEG signature");
       await file.sync();
       await file.close();
 
