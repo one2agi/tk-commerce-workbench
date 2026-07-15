@@ -10,3 +10,5 @@ export * from "./assets/score-image.js";
 export * from "./assets/select-canvas-inputs.js";
 export * from "./templates/match-template.js";
 export * from "./automation/graph.js";
+export * from "./approval/create-snapshot.js";
+export * from "./approval/invalidate-approval.js";

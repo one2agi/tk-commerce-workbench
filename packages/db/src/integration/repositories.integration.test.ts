@@ -19,10 +19,7 @@ import { AutomationRunRepository } from "../repositories/automation-run-reposito
 import { CanvasQuotaRepository } from "../repositories/canvas-quota-repository.js";
 import { AssetRepository } from "../repositories/asset-repository.js";
 import { PipelineRepository } from "../repositories/pipeline-repository.js";
-import {
-  ApprovalNotReadyError,
-  ApprovalRepository
-} from "../repositories/approval-repository.js";
+import { ApprovalRepository } from "../repositories/approval-repository.js";
 import { INITIAL_SQL } from "../migrations/0000_initial.js";
 
 let handle: TestDbHandle;
@@ -932,8 +929,8 @@ describe("integration: automation run repository", () => {
   });
 });
 
-describe("integration: ApprovalRepository.confirmAndEnqueue fail-closed boundary", () => {
-  test("rejects incomplete mapping without snapshot, sync, or job writes", async () => {
+describe("integration: ApprovalRepository.confirmAndEnqueue", () => {
+  async function readyApprovalFixture() {
     const opId = await catalog.upsertLocalOperator({
       handle: "local-operator",
       displayName: "Local Operator"
@@ -941,28 +938,157 @@ describe("integration: ApprovalRepository.confirmAndEnqueue fail-closed boundary
     const productId = await catalog.insertProduct({
       operatorId: opId,
       sourceUrl: "https://detail.1688.com/offer/abc.html",
+      sourceItemId: "abc",
       locale: "th-TH",
       currency: "THB"
     });
+    await handle.pool.query("UPDATE products SET canonical_success_detail_id = 'detail-canonical', state_automation = 'ready' WHERE id = $1", [productId]);
+    const revisionId = await catalog.insertRevision({
+      productId,
+      draftVersion: 1,
+      sourceTitle: "Source",
+      workingDraft: {
+        listingRunId: "run-listing-1",
+        pricingRunId: "run-pricing-1",
+        templateMatch: { templateId: "template-1", templateVersion: 3 },
+        finalAssetOrder: ["asset-a", "asset-b"]
+      }
+    });
+    await handle.pool.query(
+      "UPDATE product_revisions SET source_payload = $2::jsonb WHERE id = $1",
+      [revisionId, JSON.stringify({
+        sourceItemId: "abc",
+        itemNumber: "ITEM-1",
+        sourceStock: 12,
+        weightKg: "0.35",
+        dimensionsCm: { lengthCm: "30", widthCm: "20", heightCm: "4" },
+        skus: [{ skuId: "sku-red", attributes: { color: "red" }, priceWire: { amountMinor: "2000", currency: "CNY" }, stock: 6, imageUrl: "https://source.test/red.jpg" }]
+      })]
+    );
+    await handle.pool.query(
+      `INSERT INTO listing_drafts
+       (id, product_id, revision_id, draft_version, target_locale, style, title, description, attributes)
+       VALUES ('run-listing-1', $1, $2, 1, 'th-TH', 'neutral', 'Thai title', 'Thai description', '[{"name":"material","value":"cotton"}]'::jsonb)`,
+      [productId, revisionId]
+    );
+    await handle.pool.query(
+      `INSERT INTO pricing_runs
+       (id, product_id, revision_id, draft_version, state, final_price_minor, final_currency)
+       VALUES ('run-pricing-1', $1, $2, 1, 'ready', '25900', 'THB')`,
+      [productId, revisionId]
+    );
+    await handle.pool.query(
+      `INSERT INTO assets (id, product_id, revision_id, remote_url, kind, state, local_path, extension)
+       VALUES
+       ('asset-a', $1, $2, 'https://source.test/red.jpg', 'generated', 'ready', '/assets/a.jpg', 'jpg'),
+       ('asset-b', $1, $2, 'https://source.test/b.jpg', 'generated', 'ready', '/assets/b.jpg', 'jpg')`,
+      [productId, revisionId]
+    );
+    return { productId, revisionId };
+  }
+
+  test("atomically creates one immutable snapshot, sync and edit job", async () => {
+    const { productId, revisionId } = await readyApprovalFixture();
     const command: ConfirmMiaoshouEditV1 = {
       version: 1,
       productId,
       expectedDraftVersion: 1,
       expectedListingRunId: "run-listing-1",
       expectedPricingRunId: "run-pricing-1",
-      expectedTemplateVersion: 1,
+      expectedTemplateVersion: 3,
       orderedFinalAssetIds: ["asset-a", "asset-b"]
     };
-    await expect(approvals.confirmAndEnqueue(command)).rejects.toBeInstanceOf(
-      ApprovalNotReadyError
-    );
+    const first = await approvals.confirmAndEnqueue(command);
+    const second = await approvals.confirmAndEnqueue(command);
+    expect(second).toEqual(first);
     const [snapshots, syncs, queued] = await Promise.all([
-      handle.pool.query("SELECT count(*)::int AS count FROM approval_snapshots"),
+      handle.pool.query("SELECT * FROM approval_snapshots"),
       handle.pool.query("SELECT count(*)::int AS count FROM miaoshou_syncs"),
-      handle.pool.query("SELECT count(*)::int AS count FROM jobs")
+      handle.pool.query("SELECT count(*)::int AS count FROM jobs WHERE kind = 'miaoshou_edit'")
     ]);
-    expect(snapshots.rows[0].count).toBe(0);
-    expect(syncs.rows[0].count).toBe(0);
-    expect(queued.rows[0].count).toBe(0);
+    expect(snapshots.rows).toHaveLength(1);
+    expect(snapshots.rows[0]).toMatchObject({
+      id: first.approvalSnapshotId,
+      product_id: productId,
+      revision_id: revisionId,
+      ordered_final_asset_ids: ["asset-a", "asset-b"],
+      source_item_id: "abc",
+      canonical_success_detail_id: "detail-canonical",
+      title: "Thai title",
+      price_minor: "25900",
+      price_currency: "THB",
+      weight_kg: "0.35",
+      state: "approved"
+    });
+    expect(snapshots.rows[0].skus[0]).toMatchObject({ skuId: "sku-red", assetIds: ["asset-a"] });
+    expect(snapshots.rows[0].skus[0].priceWire).toEqual({ amountMinor: "25900", currency: "THB" });
+    expect(syncs.rows[0].count).toBe(1);
+    expect(queued.rows[0].count).toBe(1);
+  });
+
+  test("rejects stale confirmation with conflict metadata and no writes", async () => {
+    const { productId } = await readyApprovalFixture();
+    const command: ConfirmMiaoshouEditV1 = {
+      version: 1,
+      productId,
+      expectedDraftVersion: 1,
+      expectedListingRunId: "run-listing-1",
+      expectedPricingRunId: "run-pricing-1",
+      expectedTemplateVersion: 2,
+      orderedFinalAssetIds: ["asset-a", "asset-b"]
+    };
+    await expect(approvals.confirmAndEnqueue(command)).rejects.toMatchObject({
+      code: "approval_conflict",
+      metadata: expect.objectContaining({ field: "templateVersion", expected: 2, actual: 3 })
+    });
+    const rows = await handle.pool.query("SELECT (SELECT count(*) FROM approval_snapshots)::int AS snapshots, (SELECT count(*) FROM jobs WHERE kind = 'miaoshou_edit')::int AS jobs");
+    expect(rows.rows[0]).toEqual({ snapshots: 0, jobs: 0 });
+  });
+
+  test("persists result_unknown and only applied reconciliation can finish the sync", async () => {
+    const { productId } = await readyApprovalFixture();
+    const confirmed = await approvals.confirmAndEnqueue({
+      version: 1,
+      productId,
+      expectedDraftVersion: 1,
+      expectedListingRunId: "run-listing-1",
+      expectedPricingRunId: "run-pricing-1",
+      expectedTemplateVersion: 3,
+      orderedFinalAssetIds: ["asset-a", "asset-b"]
+    });
+    const snapshot = await approvals.loadSnapshot(confirmed.approvalSnapshotId);
+    expect(snapshot.skus[0]?.priceWire).toEqual({ amountMinor: "25900", currency: "THB" });
+
+    const firstClaim = await jobs.claim("worker-first", new Date(), 30_000);
+    expect(firstClaim).not.toBeNull();
+    const firstFence = { jobId: firstClaim!.jobId, owner: "worker-first", leaseToken: firstClaim!.leaseToken };
+    expect(await approvals.saveResultUnknown(confirmed.approvalSnapshotId, {
+      kind: "reconcile_required",
+      code: "timeout",
+      safeMessage: "result unknown"
+    }, firstFence)).toBe(true);
+    expect(await jobs.markResultUnknown(firstClaim!.jobId, "worker-first", firstClaim!.leaseToken, new Date(), "remote-task-1", {
+      kind: "reconcile_required",
+      code: "reconcile_required",
+      safeMessage: "reconcile before retry"
+    })).toBe(true);
+
+    const reconcileClaim = await jobs.claimReconciliation("worker-reconcile", new Date(), 30_000);
+    expect(reconcileClaim?.jobId).toBe(firstClaim!.jobId);
+    const reconcileFence = { jobId: reconcileClaim!.jobId, owner: "worker-reconcile", leaseToken: reconcileClaim!.leaseToken };
+    expect(await approvals.saveReconciled(confirmed.approvalSnapshotId, {
+      remoteDetailId: "detail-canonical",
+      state: "no_change"
+    }, reconcileFence)).toBe(false);
+    expect(await approvals.saveReconciled(confirmed.approvalSnapshotId, {
+      remoteDetailId: "detail-canonical",
+      state: "applied"
+    }, reconcileFence)).toBe(true);
+    const sync = await handle.pool.query(
+      "SELECT state, remote_detail_id, last_reconciled_at, error FROM miaoshou_syncs WHERE id = $1",
+      [confirmed.syncId]
+    );
+    expect(sync.rows[0]).toMatchObject({ state: "succeeded", remote_detail_id: "detail-canonical", error: null });
+    expect(sync.rows[0].last_reconciled_at).not.toBeNull();
   });
 });
