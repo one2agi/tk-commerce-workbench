@@ -1,0 +1,33 @@
+{
+  "name": "tk-commerce-workbench",
+  "private": true,
+  "version": "0.0.0",
+  "packageManager": "pnpm@9.15.9",
+  "engines": {
+    "node": ">=22 <23"
+  },
+  "scripts": {
+    "dev": "pnpm --parallel --filter @tk/web --filter @tk/worker dev",
+    "build": "pnpm -r --filter=!@tk/extension build",
+    "lint": "pnpm -r --filter=!@tk/extension lint",
+    "typecheck": "pnpm -r --filter=!@tk/extension typecheck",
+    "test": "vitest run",
+    "test:integration": "pnpm --filter @tk/db test:integration",
+    "test:e2e": "playwright test",
+    "db:generate": "pnpm --filter @tk/db db:generate",
+    "db:migrate": "pnpm --filter @tk/db db:migrate"
+  },
+  "devDependencies": {
+    "@types/node": "22.20.1",
+    "@playwright/test": "1.61.1",
+    "@testing-library/jest-dom": "6.9.1",
+    "@testing-library/react": "16.3.2",
+    "@testing-library/user-event": "14.6.1",
+    "@vitest/coverage-v8": "4.1.10",
+    "eslint": "10.7.0",
+    "jsdom": "29.1.1",
+    "tsx": "4.23.1",
+    "typescript": "5.9.3",
+    "vitest": "4.1.10"
+  }
+}

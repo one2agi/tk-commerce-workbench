@@ -1,0 +1,25 @@
+{
+  "name": "@tk/db",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "main": "./src/index.ts",
+  "scripts": {
+    "build": "echo skip",
+    "lint": "echo skip",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "test:integration": "vitest run --project integration",
+    "db:generate": "echo drizzle placeholder",
+    "db:migrate": "echo drizzle placeholder"
+  },
+  "dependencies": {
+    "@tk/contracts": "workspace:*",
+    "drizzle-orm": "0.45.2",
+    "pg": "8.22.0"
+  },
+  "devDependencies": {
+    "@types/pg": "8.20.0",
+    "drizzle-kit": "0.31.10"
+  }
+}

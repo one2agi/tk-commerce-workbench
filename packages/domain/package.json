@@ -1,0 +1,17 @@
+{
+  "name": "@tk/domain",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "main": "./src/index.ts",
+  "scripts": {
+    "build": "echo skip",
+    "lint": "echo skip",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@tk/contracts": "workspace:*",
+    "decimal.js": "10.6.0"
+  }
+}
