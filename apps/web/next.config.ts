@@ -11,10 +11,22 @@ const config: NextConfig = {
   turbopack: {
     root: fileURLToPath(new URL("../..", import.meta.url))
   },
+  webpack(config) {
+    // Workspace packages publish TypeScript sources while keeping Node-style
+    // `.js` specifiers. Teach webpack to resolve those specifiers to the source
+    // `.ts` files so server-only repository composition can be bundled.
+    config.resolve.extensionAlias = {
+      ...config.resolve.extensionAlias,
+      ".js": [".ts", ".js"],
+      ".mjs": [".mts", ".mjs"],
+      ".cjs": [".cts", ".cjs"]
+    };
+    return config;
+  },
   // Web may consume pure contracts, config, and UI projections from domain.
   // Stateful infrastructure packages (@tk/db and @tk/adapters) stay outside
   // the browser bundle.
-  transpilePackages: ["@tk/contracts", "@tk/config", "@tk/domain"]
+  transpilePackages: ["@tk/contracts", "@tk/config", "@tk/domain", "@tk/db"]
 };
 
 export default config;

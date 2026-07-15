@@ -8,15 +8,18 @@ import {
   setStage,
   openDrawer,
   closeDrawer,
+  markStartPending,
+  markStartResult,
   recordScroll,
   type ProductPoolItem,
   type WorkbenchState
 } from "./product-workbench.state";
-import { miaoshouDetailId, productId, sourceItemId } from "@tk/contracts/ids";
+import { miaoshouDetailId, productId, productRevisionId, sourceItemId } from "@tk/contracts/ids";
 
 const items: ProductPoolItem[] = [
   {
     productId: productId("892408514788"),
+    currentRevisionId: productRevisionId("revision-892408514788"),
     sourceItemId: sourceItemId("s-1"),
     canonicalSourceTitle: "A",
     targetTitle: null,
@@ -37,6 +40,7 @@ const items: ProductPoolItem[] = [
   },
   {
     productId: productId("892408514999"),
+    currentRevisionId: productRevisionId("revision-892408514999"),
     sourceItemId: sourceItemId("s-2"),
     canonicalSourceTitle: "B",
     targetTitle: null,
@@ -131,5 +135,38 @@ describe("workbench state machine", () => {
     // Opening the drawer for a single row exposes a per-row 开始处理 button.
     s = openDrawer(s, "892408514788");
     expect(s.drawerStartButtonLabel).toMatch(/开始处理/);
+  });
+
+  it("tracks sibling start results independently without losing UI context", () => {
+    const sibling = {
+      ...items[0]!,
+      productId: productId("sibling"),
+      currentRevisionId: productRevisionId("revision-sibling")
+    };
+    let s = createWorkbenchState([items[0]!, sibling]);
+    s = setStage(s, "pending");
+    s = toggleSelection(s, String(items[0]!.productId));
+    s = toggleSelection(s, String(sibling.productId));
+    s = openDrawer(s, String(sibling.productId));
+    s = recordScroll(s, 88);
+    s = markStartPending(s, [String(items[0]!.productId), String(sibling.productId)]);
+
+    expect(s.startStatusById.get(String(items[0]!.productId))).toBe("pending");
+    expect(s.startStatusById.get(String(sibling.productId))).toBe("pending");
+    expect(s.batchButtonEnabled).toBe(false);
+
+    s = markStartResult(s, String(items[0]!.productId), "success");
+    s = markStartResult(s, String(sibling.productId), "failure");
+
+    expect(s.startStatusById.get(String(items[0]!.productId))).toBe("success");
+    expect(s.startStatusById.get(String(sibling.productId))).toBe("failure");
+    expect(s.selectedIds.size).toBe(2);
+    expect(s.drawerProductId).toBe(String(sibling.productId));
+    expect(s.activeStage).toBe("pending");
+    expect(s.scrollTop).toBe(88);
+    expect(s.batchButtonEnabled).toBe(true);
+    expect(s.batchButtonLabel).toContain("（1）");
+    expect(s.drawerStartButtonEnabled).toBe(true);
+    expect(s.drawerStartButtonLabel).toBe("重试处理");
   });
 });

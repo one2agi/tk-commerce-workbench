@@ -5,7 +5,7 @@ import {
   productStage,
   type ProductPoolItem
 } from "./product-workbench.selectors";
-import { productId, sourceItemId } from "@tk/contracts/ids";
+import { productId, productRevisionId, sourceItemId } from "@tk/contracts/ids";
 
 function item(
   id: string,
@@ -13,6 +13,7 @@ function item(
 ): ProductPoolItem {
   return {
     productId: productId(id),
+    currentRevisionId: productRevisionId(`revision-${id}`),
     sourceItemId: sourceItemId(`source-${id}`),
     canonicalSourceTitle: id,
     targetTitle: null,

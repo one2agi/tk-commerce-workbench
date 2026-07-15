@@ -2,14 +2,18 @@
   "extends": "../../tsconfig.base.json",
   "compilerOptions": {
     "noEmit": true,
+    "noUncheckedIndexedAccess": false,
     "jsx": "preserve",
     "incremental": true,
     "plugins": [{ "name": "next" }],
     "paths": {
       "@tk/contracts": ["../../packages/contracts/src/index.ts"],
       "@tk/contracts/*": ["../../packages/contracts/src/*"],
+      "@tk/config/*": ["../../packages/config/src/*"],
       "@tk/domain": ["../../packages/domain/src/index.ts"],
-      "@tk/domain/*": ["../../packages/domain/src/*"]
+      "@tk/domain/*": ["../../packages/domain/src/*"],
+      "@tk/db": ["../../packages/db/src/index.ts"],
+      "@tk/db/*": ["../../packages/db/src/*"]
     }
   },
   "include": ["next-env.d.ts", "src/**/*", ".next/types/**/*.ts"],
