@@ -5,6 +5,12 @@ export default defineConfig({
     name: "@tk/web",
     include: ["src/**/*.{test,spec}.{ts,tsx}"],
     passWithNoTests: true,
-    environment: "jsdom"
+    environment: "node",
+    pool: "forks"
+  },
+  oxc: {
+    jsx: {
+      runtime: "automatic"
+    }
   }
 });
