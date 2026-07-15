@@ -8,19 +8,27 @@ import { ProductTable } from "./product-table";
 import { ProductDrawer } from "./product-drawer";
 import { AutomationProgress } from "./automation-progress";
 import {
+  buildAutomationProgress,
   buildStageOverview,
   type StageKey
 } from "./product-workbench.selectors";
 import {
   closeDrawer,
   createWorkbenchState,
+  markStartPending,
+  markStartResult,
   openDrawer,
   recordScroll,
   setStage,
+  selectedStartableProductIds,
   toggleSelection,
   type WorkbenchState
 } from "./product-workbench.state";
-import { dispatchStartAutomation, type ApiClient } from "../../lib/api-client";
+import {
+  createHttpApiClient,
+  dispatchStartAutomation,
+  type ApiClient
+} from "../../lib/api-client";
 
 type Props = Readonly<{
   initialItems: ReadonlyArray<ProductPoolItemV1>;
@@ -33,7 +41,9 @@ type Action =
   | { type: "stage"; stage: StageKey }
   | { type: "open"; productId: string }
   | { type: "close" }
-  | { type: "scroll"; scrollTop: number };
+  | { type: "scroll"; scrollTop: number }
+  | { type: "start-pending"; productIds: string[] }
+  | { type: "start-result"; productId: string; result: "success" | "failure" };
 
 function reducer(state: WorkbenchState, action: Action): WorkbenchState {
   switch (action.type) {
@@ -47,16 +57,18 @@ function reducer(state: WorkbenchState, action: Action): WorkbenchState {
       return closeDrawer(state);
     case "scroll":
       return recordScroll(state, action.scrollTop);
+    case "start-pending":
+      return markStartPending(state, action.productIds);
+    case "start-result":
+      return markStartResult(state, action.productId, action.result);
   }
 }
 
-const stubClient: ApiClient = {
-  send: () => ({ accepted: true })
-};
+const defaultApiClient = createHttpApiClient();
 
 export function ProductWorkbench({
   initialItems,
-  apiClient = stubClient,
+  apiClient = defaultApiClient,
   onStartAutomation
 }: Props): ReactElement {
   const [state, dispatch] = useReducer(
@@ -86,23 +98,42 @@ export function ProductWorkbench({
     );
   }, [state.drawerProductId, initialItems]);
 
-  const handleStart = useCallback(
-    (productId: string) => {
-      // Map each productId to a revisionId via a stable hash for Wave 1; Wave 2
-      // will replace this with a real revisionId from the server.
-      const revisionId = `rev-${productId}`;
-      dispatchStartAutomation(apiClient, { revisionIds: [revisionId] });
-      onStartAutomation?.([productId]);
-    },
-    [apiClient, onStartAutomation]
-  );
+  const progressItem = useMemo<ProductPoolItemV1 | null>(() => {
+    if (drawerItem) return drawerItem;
+    if (state.selectedIds.size !== 1) return null;
+    const selectedId = state.selectedIds.values().next().value as string | undefined;
+    return initialItems.find((item) => String(item.productId) === selectedId) ?? null;
+  }, [drawerItem, initialItems, state.selectedIds]);
+
+  const startProducts = useCallback(async (productIds: ReadonlyArray<string>) => {
+    dispatch({ type: "start-pending", productIds: [...productIds] });
+    onStartAutomation?.(productIds);
+    await Promise.all(productIds.map(async (productId) => {
+      const item = initialItems.find((candidate) => String(candidate.productId) === productId);
+      if (!item) {
+        dispatch({ type: "start-result", productId, result: "failure" });
+        return;
+      }
+      try {
+        await dispatchStartAutomation(apiClient, {
+          revisionIds: [String(item.currentRevisionId)]
+        });
+        dispatch({ type: "start-result", productId, result: "success" });
+      } catch {
+        dispatch({ type: "start-result", productId, result: "failure" });
+      }
+    }));
+  }, [apiClient, initialItems, onStartAutomation]);
+
+  const handleStart = useCallback((productId: string) => {
+    void startProducts([productId]);
+  }, [startProducts]);
 
   const handleBatchStart = useCallback(() => {
-    if (state.selectedIds.size === 0) return;
-    const revisionIds = Array.from(state.selectedIds).map((p) => `rev-${p}`);
-    dispatchStartAutomation(apiClient, { revisionIds });
-    onStartAutomation?.(Array.from(state.selectedIds));
-  }, [apiClient, onStartAutomation, state.selectedIds]);
+    const productIds = selectedStartableProductIds(state);
+    if (productIds.length === 0) return;
+    void startProducts(productIds);
+  }, [startProducts, state]);
 
   return (
     <section className="tk-product-workbench" aria-label="商品工作台">
@@ -116,6 +147,7 @@ export function ProductWorkbench({
           items={state.items}
           filtered={state.filtered}
           selectedIds={state.selectedIds}
+          startStatusById={state.startStatusById}
           activeStage={state.activeStage}
           onToggleSelection={(id) => dispatch({ type: "toggle", productId: id })}
           onOpenDrawer={(id) => dispatch({ type: "open", productId: id })}
@@ -140,14 +172,14 @@ export function ProductWorkbench({
         >
           {state.batchButtonLabel}
         </button>
-        <AutomationProgress
-          nodes={[
-            { key: "collect", label: "采集", state: "running" },
-            { key: "listing", label: "Listing", state: "pending" },
-            { key: "canvas", label: "Canvas", state: "pending" },
-            { key: "edit", label: "妙手编辑", state: "pending" }
-          ]}
-        />
+        {progressItem ? (
+          <AutomationProgress
+            productId={String(progressItem.productId)}
+            nodes={buildAutomationProgress(progressItem)}
+          />
+        ) : (
+          <span className="tk-automation-progress__empty">选择一个商品查看真实进度</span>
+        )}
       </footer>
     </section>
   );

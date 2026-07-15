@@ -1,11 +1,12 @@
 import { describe, expect, it } from "vitest";
 import {
   buildStageOverview,
+  buildAutomationProgress,
   applyStageFilter,
   productStage,
   type ProductPoolItem
 } from "./product-workbench.selectors";
-import { productId, sourceItemId } from "@tk/contracts/ids";
+import { productId, productRevisionId, sourceItemId } from "@tk/contracts/ids";
 
 function item(
   id: string,
@@ -13,6 +14,7 @@ function item(
 ): ProductPoolItem {
   return {
     productId: productId(id),
+    currentRevisionId: productRevisionId(`revision-${id}`),
     sourceItemId: sourceItemId(`source-${id}`),
     canonicalSourceTitle: id,
     targetTitle: null,
@@ -99,5 +101,22 @@ describe("stage overview projection", () => {
 
     expect(productStage(partial)).toBe("needs_attention");
     expect(productStage({ ...partial, usableCanvasOutputCount: 1 })).toBe("review");
+  });
+
+  it("derives each progress node from the focused product's persisted aggregate states", () => {
+    const focused = item("focused", {
+      automation: "running",
+      assetArchive: "ready",
+      listing: "ready",
+      canvas: "partial",
+      miaoshouEdit: "result_unknown"
+    });
+
+    expect(buildAutomationProgress(focused)).toEqual([
+      { key: "collect", label: "采集", state: "ready" },
+      { key: "listing", label: "Listing", state: "ready" },
+      { key: "canvas", label: "Canvas", state: "ready" },
+      { key: "edit", label: "妙手编辑", state: "failed" }
+    ]);
   });
 });

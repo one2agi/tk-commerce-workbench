@@ -4,8 +4,9 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "dev": "next dev",
-    "build": "next build",
+    "dev": "node scripts/run-next.mjs dev",
+    "start": "node scripts/run-next.mjs start",
+    "build": "next build --webpack",
     "lint": "eslint src --max-warnings=0",
     "typecheck": "tsc --noEmit",
     "test": "vitest run"
@@ -14,9 +15,11 @@
     "@tk/contracts": "workspace:*",
     "@tk/config": "workspace:*",
     "@tk/domain": "workspace:*",
+    "@tk/db": "workspace:*",
     "next": "16.2.10",
     "react": "19.2.7",
     "react-dom": "19.2.7",
+    "pg": "8.22.0",
     "zod": "4.4.3"
   },
   "devDependencies": {
@@ -25,6 +28,7 @@
     "@testing-library/user-event": "14.6.1",
     "@types/react": "19.2.17",
     "@types/react-dom": "19.2.3",
+    "@types/pg": "8.20.0",
     "@vitest/coverage-v8": "4.1.10",
     "eslint-config-next": "16.2.10",
     "jsdom": "29.1.1"

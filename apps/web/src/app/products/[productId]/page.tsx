@@ -1,13 +1,14 @@
-import { fixtures } from "../../../lib/fixtures";
+import type { ProductWorkspaceV1 } from "@tk/contracts/read-models";
+
+import { getServerServices } from "../../../server/composition";
 
 type PageProps = { params: Promise<{ productId: string }> };
+type ProductReader = { get(productId: string): Promise<ProductWorkspaceV1 | null> };
 
-export default async function ProductPage({ params }: PageProps) {
+export async function renderProductPage(params: PageProps["params"], products: ProductReader) {
   const { productId } = await params;
-  const item = fixtures.productPool.find(
-    (i) => String(i.productId) === productId
-  );
-  if (!item) {
+  const workspace = await products.get(productId);
+  if (!workspace) {
     return (
       <article aria-label={`未找到商品 ${productId}`}>
         <h1>未找到商品 {productId}</h1>
@@ -17,17 +18,23 @@ export default async function ProductPage({ params }: PageProps) {
   }
   return (
     <article aria-label={`商品详情 ${productId}`}>
-      <h1>{item.canonicalSourceTitle ?? productId}</h1>
+      <h1>{workspace.originalListing?.sourceTitle ?? workspace.target?.title ?? productId}</h1>
       <dl>
-        <dt>源商品 ID</dt>
-        <dd>{String(item.productId)}</dd>
-        <dt>采集状态</dt>
-        <dd>{item.miaoshouSource}</dd>
-        <dt>listing 状态</dt>
-        <dd>{item.listing}</dd>
-        <dt>妙手编辑状态</dt>
-        <dd>{item.miaoshouEdit}</dd>
+        <dt>当前版本</dt>
+        <dd>{String(workspace.revisionId)} / v{workspace.draftVersion}</dd>
+        <dt>目标标题</dt>
+        <dd>{workspace.target?.title ?? "尚未生成"}</dd>
+        <dt>Canvas 状态</dt>
+        <dd>{workspace.canvas?.state ?? "not_started"}</dd>
+        <dt>成图数量</dt>
+        <dd>{workspace.canvas?.outputs.length ?? 0}</dd>
+        <dt>风险提示</dt>
+        <dd>{workspace.warningCodes.length > 0 ? workspace.warningCodes.join("、") : "无"}</dd>
       </dl>
     </article>
   );
+}
+
+export default async function ProductPage({ params }: PageProps) {
+  return renderProductPage(params, (await getServerServices()).products);
 }

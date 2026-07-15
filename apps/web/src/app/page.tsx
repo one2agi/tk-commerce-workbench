@@ -1,6 +1,9 @@
 import { ProductWorkbench } from "../components/products/product-workbench";
-import { fixtures } from "../lib/fixtures";
+import { getServerServices } from "../server/composition";
 
-export default function HomePage() {
-  return <ProductWorkbench initialItems={fixtures.productPool} />;
+export const dynamic = "force-dynamic";
+
+export default async function HomePage() {
+  const { items } = await (await getServerServices()).products.list();
+  return <ProductWorkbench initialItems={items} />;
 }

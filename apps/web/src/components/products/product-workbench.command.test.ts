@@ -4,14 +4,18 @@
 // expose "发布 TikTok", "认领到采集箱" or Miaoshou-edit buttons.
 
 import { describe, expect, it, vi } from "vitest";
-import { dispatchStartAutomation, type ApiClient } from "../../lib/api-client";
+import {
+  createHttpApiClient,
+  dispatchStartAutomation,
+  type ApiClient
+} from "../../lib/api-client";
 import { StartAutomationV1 } from "@tk/contracts/commands";
 
 describe("api-client.startAutomation dispatch", () => {
-  it("dispatches a version-1 StartAutomationV1 payload with revisionIds", () => {
-    const send = vi.fn().mockReturnValue({ accepted: true });
-    const client: ApiClient = { send } as unknown as ApiClient;
-    dispatchStartAutomation(client, {
+  it("dispatches a version-1 StartAutomationV1 payload with revisionIds", async () => {
+    const send = vi.fn().mockResolvedValue({ runs: [] });
+    const client: ApiClient = { send };
+    await dispatchStartAutomation(client, {
       revisionIds: ["rev-1", "rev-2"]
     });
     expect(send).toHaveBeenCalledTimes(1);
@@ -21,13 +25,26 @@ describe("api-client.startAutomation dispatch", () => {
     expect(parsed.success).toBe(true);
   });
 
-  it("rejects payloads that don't match the contract shape", () => {
-    const send = vi.fn().mockReturnValue({ accepted: true });
-    const client: ApiClient = { send } as unknown as ApiClient;
-    expect(() =>
+  it("rejects payloads that don't match the contract shape", async () => {
+    const send = vi.fn().mockResolvedValue({ runs: [] });
+    const client: ApiClient = { send };
+    await expect(
       dispatchStartAutomation(client, {
         revisionIds: [] // empty array fails .min(1)
       })
-    ).toThrow();
+    ).rejects.toThrow();
+  });
+
+  it("uses the local automation endpoint in the default HTTP client", async () => {
+    const fetcher = vi.fn(async () => new Response(JSON.stringify({
+      runs: [{ revisionId: "rev-1", runId: "run-1", created: true }]
+    }), { status: 202, headers: { "content-type": "application/json" } }));
+
+    await expect(dispatchStartAutomation(createHttpApiClient(fetcher), {
+      revisionIds: ["rev-1"]
+    })).resolves.toMatchObject({ runs: [{ runId: "run-1" }] });
+    expect(fetcher).toHaveBeenCalledWith("/api/v1/automation-runs", expect.objectContaining({
+      method: "POST"
+    }));
   });
 });

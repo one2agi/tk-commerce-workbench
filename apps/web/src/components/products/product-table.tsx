@@ -4,11 +4,13 @@ import type { ChangeEvent, ReactElement, UIEvent } from "react";
 import type { ProductPoolItemV1 } from "@tk/contracts/read-models";
 import type { StageKey } from "./product-workbench.selectors";
 import { canStartAutomation } from "./product-workbench.selectors";
+import type { StartStatus } from "./product-workbench.state";
 
 type Props = Readonly<{
   items: ReadonlyArray<ProductPoolItemV1>;
   filtered: ReadonlyArray<ProductPoolItemV1>;
   selectedIds: ReadonlySet<string>;
+  startStatusById: ReadonlyMap<string, StartStatus>;
   activeStage: StageKey;
   onToggleSelection: (productId: string) => void;
   onOpenDrawer: (productId: string) => void;
@@ -39,6 +41,7 @@ export function ProductTable({
   items,
   filtered,
   selectedIds,
+  startStatusById,
   activeStage,
   onToggleSelection,
   onOpenDrawer,
@@ -75,6 +78,14 @@ export function ProductTable({
           <tbody>
             {filtered.map((item) => {
               const checked = selectedIds.has(String(item.productId));
+              const startStatus = startStatusById.get(String(item.productId)) ?? "idle";
+              const startLabel = startStatus === "pending"
+                ? "启动:处理中"
+                : startStatus === "success"
+                  ? "启动:已开始"
+                  : startStatus === "failure"
+                    ? "启动:失败，可重试"
+                    : null;
               return (
                 <tr key={String(item.productId)} aria-selected={checked}>
                   <td>
@@ -82,7 +93,10 @@ export function ProductTable({
                       <input
                         type="checkbox"
                         checked={checked}
-                        disabled={!canStartAutomation(item)}
+                        disabled={
+                          startStatus === "pending" ||
+                          (!checked && (!canStartAutomation(item) || startStatus === "success"))
+                        }
                         aria-label={`选择商品 ${item.productId}`}
                         onChange={(_e: ChangeEvent<HTMLInputElement>) =>
                           onToggleSelection(String(item.productId))
@@ -92,7 +106,10 @@ export function ProductTable({
                   </td>
                   <td>{String(item.productId)}</td>
                   <td>{item.canonicalSourceTitle ?? "—"}</td>
-                  <td>{statusFor(item)}</td>
+                   <td>
+                     {statusFor(item)}
+                     {startLabel ? <span className="tk-start-status">{startLabel}</span> : null}
+                   </td>
                   <td>
                     <button
                       type="button"

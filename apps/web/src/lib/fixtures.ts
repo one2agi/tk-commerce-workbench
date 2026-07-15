@@ -2,7 +2,7 @@
 // Hand-crafted so every aggregate state appears at least once — this lets the
 // stage overview projection show non-zero counts in every card.
 
-import { productId, sourceItemId } from "@tk/contracts/ids";
+import { productId, productRevisionId, sourceItemId } from "@tk/contracts/ids";
 import { cny, thb } from "@tk/contracts/quantities";
 import type { ProductPoolItemV1 } from "@tk/contracts/read-models";
 
@@ -10,6 +10,7 @@ export const fixtures: { productPool: ProductPoolItemV1[] } = {
   productPool: [
     {
       productId: productId("892408514788"),
+      currentRevisionId: productRevisionId("revision-892408514788"),
       sourceItemId: sourceItemId("1688-A-001"),
       canonicalSourceTitle: "便携折叠收纳箱 30L",
       targetTitle: "กล่องเก็บของพับได้ 30 ลิตร",
@@ -30,6 +31,7 @@ export const fixtures: { productPool: ProductPoolItemV1[] } = {
     },
     {
       productId: productId("892408514999"),
+      currentRevisionId: productRevisionId("revision-892408514999"),
       sourceItemId: sourceItemId("1688-A-002"),
       canonicalSourceTitle: "304 不锈钢真空保温杯",
       targetTitle: "แก้วเก็บความร้อนสูญญากาศ 304",
@@ -50,6 +52,7 @@ export const fixtures: { productPool: ProductPoolItemV1[] } = {
     },
     {
       productId: productId("892408515123"),
+      currentRevisionId: productRevisionId("revision-892408515123"),
       sourceItemId: sourceItemId("1688-A-003"),
       canonicalSourceTitle: "USB-C 65W 氮化镓充电器",
       targetTitle: "ที่ชาร์จ GaN USB-C 65W",

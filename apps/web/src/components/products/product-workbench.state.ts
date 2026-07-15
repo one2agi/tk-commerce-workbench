@@ -11,6 +11,7 @@ import {
 } from "./product-workbench.selectors";
 
 export type ProductPoolItem = ProductPoolItemV1;
+export type StartStatus = "idle" | "pending" | "success" | "failure";
 
 export type WorkbenchState = Readonly<{
   items: ReadonlyArray<ProductPoolItem>;
@@ -19,6 +20,7 @@ export type WorkbenchState = Readonly<{
   activeStage: StageKey;
   drawerProductId: string | null;
   scrollTop: number;
+  startStatusById: ReadonlyMap<string, StartStatus>;
   // Labels are pre-computed so the React layer can render <button
   // aria-label={state.batchButtonLabel}> without recomputing.
   batchButtonLabel: string;
@@ -33,7 +35,8 @@ export function createWorkbenchState(items: ReadonlyArray<ProductPoolItem>): Wor
     selectedIds: new Set<string>(),
     activeStage: "all",
     drawerProductId: null,
-    scrollTop: 0
+    scrollTop: 0,
+    startStatusById: new Map()
   });
 }
 
@@ -43,11 +46,19 @@ type Internal = {
   activeStage: StageKey;
   drawerProductId: string | null;
   scrollTop: number;
+  startStatusById: Map<string, StartStatus>;
 };
+
+function isStartable(item: ProductPoolItem, status: StartStatus): boolean {
+  return canStartAutomation(item) && (status === "idle" || status === "failure");
+}
 
 function derive(s: Internal): WorkbenchState {
   const filtered = applyStageFilter(s.items, s.activeStage);
-  const count = s.selectedIds.size;
+  const count = s.items.filter((item) =>
+    s.selectedIds.has(String(item.productId)) &&
+    isStartable(item, s.startStatusById.get(String(item.productId)) ?? "idle")
+  ).length;
   const drawerItem = s.drawerProductId
     ? s.items.find((item) => String(item.productId) === s.drawerProductId)
     : undefined;
@@ -58,25 +69,34 @@ function derive(s: Internal): WorkbenchState {
     activeStage: s.activeStage,
     drawerProductId: s.drawerProductId,
     scrollTop: s.scrollTop,
+    startStatusById: s.startStatusById,
     batchButtonLabel: `批量开始处理（${count}）`,
     batchButtonEnabled: count > 0,
-    drawerStartButtonLabel: "开始处理",
-    drawerStartButtonEnabled: drawerItem ? canStartAutomation(drawerItem) : false
+    drawerStartButtonLabel: drawerItem && s.startStatusById.get(String(drawerItem.productId)) === "failure"
+      ? "重试处理"
+      : "开始处理",
+    drawerStartButtonEnabled: drawerItem
+      ? isStartable(drawerItem, s.startStatusById.get(String(drawerItem.productId)) ?? "idle")
+      : false
   };
 }
 
 export function toggleSelection(s: WorkbenchState, productId: string): WorkbenchState {
   const item = s.items.find((candidate) => String(candidate.productId) === productId);
-  if (!item || !canStartAutomation(item)) return s;
   const next = new Set(s.selectedIds);
-  if (next.has(productId)) next.delete(productId);
-  else next.add(productId);
+  if (next.has(productId)) {
+    next.delete(productId);
+  } else {
+    if (!item || !isStartable(item, s.startStatusById.get(productId) ?? "idle")) return s;
+    next.add(productId);
+  }
   return derive({
     items: s.items,
     selectedIds: next,
     activeStage: s.activeStage,
     drawerProductId: s.drawerProductId,
-    scrollTop: s.scrollTop
+    scrollTop: s.scrollTop,
+    startStatusById: new Map(s.startStatusById)
   });
 }
 
@@ -86,7 +106,8 @@ export function setStage(s: WorkbenchState, stage: StageKey): WorkbenchState {
     selectedIds: new Set(s.selectedIds),
     activeStage: stage,
     drawerProductId: s.drawerProductId,
-    scrollTop: s.scrollTop
+    scrollTop: s.scrollTop,
+    startStatusById: new Map(s.startStatusById)
   });
 }
 
@@ -96,7 +117,8 @@ export function openDrawer(s: WorkbenchState, productId: string): WorkbenchState
     selectedIds: new Set(s.selectedIds),
     activeStage: s.activeStage,
     drawerProductId: productId,
-    scrollTop: s.scrollTop
+    scrollTop: s.scrollTop,
+    startStatusById: new Map(s.startStatusById)
   });
 }
 
@@ -106,7 +128,8 @@ export function closeDrawer(s: WorkbenchState): WorkbenchState {
     selectedIds: new Set(s.selectedIds),
     activeStage: s.activeStage,
     drawerProductId: null,
-    scrollTop: s.scrollTop
+    scrollTop: s.scrollTop,
+    startStatusById: new Map(s.startStatusById)
   });
 }
 
@@ -116,6 +139,46 @@ export function recordScroll(s: WorkbenchState, scrollTop: number): WorkbenchSta
     selectedIds: new Set(s.selectedIds),
     activeStage: s.activeStage,
     drawerProductId: s.drawerProductId,
-    scrollTop
+    scrollTop,
+    startStatusById: new Map(s.startStatusById)
+  });
+}
+
+export function markStartPending(s: WorkbenchState, productIds: ReadonlyArray<string>): WorkbenchState {
+  const statuses = new Map(s.startStatusById);
+  for (const productId of productIds) statuses.set(productId, "pending");
+  return derive({
+    items: s.items,
+    selectedIds: new Set(s.selectedIds),
+    activeStage: s.activeStage,
+    drawerProductId: s.drawerProductId,
+    scrollTop: s.scrollTop,
+    startStatusById: statuses
+  });
+}
+
+export function markStartResult(
+  s: WorkbenchState,
+  productId: string,
+  result: "success" | "failure"
+): WorkbenchState {
+  const statuses = new Map(s.startStatusById);
+  statuses.set(productId, result);
+  return derive({
+    items: s.items,
+    selectedIds: new Set(s.selectedIds),
+    activeStage: s.activeStage,
+    drawerProductId: s.drawerProductId,
+    scrollTop: s.scrollTop,
+    startStatusById: statuses
+  });
+}
+
+export function selectedStartableProductIds(s: WorkbenchState): string[] {
+  return s.items.flatMap((item) => {
+    const id = String(item.productId);
+    return s.selectedIds.has(id) && isStartable(item, s.startStatusById.get(id) ?? "idle")
+      ? [id]
+      : [];
   });
 }
