@@ -20,6 +20,7 @@ export interface SchemaTables {
   readonly exchangeRateSnapshots: "exchange_rate_snapshots";
   readonly automationRuns: "automation_runs";
   readonly canvasRuns: "canvas_runs";
+  readonly canvasDailyReservations: "canvas_daily_reservations";
   readonly approvalSnapshots: "approval_snapshots";
   readonly miaoshouSyncs: "miaoshou_syncs";
   readonly jobs: "jobs";
@@ -44,6 +45,7 @@ export const schema: SchemaTables = Object.freeze({
   exchangeRateSnapshots: "exchange_rate_snapshots",
   automationRuns: "automation_runs",
   canvasRuns: "canvas_runs",
+  canvasDailyReservations: "canvas_daily_reservations",
   approvalSnapshots: "approval_snapshots",
   miaoshouSyncs: "miaoshou_syncs",
   jobs: "jobs",
