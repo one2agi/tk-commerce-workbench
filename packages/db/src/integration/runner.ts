@@ -3,8 +3,8 @@
 // Behavior:
 //  - When TEST_DATABASE_URL is provided AND the URL passes the loopback/_test guard,
 //    connect via the standard `pg` driver (production-like path used by CI).
-//  - When TEST_DATABASE_URL is unset or explicitly asks for the in-memory pglite
-//    backend (set TEST_DATABASE_URL to `pglite://_test`), spin up a local-only
+//  - When TEST_DATABASE_URL explicitly asks for the in-memory pglite backend
+//    (set TEST_DATABASE_URL to `pglite://_test`), spin up a local-only
 //    PGlite socket server on loopback port 45532 and serve a `pg.Pool` over it.
 //    This is the WSL2 fallback documented in the Wave 1 Core brief.
 //
@@ -56,7 +56,11 @@ async function ensurePgliteServer(): Promise<PgliteServerHandle> {
 
 export async function bootTestDb(): Promise<TestDbHandle> {
   const raw = process.env["TEST_DATABASE_URL"];
-  const usePglite = !raw || raw.startsWith("pglite://");
+  assert(
+    raw,
+    "TEST_DATABASE_URL is required; use a guarded PostgreSQL *_test database for the Gate, or explicitly set pglite://_test for a local compatibility run"
+  );
+  const usePglite = raw.startsWith("pglite://");
 
   let approved: ApprovedDb;
   let pgliteHandle: PgliteServerHandle | undefined;
@@ -76,8 +80,19 @@ export async function bootTestDb(): Promise<TestDbHandle> {
     idleTimeoutMillis: 5_000,
     connectionTimeoutMillis: 10_000
   });
-  const client = await pool.connect();
-  await client.query("SELECT 1");
+  let client: pg.PoolClient;
+  try {
+    client = await pool.connect();
+    await client.query("SELECT 1");
+  } catch (cause) {
+    await pool.end().catch(() => undefined);
+    if (pgliteHandle) await pgliteHandle.server.stop().catch(() => undefined);
+    const reason = cause instanceof Error ? cause.message : String(cause);
+    throw new Error(
+      `Cannot connect to the approved test database ${approved.database}. Create that *_test database and verify TEST_DATABASE_URL (${reason})`,
+      { cause }
+    );
+  }
 
   return {
     approved,

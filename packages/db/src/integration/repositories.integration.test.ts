@@ -12,12 +12,14 @@ import { afterAll, beforeAll, beforeEach, describe, expect, test } from "vitest"
 import type { ConfirmMiaoshouEditV1 } from "@tk/contracts";
 
 import { bootTestDb, type TestDbHandle } from "./runner.js";
-import * as schema from "../schema/index.js";
 import { CatalogRepository } from "../repositories/catalog-repository.js";
 import { JobRepository } from "../repositories/job-repository.js";
 import { ExchangeRateRepository } from "../repositories/exchange-rate-repository.js";
 import { AutomationRunRepository } from "../repositories/automation-run-repository.js";
-import { ApprovalRepository } from "../repositories/approval-repository.js";
+import {
+  ApprovalNotReadyError,
+  ApprovalRepository
+} from "../repositories/approval-repository.js";
 import { INITIAL_SQL } from "../migrations/0000_initial.js";
 
 let handle: TestDbHandle;
@@ -43,7 +45,7 @@ beforeEach(async () => {
 });
 
 afterAll(async () => {
-  await handle.close();
+  await handle?.close();
 });
 
 describe("integration: bootstrap", () => {
@@ -108,6 +110,33 @@ describe("integration: catalog repository", () => {
     expect(all).toHaveLength(2);
     // Both revisions preserved (no overwrite).
     expect(all.map((r) => r.sourceTitle).sort()).toEqual(["v1 title", "v2 title"]);
+  });
+
+  test("reuses product identity for the same operator and source item", async () => {
+    const operatorId = await catalog.upsertLocalOperator({
+      handle: "local-operator",
+      displayName: "Local Operator"
+    });
+    const first = await catalog.insertProduct({
+      operatorId,
+      sourceUrl: "https://detail.1688.com/offer/123.html",
+      sourceItemId: "123",
+      locale: "th-TH",
+      currency: "THB"
+    });
+    const second = await catalog.insertProduct({
+      operatorId,
+      sourceUrl: "https://detail.1688.com/offer/123.html?spm=repeat",
+      sourceItemId: "123",
+      locale: "th-TH",
+      currency: "THB"
+    });
+    expect(second).toBe(first);
+    const count = await handle.pool.query(
+      "SELECT count(*)::int AS count FROM products WHERE operator_id = $1 AND source_item_id = '123'",
+      [operatorId]
+    );
+    expect(count.rows[0].count).toBe(1);
   });
 });
 
@@ -188,6 +217,78 @@ describe("integration: job repository claim semantics", () => {
     expect(second).not.toBeNull();
     expect(second!.jobId).not.toBe(first!.jobId);
   });
+
+  test("a stale lease owner cannot heartbeat, complete, or fail a re-claimed job", async () => {
+    await jobs.enqueue({
+      kind: "pricing_calculate",
+      businessKey: "lease:fencing",
+      payload: { version: 1, revisionId: "rev-fencing" }
+    });
+    const first = await jobs.claim("worker-old", new Date("2026-07-01T00:00:00Z"), 1_000);
+    expect(first).not.toBeNull();
+    await jobs.releaseExpired(new Date("2026-07-01T00:00:02Z"));
+    const second = await jobs.claim("worker-new", new Date("2026-07-01T00:00:02Z"), 30_000);
+    expect(second).not.toBeNull();
+    expect(second!.leaseToken).not.toBe(first!.leaseToken);
+
+    await expect(
+      jobs.heartbeat(first!.jobId, "worker-old", first!.leaseToken, new Date("2026-07-01T00:00:03Z"), 1_000)
+    ).resolves.toBe(false);
+    await expect(jobs.complete(first!.jobId, "worker-old", first!.leaseToken)).resolves.toBe(false);
+    await expect(
+      jobs.fail(first!.jobId, "worker-old", first!.leaseToken, { code: "stale" })
+    ).resolves.toBe(false);
+    await expect(jobs.complete(second!.jobId, "worker-new", second!.leaseToken)).resolves.toBe(true);
+  });
+
+  test("claim respects next_attempt_at and max_attempts", async () => {
+    const futureId = await jobs.enqueue({
+      kind: "pricing_calculate",
+      businessKey: "retry:future",
+      payload: { version: 1 },
+      maxAttempts: 3
+    });
+    const exhaustedId = await jobs.enqueue({
+      kind: "pricing_calculate",
+      businessKey: "retry:exhausted",
+      payload: { version: 1 },
+      maxAttempts: 1
+    });
+    await handle.pool.query("UPDATE jobs SET next_attempt_at = $2 WHERE id = $1", [
+      futureId,
+      new Date("2026-07-02T00:00:00Z")
+    ]);
+    await handle.pool.query("UPDATE jobs SET attempt = max_attempts WHERE id = $1", [exhaustedId]);
+    expect(await jobs.claim("worker", new Date("2026-07-01T00:00:00Z"), 30_000)).toBeNull();
+  });
+
+  test("expired external-side-effect jobs go to reconciliation instead of being requeued", async () => {
+    const externalId = await jobs.enqueue({
+      kind: "canvas_generate",
+      businessKey: "external:canvas",
+      payload: { version: 1 }
+    });
+    const safeId = await jobs.enqueue({
+      kind: "pricing_calculate",
+      businessKey: "internal:pricing",
+      payload: { version: 1 }
+    });
+    const now = new Date("2026-07-01T00:00:00Z");
+    const external = await jobs.claim("worker-a", now, 1_000);
+    const safe = await jobs.claim("worker-a", now, 1_000);
+    expect(new Set([external!.jobId, safe!.jobId])).toEqual(new Set([externalId, safeId]));
+    await handle.pool.query("UPDATE jobs SET remote_task_id = 'remote-123' WHERE id = $1", [externalId]);
+
+    expect(await jobs.releaseExpired(new Date("2026-07-01T00:00:02Z"))).toBe(2);
+    const result = await handle.pool.query(
+      "SELECT id, status, error FROM jobs WHERE id = ANY($1::text[]) ORDER BY id",
+      [[externalId, safeId]]
+    );
+    const byId = new Map(result.rows.map((row) => [row.id, row]));
+    expect(byId.get(externalId).status).toBe("needs_input");
+    expect(byId.get(externalId).error.code).toBe("reconcile_required");
+    expect(byId.get(safeId).status).toBe("queued");
+  });
 });
 
 describe("integration: exchange rate snapshots", () => {
@@ -219,7 +320,7 @@ describe("integration: exchange rate snapshots", () => {
 });
 
 describe("integration: automation run repository", () => {
-  test("createOrReuseAndEnqueue reuses existing run on second call", async () => {
+  test("concurrent createOrReuseAndEnqueue creates one run and one asset archive job", async () => {
     const opId = await catalog.upsertLocalOperator({
       handle: "local-operator",
       displayName: "Local Operator"
@@ -237,22 +338,30 @@ describe("integration: automation run repository", () => {
       workingDraft: {}
     });
 
-    const first = await automations.createOrReuseAndEnqueue({
-      revisionId: revId,
-      processingVersion: 1
-    });
-    const second = await automations.createOrReuseAndEnqueue({
-      revisionId: revId,
-      processingVersion: 1
-    });
-    expect(first.created).toBe(true);
-    expect(second.created).toBe(false);
+    const [first, second] = await Promise.all([
+      automations.createOrReuseAndEnqueue({ revisionId: revId, processingVersion: 1 }),
+      automations.createOrReuseAndEnqueue({ revisionId: revId, processingVersion: 1 })
+    ]);
+    expect([first.created, second.created].sort()).toEqual([false, true]);
     expect(first.runId).toBe(second.runId);
+
+    const runs = await handle.pool.query(
+      "SELECT id FROM automation_runs WHERE revision_id = $1 AND processing_version = 1",
+      [revId]
+    );
+    const queued = await handle.pool.query(
+      "SELECT kind, payload FROM jobs WHERE business_key = $1",
+      [`automation:${first.runId}:boot`]
+    );
+    expect(runs.rowCount).toBe(1);
+    expect(queued.rowCount).toBe(1);
+    expect(queued.rows[0].kind).toBe("asset_archive");
+    expect(queued.rows[0].payload).toEqual({ version: 1, revisionId: revId, remoteUrls: [] });
   });
 });
 
-describe("integration: ApprovalRepository.confirmAndEnqueue (frozen transaction boundary)", () => {
-  test("returns approvalSnapshotId and syncId", async () => {
+describe("integration: ApprovalRepository.confirmAndEnqueue fail-closed boundary", () => {
+  test("rejects incomplete mapping without snapshot, sync, or job writes", async () => {
     const opId = await catalog.upsertLocalOperator({
       handle: "local-operator",
       displayName: "Local Operator"
@@ -272,35 +381,16 @@ describe("integration: ApprovalRepository.confirmAndEnqueue (frozen transaction 
       expectedTemplateVersion: 1,
       orderedFinalAssetIds: ["asset-a", "asset-b"]
     };
-    const result = await approvals.confirmAndEnqueue(command);
-    expect(typeof result.approvalSnapshotId).toBe("string");
-    expect(result.approvalSnapshotId.length).toBeGreaterThan(0);
-    expect(typeof result.syncId).toBe("string");
-    expect(result.syncId.length).toBeGreaterThan(0);
-  });
-
-  test("second call with same command inputs is idempotent", async () => {
-    const opId = await catalog.upsertLocalOperator({
-      handle: "local-operator",
-      displayName: "Local Operator"
-    });
-    const productId = await catalog.insertProduct({
-      operatorId: opId,
-      sourceUrl: "https://detail.1688.com/offer/def.html",
-      locale: "th-TH",
-      currency: "THB"
-    });
-    const command: ConfirmMiaoshouEditV1 = {
-      version: 1,
-      productId,
-      expectedDraftVersion: 1,
-      expectedListingRunId: "run-listing-2",
-      expectedPricingRunId: "run-pricing-2",
-      expectedTemplateVersion: 1,
-      orderedFinalAssetIds: ["asset-x", "asset-y"]
-    };
-    const a = await approvals.confirmAndEnqueue(command);
-    const b = await approvals.confirmAndEnqueue(command);
-    expect(b.approvalSnapshotId).toBe(a.approvalSnapshotId);
+    await expect(approvals.confirmAndEnqueue(command)).rejects.toBeInstanceOf(
+      ApprovalNotReadyError
+    );
+    const [snapshots, syncs, queued] = await Promise.all([
+      handle.pool.query("SELECT count(*)::int AS count FROM approval_snapshots"),
+      handle.pool.query("SELECT count(*)::int AS count FROM miaoshou_syncs"),
+      handle.pool.query("SELECT count(*)::int AS count FROM jobs")
+    ]);
+    expect(snapshots.rows[0].count).toBe(0);
+    expect(syncs.rows[0].count).toBe(0);
+    expect(queued.rows[0].count).toBe(0);
   });
 });

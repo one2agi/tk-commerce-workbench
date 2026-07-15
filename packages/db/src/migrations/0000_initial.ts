@@ -42,6 +42,10 @@ CREATE TABLE IF NOT EXISTS products (
   updated_at       TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
+CREATE UNIQUE INDEX IF NOT EXISTS products_operator_source_item_unique
+  ON products (operator_id, source_item_id)
+  WHERE source_item_id IS NOT NULL;
+
 -- Product revisions: immutable per round of automation
 CREATE TABLE IF NOT EXISTS product_revisions (
   id               TEXT PRIMARY KEY,
@@ -59,13 +63,25 @@ CREATE TABLE IF NOT EXISTS miaoshou_source_records (
   id               TEXT PRIMARY KEY,
   product_id       TEXT NOT NULL REFERENCES products(id) ON DELETE CASCADE,
   source_item_id   TEXT NOT NULL,
-  detail_id        TEXT,
+  fetch_detail_id  TEXT,
+  skipped_detail_id TEXT,
+  canonical_success_detail_id TEXT,
+  failure_reason   TEXT,
   fetched_payload  JSONB NOT NULL DEFAULT '{}'::jsonb,
   state            TEXT NOT NULL DEFAULT 'not_started',
   version          BIGINT NOT NULL DEFAULT 1,
   created_at       TIMESTAMPTZ NOT NULL DEFAULT now(),
   updated_at       TIMESTAMPTZ NOT NULL DEFAULT now()
 );
+
+CREATE UNIQUE INDEX IF NOT EXISTS miaoshou_source_records_product_source_unique
+  ON miaoshou_source_records (product_id, source_item_id);
+
+-- Forward-compatible for local Wave 1 databases that already created the table.
+ALTER TABLE miaoshou_source_records ADD COLUMN IF NOT EXISTS fetch_detail_id TEXT;
+ALTER TABLE miaoshou_source_records ADD COLUMN IF NOT EXISTS skipped_detail_id TEXT;
+ALTER TABLE miaoshou_source_records ADD COLUMN IF NOT EXISTS canonical_success_detail_id TEXT;
+ALTER TABLE miaoshou_source_records ADD COLUMN IF NOT EXISTS failure_reason TEXT;
 
 CREATE TABLE IF NOT EXISTS skus (
   id               TEXT PRIMARY KEY,
@@ -241,6 +257,7 @@ CREATE TABLE IF NOT EXISTS jobs (
   max_attempts     INTEGER NOT NULL DEFAULT 3,
   next_attempt_at  TIMESTAMPTZ,
   owner            TEXT,
+  lease_token      TEXT,
   lease_expires_at TIMESTAMPTZ,
   last_heartbeat_at TIMESTAMPTZ,
   remote_task_id   TEXT,
@@ -249,6 +266,9 @@ CREATE TABLE IF NOT EXISTS jobs (
   updated_at       TIMESTAMPTZ NOT NULL DEFAULT now(),
   UNIQUE (kind, business_key)
 );
+
+-- Forward-compatible for local Wave 1 databases that already created the table.
+ALTER TABLE jobs ADD COLUMN IF NOT EXISTS lease_token TEXT;
 
 CREATE TABLE IF NOT EXISTS worker_instances (
   id               TEXT PRIMARY KEY,

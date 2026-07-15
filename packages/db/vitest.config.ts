@@ -1,15 +1,11 @@
+import { fileURLToPath } from "node:url";
 import { defineConfig } from "vitest/config";
 
 export default defineConfig({
+  root: fileURLToPath(new URL(".", import.meta.url)),
   test: {
-    name: "@tk/db",
-    include: [
-      "src/**/*.{test,spec}.{ts,tsx}",
-      "src/**/*.{integration.test,integration.spec}.{ts,tsx}"
-    ],
-    passWithNoTests: true,
+    include: ["src/**/*.{test,spec}.ts"],
     environment: "node",
-    // 集成测试需要后端 Postgres; testTimeout 放宽。
     testTimeout: 30_000
   }
 });

@@ -87,6 +87,21 @@ export interface RevisionRow {
   createdAt: Date;
 }
 
+export interface MiaoshouSourceRecordRow {
+  id: string;
+  productId: string;
+  sourceItemId: string;
+  fetchDetailId: string | null;
+  skippedDetailId: string | null;
+  canonicalSuccessDetailId: string | null;
+  failureReason: string | null;
+  fetchedPayload: Record<string, unknown>;
+  state: string;
+  version: string;
+  createdAt: Date;
+  updatedAt: Date;
+}
+
 export interface ExchangeRateRow {
   id: string;
   base: string;
@@ -109,6 +124,7 @@ export interface JobRow {
   maxAttempts: number;
   nextAttemptAt: Date | null;
   owner: string | null;
+  leaseToken: string | null;
   leaseExpiresAt: Date | null;
   lastHeartbeatAt: Date | null;
   remoteTaskId: string | null;
