@@ -37,6 +37,24 @@ CREATE TABLE IF NOT EXISTS products (
   updated_at       TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
+-- Preserve every legacy product and revision before enforcing stable identity. Prefer
+-- the row that already has a known canonical detail; duplicate rows remain addressable
+-- by id/source_url but relinquish source_item_id so no history is deleted or merged.
+WITH ranked_product_identities AS (
+  SELECT id,
+         row_number() OVER (
+           PARTITION BY operator_id, source_item_id
+           ORDER BY (canonical_success_detail_id IS NOT NULL) DESC, created_at ASC, id ASC
+         ) AS identity_rank
+  FROM products
+  WHERE source_item_id IS NOT NULL
+)
+UPDATE products product
+SET source_item_id = NULL,
+    updated_at = now()
+FROM ranked_product_identities ranked
+WHERE product.id = ranked.id AND ranked.identity_rank > 1;
+
 CREATE UNIQUE INDEX IF NOT EXISTS products_operator_source_item_unique
   ON products (operator_id, source_item_id)
   WHERE source_item_id IS NOT NULL;
@@ -69,14 +87,36 @@ CREATE TABLE IF NOT EXISTS miaoshou_source_records (
   updated_at       TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
-CREATE UNIQUE INDEX IF NOT EXISTS miaoshou_source_records_product_source_unique
-  ON miaoshou_source_records (product_id, source_item_id);
-
 -- Forward-compatible for local Wave 1 databases that already created the table.
 ALTER TABLE miaoshou_source_records ADD COLUMN IF NOT EXISTS fetch_detail_id TEXT;
 ALTER TABLE miaoshou_source_records ADD COLUMN IF NOT EXISTS skipped_detail_id TEXT;
 ALTER TABLE miaoshou_source_records ADD COLUMN IF NOT EXISTS canonical_success_detail_id TEXT;
 ALTER TABLE miaoshou_source_records ADD COLUMN IF NOT EXISTS failure_reason TEXT;
+
+-- Earlier Wave 1 builds stored an ambiguous detail_id. It is safe only as the fetch
+-- response id; canonical success must be resolved again from source records/API.
+DO $migration$
+BEGIN
+  IF EXISTS (
+    SELECT 1 FROM information_schema.columns
+    WHERE table_schema = 'public'
+      AND table_name = 'miaoshou_source_records'
+      AND column_name = 'detail_id'
+  ) THEN
+    EXECUTE $legacy$
+      UPDATE miaoshou_source_records
+      SET fetch_detail_id = COALESCE(fetch_detail_id, detail_id),
+          failure_reason = COALESCE(failure_reason, 'legacy_detail_id_requires_reparse'),
+          updated_at = now()
+      WHERE detail_id IS NOT NULL
+        AND (fetch_detail_id IS NULL OR failure_reason IS NULL)
+    $legacy$;
+  END IF;
+END
+$migration$;
+
+-- Source records are attempt/history rows, so duplicate source identities are valid.
+DROP INDEX IF EXISTS miaoshou_source_records_product_source_unique;
 
 CREATE TABLE IF NOT EXISTS skus (
   id               TEXT PRIMARY KEY,

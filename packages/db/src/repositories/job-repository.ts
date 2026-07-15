@@ -127,19 +127,26 @@ export class JobRepository {
     const result = await this.pool.query(
       `UPDATE ${schema.jobs}
        SET last_heartbeat_at = $2::timestamptz, lease_expires_at = $3::timestamptz, updated_at = now()
-       WHERE id = $1 AND status = 'running' AND owner = $4 AND lease_token = $5`,
+       WHERE id = $1 AND status = 'running' AND owner = $4 AND lease_token = $5
+         AND lease_expires_at > $2::timestamptz`,
       [jobId, now, new Date(now.getTime() + leaseMs), owner, leaseToken]
     );
     return result.rowCount === 1;
   }
 
-  async complete(jobId: string, owner: string, leaseToken: string): Promise<boolean> {
+  async complete(
+    jobId: string,
+    owner: string,
+    leaseToken: string,
+    now: Date
+  ): Promise<boolean> {
     const result = await this.pool.query(
       `UPDATE ${schema.jobs}
        SET status = 'succeeded', owner = NULL, lease_token = NULL,
            lease_expires_at = NULL, updated_at = now()
-       WHERE id = $1 AND status = 'running' AND owner = $2 AND lease_token = $3`,
-      [jobId, owner, leaseToken]
+       WHERE id = $1 AND status = 'running' AND owner = $2 AND lease_token = $3
+         AND lease_expires_at > $4::timestamptz`,
+      [jobId, owner, leaseToken, now]
     );
     return result.rowCount === 1;
   }
@@ -148,21 +155,26 @@ export class JobRepository {
     jobId: string,
     owner: string,
     leaseToken: string,
+    now: Date,
     error: Record<string, unknown>
   ): Promise<boolean> {
     const result = await this.pool.query(
       `UPDATE ${schema.jobs}
-       SET status = 'failed', error = $4::jsonb, owner = NULL, lease_token = NULL,
+       SET status = 'failed', error = $5::jsonb, owner = NULL, lease_token = NULL,
            lease_expires_at = NULL, updated_at = now()
-       WHERE id = $1 AND status = 'running' AND owner = $2 AND lease_token = $3`,
-      [jobId, owner, leaseToken, JSON.stringify(error)]
+       WHERE id = $1 AND status = 'running' AND owner = $2 AND lease_token = $3
+         AND lease_expires_at > $4::timestamptz`,
+      [jobId, owner, leaseToken, now, JSON.stringify(error)]
     );
     return result.rowCount === 1;
   }
 
   async releaseExpired(now: Date): Promise<number> {
-    const r = await this.pool.query(
-      `UPDATE ${schema.jobs}
+    const client = await this.pool.connect();
+    try {
+      await client.query("BEGIN");
+      const released = await client.query<{ id: string }>(
+        `UPDATE ${schema.jobs}
        SET status = CASE
              WHEN remote_task_id IS NOT NULL
                OR kind IN ('miaoshou_collect', 'canvas_generate', 'miaoshou_edit')
@@ -179,9 +191,32 @@ export class JobRepository {
              ELSE error
            END,
            owner = NULL, lease_token = NULL, lease_expires_at = NULL, updated_at = now()
-       WHERE status = 'running' AND lease_expires_at < $1`,
-      [now]
-    );
-    return r.rowCount ?? 0;
+       WHERE status = 'running' AND lease_expires_at <= $1
+       RETURNING id`,
+        [now]
+      );
+      const releasedIds = released.rows.map((row) => row.id);
+      if (releasedIds.length > 0) {
+        await client.query(
+          `UPDATE ${schema.miaoshouSyncs} sync
+           SET state = 'result_unknown',
+               error = '{"code":"reconcile_required","message":"Miaoshou edit lease expired; reconcile remote result"}'::jsonb,
+               updated_at = now()
+           WHERE sync.approval_snapshot_id IN (
+             SELECT payload->>'approvalSnapshotId'
+             FROM ${schema.jobs}
+             WHERE id = ANY($1::text[]) AND kind = 'miaoshou_edit'
+           )`,
+          [releasedIds]
+        );
+      }
+      await client.query("COMMIT");
+      return released.rowCount ?? 0;
+    } catch (error) {
+      await client.query("ROLLBACK").catch(() => undefined);
+      throw error;
+    } finally {
+      client.release();
+    }
   }
 }

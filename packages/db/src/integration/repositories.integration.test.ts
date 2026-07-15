@@ -62,6 +62,69 @@ describe("integration: bootstrap", () => {
     expect(names).toContain("exchange_rate_snapshots");
     expect(names).toContain("automation_runs");
   });
+
+  test("upgrades duplicate product identities and legacy detail_id without data loss or canonical guessing", async () => {
+    const operatorId = await catalog.upsertLocalOperator({
+      handle: "legacy-operator",
+      displayName: "Legacy Operator"
+    });
+    await handle.pool.query("DROP INDEX products_operator_source_item_unique");
+    await handle.pool.query("ALTER TABLE miaoshou_source_records ADD COLUMN detail_id TEXT");
+    await handle.pool.query(
+      `INSERT INTO products
+        (id, operator_id, source_url, source_item_id, canonical_success_detail_id)
+       VALUES
+        ('prod-legacy-a', $1, 'https://detail.1688.com/offer/legacy-a.html', 'legacy-1', NULL),
+        ('prod-legacy-b', $1, 'https://detail.1688.com/offer/legacy-b.html', 'legacy-1', 'known-canonical')`,
+      [operatorId]
+    );
+    await handle.pool.query(
+      `INSERT INTO product_revisions (id, product_id, draft_version, source_payload, working_draft)
+       VALUES
+        ('rev-legacy-a', 'prod-legacy-a', 1, '{}'::jsonb, '{}'::jsonb),
+        ('rev-legacy-b', 'prod-legacy-b', 1, '{}'::jsonb, '{}'::jsonb)`
+    );
+    await handle.pool.query(
+      `INSERT INTO miaoshou_source_records
+        (id, product_id, source_item_id, detail_id, fetch_detail_id,
+         canonical_success_detail_id, fetched_payload)
+       VALUES ('source-legacy', 'prod-legacy-a', 'legacy-1', 'legacy-detail', NULL, NULL, '{}'::jsonb)`
+    );
+
+    await handle.migrate(INITIAL_SQL);
+
+    const products = await handle.pool.query(
+      `SELECT id, source_url, source_item_id, canonical_success_detail_id
+       FROM products WHERE id IN ('prod-legacy-a', 'prod-legacy-b') ORDER BY id`
+    );
+    expect(products.rows).toEqual([
+      {
+        id: "prod-legacy-a",
+        source_url: "https://detail.1688.com/offer/legacy-a.html",
+        source_item_id: null,
+        canonical_success_detail_id: null
+      },
+      {
+        id: "prod-legacy-b",
+        source_url: "https://detail.1688.com/offer/legacy-b.html",
+        source_item_id: "legacy-1",
+        canonical_success_detail_id: "known-canonical"
+      }
+    ]);
+    const revisions = await handle.pool.query(
+      "SELECT id FROM product_revisions WHERE id IN ('rev-legacy-a', 'rev-legacy-b') ORDER BY id"
+    );
+    expect(revisions.rows.map((row) => row.id)).toEqual(["rev-legacy-a", "rev-legacy-b"]);
+    const source = await handle.pool.query(
+      `SELECT fetch_detail_id, canonical_success_detail_id, failure_reason
+       FROM miaoshou_source_records WHERE id = 'source-legacy'`
+    );
+    expect(source.rows[0]).toEqual({
+      fetch_detail_id: "legacy-detail",
+      canonical_success_detail_id: null,
+      failure_reason: "legacy_detail_id_requires_reparse"
+    });
+  });
 });
 
 describe("integration: catalog repository", () => {
@@ -234,11 +297,43 @@ describe("integration: job repository claim semantics", () => {
     await expect(
       jobs.heartbeat(first!.jobId, "worker-old", first!.leaseToken, new Date("2026-07-01T00:00:03Z"), 1_000)
     ).resolves.toBe(false);
-    await expect(jobs.complete(first!.jobId, "worker-old", first!.leaseToken)).resolves.toBe(false);
     await expect(
-      jobs.fail(first!.jobId, "worker-old", first!.leaseToken, { code: "stale" })
+      jobs.complete(first!.jobId, "worker-old", first!.leaseToken, new Date("2026-07-01T00:00:03Z"))
     ).resolves.toBe(false);
-    await expect(jobs.complete(second!.jobId, "worker-new", second!.leaseToken)).resolves.toBe(true);
+    await expect(
+      jobs.fail(
+        first!.jobId,
+        "worker-old",
+        first!.leaseToken,
+        new Date("2026-07-01T00:00:03Z"),
+        { code: "stale" }
+      )
+    ).resolves.toBe(false);
+    await expect(
+      jobs.complete(second!.jobId, "worker-new", second!.leaseToken, new Date("2026-07-01T00:00:03Z"))
+    ).resolves.toBe(true);
+  });
+
+  test("lease owner is fenced after expiry even before releaseExpired runs", async () => {
+    await jobs.enqueue({
+      kind: "pricing_calculate",
+      businessKey: "lease:expired-window",
+      payload: { version: 1 }
+    });
+    const claim = await jobs.claim("worker-a", new Date("2026-07-01T00:00:00Z"), 1_000);
+    expect(claim).not.toBeNull();
+    const expiredAt = new Date("2026-07-01T00:00:01Z");
+    await expect(
+      jobs.heartbeat(claim!.jobId, "worker-a", claim!.leaseToken, expiredAt, 30_000)
+    ).resolves.toBe(false);
+    await expect(
+      jobs.complete(claim!.jobId, "worker-a", claim!.leaseToken, expiredAt)
+    ).resolves.toBe(false);
+    await expect(
+      jobs.fail(claim!.jobId, "worker-a", claim!.leaseToken, expiredAt, { code: "late" })
+    ).resolves.toBe(false);
+    const row = await handle.pool.query("SELECT status, owner FROM jobs WHERE id = $1", [claim!.jobId]);
+    expect(row.rows[0]).toMatchObject({ status: "running", owner: "worker-a" });
   });
 
   test("claim respects next_attempt_at and max_attempts", async () => {
@@ -288,6 +383,59 @@ describe("integration: job repository claim semantics", () => {
     expect(byId.get(externalId).status).toBe("needs_input");
     expect(byId.get(externalId).error.code).toBe("reconcile_required");
     expect(byId.get(safeId).status).toBe("queued");
+  });
+
+  test("expired miaoshou edit also marks its aggregate result_unknown", async () => {
+    const operatorId = await catalog.upsertLocalOperator({
+      handle: "local-operator",
+      displayName: "Local Operator"
+    });
+    const productId = await catalog.insertProduct({
+      operatorId,
+      sourceUrl: "https://detail.1688.com/offer/sync.html",
+      sourceItemId: "sync",
+      locale: "th-TH",
+      currency: "THB"
+    });
+    const revisionId = await catalog.insertRevision({
+      productId,
+      draftVersion: 1,
+      sourceTitle: "ready",
+      workingDraft: {}
+    });
+    const snapshotId = "appr-expired-sync";
+    await handle.pool.query(
+      `INSERT INTO approval_snapshots
+        (id, product_id, revision_id, draft_version, listing_run_id, pricing_run_id,
+         template_version, ordered_final_asset_ids, source_platform, source_canonical_url,
+         source_item_id, canonical_success_detail_id, locale, currency, title, description,
+         attributes, price_minor, price_currency, stock, weight_kg, skus, state)
+       VALUES ($1, $2, $3, 1, 'listing-1', 'pricing-1', 1, '[]'::jsonb, '1688',
+               'https://detail.1688.com/offer/sync.html', 'sync', 'canonical-1',
+               'th-TH', 'THB', 'title', 'description', '[]'::jsonb, '100', 'THB', 1,
+               '0.3', '[]'::jsonb, 'approved')`,
+      [snapshotId, productId, revisionId]
+    );
+    await handle.pool.query(
+      "INSERT INTO miaoshou_syncs (id, approval_snapshot_id, state) VALUES ('sync-expired', $1, 'syncing')",
+      [snapshotId]
+    );
+    const jobId = await jobs.enqueue({
+      kind: "miaoshou_edit",
+      businessKey: "miaoshou-edit:expired",
+      payload: { version: 1, approvalSnapshotId: snapshotId }
+    });
+    await jobs.claim("worker-a", new Date("2026-07-01T00:00:00Z"), 1_000);
+
+    await jobs.releaseExpired(new Date("2026-07-01T00:00:02Z"));
+    const [job, sync] = await Promise.all([
+      handle.pool.query("SELECT status, error FROM jobs WHERE id = $1", [jobId]),
+      handle.pool.query("SELECT state, error FROM miaoshou_syncs WHERE approval_snapshot_id = $1", [snapshotId])
+    ]);
+    expect(job.rows[0].status).toBe("needs_input");
+    expect(job.rows[0].error.code).toBe("reconcile_required");
+    expect(sync.rows[0].state).toBe("result_unknown");
+    expect(sync.rows[0].error.code).toBe("reconcile_required");
   });
 });
 
