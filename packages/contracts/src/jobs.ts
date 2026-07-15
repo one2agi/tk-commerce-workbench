@@ -27,7 +27,7 @@ export const JOB_KIND_VERSION: Readonly<Record<JobKind, number>> = Object.freeze
 
 export type MiaoshouCollectPayloadV1 = Readonly<{
   version: 1;
-  revisionId: ProductRevisionId;
+  batchId: string;
   sourceUrl: string;
   idempotencyKey: string;
 }>;

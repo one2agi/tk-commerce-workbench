@@ -21,6 +21,7 @@ export type Locale = string; // BCP-47; default "th-TH".
 
 export type ProductPoolItemV1 = Readonly<{
   productId: ProductId;
+  currentRevisionId: ProductRevisionId;
   sourceItemId: SourceItemId | null;
   canonicalSourceTitle: string | null;
   targetTitle: string | null;
