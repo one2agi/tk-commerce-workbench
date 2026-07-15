@@ -1,0 +1,23 @@
+{
+  "code": 0,
+  "msg": "ok",
+  "data": {
+    "items": [
+      {
+        "detailId": "3801638367",
+        "status": "skip",
+        "updatedAt": "2026-07-10T08:00:00Z"
+      },
+      {
+        "detailId": "3799770548",
+        "status": "success",
+        "updatedAt": "2026-07-12T10:00:00Z"
+      },
+      {
+        "detailId": "3795000000",
+        "status": "fail",
+        "updatedAt": "2026-07-01T10:00:00Z"
+      }
+    ]
+  }
+}
