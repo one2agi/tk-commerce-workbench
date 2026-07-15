@@ -55,4 +55,50 @@ export class AssetRepository {
     );
     return row.rows[0].id;
   }
+
+  async recordProcessed(input: {
+    assetId: string;
+    sha256: string;
+    localPath: string;
+    extension: string;
+    perceptualHash: string;
+    clarity: number;
+    duplicateDistance: number;
+    watermarkProbability: number;
+    collageProbability: number;
+    nonProductProbability: number;
+    visualScore: number;
+    chosenRole: string | null;
+    rejectionReason: string | null;
+  }): Promise<void> {
+    assert(input.assetId.length > 0, "assetId required");
+    assert(input.sha256.length > 0, "sha256 required");
+    assert(input.localPath.length > 0, "localPath required");
+    const result = await this.pool.query(
+      `UPDATE ${schema.assets}
+       SET state = $2, sha256 = $3, local_path = $4, extension = $5,
+           perceptual_hash = $6, clarity = $7, duplicate_distance = $8,
+           watermark_probability = $9, collage_probability = $10,
+           non_product_probability = $11, visual_score = $12,
+           chosen_role = $13, rejection_reason = $14
+       WHERE id = $1`,
+      [
+        input.assetId,
+        input.rejectionReason ? "rejected" : "ready",
+        input.sha256,
+        input.localPath,
+        input.extension,
+        input.perceptualHash,
+        input.clarity,
+        input.duplicateDistance,
+        input.watermarkProbability,
+        input.collageProbability,
+        input.nonProductProbability,
+        input.visualScore,
+        input.chosenRole,
+        input.rejectionReason
+      ]
+    );
+    assert(result.rowCount === 1, "asset not found");
+  }
 }

@@ -11,6 +11,7 @@
 import { strict as assert } from "node:assert";
 
 import { schema, type DbPool } from "../schema/index.js";
+import { appendAuditInTransaction, assertSafeAuditPayload, type TransactionAuditMetadata } from "./audit-repository.js";
 
 function newId(prefix: string): string {
   const t = Date.now().toString(36);
@@ -21,6 +22,7 @@ function newId(prefix: string): string {
 export interface CreateOrReuseInput {
   revisionId: string;
   processingVersion: number;
+  audit?: TransactionAuditMetadata;
 }
 
 export interface CreateOrReuseResult {
@@ -37,6 +39,7 @@ export class AutomationRunRepository {
   async createOrReuseAndEnqueue(input: CreateOrReuseInput): Promise<CreateOrReuseResult> {
     assert(input.revisionId.length > 0, "revisionId required");
     assert(input.processingVersion > 0, "processingVersion must be positive");
+    if (input.audit) assertSafeAuditPayload(input.audit.payload ?? {});
 
     const client = await this.pool.connect();
     try {
@@ -88,6 +91,8 @@ export class AutomationRunRepository {
           ]
         );
       }
+
+      if (input.audit) await appendAuditInTransaction(client, input.audit, runId);
 
       await client.query("COMMIT");
       return { runId, created };

@@ -16,6 +16,8 @@ import { CatalogRepository } from "../repositories/catalog-repository.js";
 import { JobRepository } from "../repositories/job-repository.js";
 import { ExchangeRateRepository } from "../repositories/exchange-rate-repository.js";
 import { AutomationRunRepository } from "../repositories/automation-run-repository.js";
+import { CanvasQuotaRepository } from "../repositories/canvas-quota-repository.js";
+import { AssetRepository } from "../repositories/asset-repository.js";
 import {
   ApprovalNotReadyError,
   ApprovalRepository
@@ -28,6 +30,8 @@ let jobs: JobRepository;
 let rates: ExchangeRateRepository;
 let automations: AutomationRunRepository;
 let approvals: ApprovalRepository;
+let canvasQuota: CanvasQuotaRepository;
+let assets: AssetRepository;
 
 beforeAll(async () => {
   handle = await bootTestDb();
@@ -37,6 +41,8 @@ beforeAll(async () => {
   rates = new ExchangeRateRepository(handle.pool);
   automations = new AutomationRunRepository(handle.pool);
   approvals = new ApprovalRepository(handle.pool);
+  canvasQuota = new CanvasQuotaRepository(handle.pool);
+  assets = new AssetRepository(handle.pool);
 });
 
 beforeEach(async () => {
@@ -203,7 +209,131 @@ describe("integration: catalog repository", () => {
   });
 });
 
+describe("integration: asset repository", () => {
+  test("deduplicates a remote asset and persists archive plus quality evidence", async () => {
+    const operatorId = await catalog.upsertLocalOperator({ handle: "asset-operator", displayName: "Asset Operator" });
+    const productId = await catalog.insertProduct({ operatorId, sourceUrl: "https://detail.1688.com/offer/asset.html", locale: "th-TH", currency: "THB" });
+    const revisionId = await catalog.insertRevision({ productId, draftVersion: 1, sourceTitle: "asset", workingDraft: {} });
+    const input = { productId, revisionId, remoteUrl: "https://cdn.example.test/product.jpg", kind: "main" as const, width: 1200, height: 1200 };
+    const first = await assets.upsert(input);
+    const second = await assets.upsert(input);
+    expect(second).toBe(first);
+
+    await assets.recordProcessed({
+      assetId: first,
+      sha256: "abc123",
+      localPath: "/data/assets/ab/abc123.jpg",
+      extension: "jpg",
+      perceptualHash: "phash-1",
+      clarity: 0.91,
+      duplicateDistance: 8,
+      watermarkProbability: 0.03,
+      collageProbability: 0.04,
+      nonProductProbability: 0.02,
+      visualScore: 0.88,
+      chosenRole: "primary",
+      rejectionReason: null
+    });
+
+    const stored = await handle.pool.query("SELECT * FROM assets WHERE product_id = $1 AND remote_url = $2", [productId, input.remoteUrl]);
+    expect(stored.rows).toHaveLength(1);
+    expect(stored.rows[0]).toMatchObject({
+      state: "ready",
+      sha256: "abc123",
+      local_path: "/data/assets/ab/abc123.jpg",
+      extension: "jpg",
+      perceptual_hash: "phash-1",
+      chosen_role: "primary",
+      rejection_reason: null
+    });
+  });
+});
+
 describe("integration: job repository claim semantics", () => {
+  test("enqueue and idempotent reuse append redacted audits in the same transaction", async () => {
+    const input = {
+      kind: "pricing_calculate",
+      businessKey: "audit:job",
+      payload: { version: 1 },
+      audit: {
+        actorType: "operator" as const,
+        actorId: "local",
+        action: "job.enqueue",
+        targetKind: "job",
+        payload: { source: "start-button" }
+      }
+    };
+    const first = await jobs.enqueue(input);
+    const second = await jobs.enqueue(input);
+    expect(second).toBe(first);
+    const events = await handle.pool.query(
+      "SELECT target_id, payload, redacted FROM audit_events WHERE action = 'job.enqueue' ORDER BY created_at",
+    );
+    expect(events.rows).toEqual([
+      { target_id: first, payload: { source: "start-button" }, redacted: true },
+      { target_id: first, payload: { source: "start-button" }, redacted: true }
+    ]);
+  });
+
+  test("rolls back a newly inserted job when its same-transaction audit cannot serialize", async () => {
+    await expect(jobs.enqueue({
+      kind: "pricing_calculate",
+      businessKey: "audit:rollback",
+      payload: { version: 1 },
+      audit: {
+        actorType: "operator",
+        action: "job.enqueue",
+        targetKind: "job",
+        payload: { safeValue: 1n }
+      }
+    })).rejects.toThrow();
+    const count = await handle.pool.query("SELECT count(*)::int AS count FROM jobs WHERE business_key = 'audit:rollback'");
+    expect(count.rows[0].count).toBe(0);
+  });
+
+  test("rejects secrets and raw transport data from audit payloads", async () => {
+    await expect(jobs.enqueue({
+      kind: "pricing_calculate",
+      businessKey: "audit:secret",
+      payload: { version: 1 },
+      audit: {
+        actorType: "operator",
+        action: "job.enqueue",
+        targetKind: "job",
+        payload: { authorizationHeader: "Bearer secret" }
+      }
+    })).rejects.toThrow(/audit payload/i);
+  });
+
+  test("global and batch pause/resume are persisted and block claims", async () => {
+    const batchJob = await jobs.enqueue({ kind: "pricing_calculate", businessKey: "control:batch", batchKey: "batch-1", payload: { version: 1 } });
+    await jobs.setGlobalPaused(true);
+    expect(await jobs.claim("worker", new Date("2026-07-16T00:00:00Z"), 30_000)).toBeNull();
+    await jobs.setGlobalPaused(false);
+    expect(await jobs.pauseBatch("batch-1", "operator_pause")).toBe(1);
+    expect(await jobs.claim("worker", new Date("2026-07-16T00:00:00Z"), 30_000)).toBeNull();
+    expect(await jobs.resumeBatch("batch-1")).toBe(1);
+    expect((await jobs.claim("worker", new Date("2026-07-16T00:00:00Z"), 30_000))?.jobId).toBe(batchJob);
+  });
+
+  test("task cancel and safe retry are persisted while external unknown results cannot be retried", async () => {
+    const cancelled = await jobs.enqueue({ kind: "pricing_calculate", businessKey: "control:cancel", payload: { version: 1 } });
+    expect(await jobs.cancel(cancelled, "operator_cancelled")).toBe(true);
+    let row = await handle.pool.query("SELECT status, error FROM jobs WHERE id = $1", [cancelled]);
+    expect(row.rows[0]).toMatchObject({ status: "failed", error: { code: "cancelled" } });
+    expect(await jobs.retrySafe(cancelled, new Date("2026-07-16T00:00:00Z"))).toBe(true);
+    row = await handle.pool.query("SELECT status, error FROM jobs WHERE id = $1", [cancelled]);
+    expect(row.rows[0]).toMatchObject({ status: "queued", error: null });
+
+    const external = await jobs.enqueue({ kind: "canvas_generate", businessKey: "control:external", payload: { version: 1 } });
+    await handle.pool.query("UPDATE jobs SET status = 'needs_input', remote_task_id = 'remote-1', error = '{\"code\":\"reconcile_required\"}'::jsonb WHERE id = $1", [external]);
+    expect(await jobs.retrySafe(external, new Date("2026-07-16T00:00:00Z"))).toBe(false);
+
+    const unknownWithoutRemoteId = await jobs.enqueue({ kind: "canvas_generate", businessKey: "control:unknown-without-id", payload: { version: 1 } });
+    await handle.pool.query("UPDATE jobs SET status = 'needs_input', remote_task_id = NULL, error = '{\"code\":\"reconcile_required\"}'::jsonb WHERE id = $1", [unknownWithoutRemoteId]);
+    expect(await jobs.retrySafe(unknownWithoutRemoteId, new Date("2026-07-16T00:00:00Z"))).toBe(false);
+  });
+
   test("two concurrent claims with same owner/now/lease return only ONE job", async () => {
     const opId = await catalog.upsertLocalOperator({
       handle: "local-operator",
@@ -513,6 +643,19 @@ describe("integration: job repository claim semantics", () => {
   );
 });
 
+describe("integration: Canvas daily quota", () => {
+  test("atomically caps concurrent reservations and reuses a run reservation", async () => {
+    const results = await Promise.all(Array.from({ length: 6 }, (_, index) =>
+      canvasQuota.reserve({ runKey: `run-${index}`, day: "2026-07-16", limit: 2 })
+    ));
+    expect(results.filter(Boolean)).toHaveLength(2);
+    const winner = results.findIndex(Boolean);
+    expect(await canvasQuota.reserve({ runKey: `run-${winner}`, day: "2026-07-16", limit: 2 })).toBe(true);
+    const rows = await handle.pool.query("SELECT run_key FROM canvas_daily_reservations WHERE day_key = '2026-07-16'");
+    expect(rows.rowCount).toBe(2);
+  });
+});
+
 describe("integration: exchange rate snapshots", () => {
   test("records source, observedAt, manual override provenance", async () => {
     const observedAt = "2026-07-01T00:00:00.000Z";
@@ -538,6 +681,9 @@ describe("integration: exchange rate snapshots", () => {
     expect(manual).toBeDefined();
     expect(provider!.rate).toBe("4.80");
     expect(manual!.rate).toBe("5.00");
+    expect(await rates.latestEffective("CNY", "THB")).toMatchObject({ id: manual!.id, source: "manual", rate: "5.00" });
+    expect(await rates.markStale(provider!.id)).toBe(true);
+    expect(await rates.latestSuccessful("CNY", "THB")).toMatchObject({ id: manual!.id, source: "manual", isStale: false });
   });
 });
 
@@ -579,6 +725,45 @@ describe("integration: automation run repository", () => {
     expect(queued.rowCount).toBe(1);
     expect(queued.rows[0].kind).toBe("asset_archive");
     expect(queued.rows[0].payload).toEqual({ version: 1, revisionId: revId, remoteUrls: [] });
+  });
+
+  test("records every repeated human start against the reused run", async () => {
+    const operatorId = await catalog.upsertLocalOperator({ handle: "audit-start", displayName: "Audit Start" });
+    const productId = await catalog.insertProduct({ operatorId, sourceUrl: "https://detail.1688.com/offer/audit.html", locale: "th-TH", currency: "THB" });
+    const revisionId = await catalog.insertRevision({ productId, draftVersion: 1, sourceTitle: "audit", workingDraft: {} });
+    const input = {
+      revisionId,
+      processingVersion: 1,
+      audit: {
+        actorType: "operator" as const,
+        actorId: "local",
+        action: "automation.start",
+        targetKind: "automation_run",
+        payload: { surface: "product-workbench" }
+      }
+    };
+    const first = await automations.createOrReuseAndEnqueue(input);
+    const second = await automations.createOrReuseAndEnqueue(input);
+    expect(second.runId).toBe(first.runId);
+    const events = await handle.pool.query("SELECT target_id FROM audit_events WHERE action = 'automation.start'");
+    expect(events.rows.map((row) => row.target_id)).toEqual([first.runId, first.runId]);
+  });
+
+  test("rolls back automation run and boot job when same-transaction audit fails", async () => {
+    const operatorId = await catalog.upsertLocalOperator({ handle: "audit-run-rollback", displayName: "Audit rollback" });
+    const productId = await catalog.insertProduct({ operatorId, sourceUrl: "https://detail.1688.com/offer/rollback.html", locale: "th-TH", currency: "THB" });
+    const revisionId = await catalog.insertRevision({ productId, draftVersion: 1, sourceTitle: "rollback", workingDraft: {} });
+    await expect(automations.createOrReuseAndEnqueue({
+      revisionId,
+      processingVersion: 1,
+      audit: { actorType: "operator", action: "automation.start", targetKind: "automation_run", payload: { safeValue: 1n } }
+    })).rejects.toThrow();
+    const [runs, queued] = await Promise.all([
+      handle.pool.query("SELECT count(*)::int AS count FROM automation_runs WHERE revision_id = $1", [revisionId]),
+      handle.pool.query("SELECT count(*)::int AS count FROM jobs WHERE payload->>'revisionId' = $1", [revisionId])
+    ]);
+    expect(runs.rows[0].count).toBe(0);
+    expect(queued.rows[0].count).toBe(0);
   });
 });
 
