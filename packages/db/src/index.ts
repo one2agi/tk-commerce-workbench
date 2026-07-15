@@ -10,5 +10,6 @@ export * from "./repositories/audit-repository.js";
 export * from "./repositories/approval-repository.js";
 export * from "./assets/content-addressed-store.js";
 export * from "./repositories/canvas-quota-repository.js";
-export { bootTestDb } from "./integration/runner.js";
+export * from "./repositories/pipeline-repository.js";
+export { bootTestDb, type TestDbHandle } from "./integration/runner.js";
 export { approveTestDatabaseUrl } from "./integration/guard.js";

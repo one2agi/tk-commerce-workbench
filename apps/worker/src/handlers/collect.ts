@@ -1,5 +1,5 @@
 import type { IdempotencyKey, MiaoshouSourcePort } from "@tk/contracts";
-import { NeedsInputError, type WorkerHandler } from "../runtime/worker-loop.js";
+import { LeaseLostError, NeedsInputError, type LeaseFence, type WorkerHandler } from "../runtime/worker-loop.js";
 
 function requireCollectPayload(payload: Record<string, unknown>): {
   batchId: string;
@@ -23,16 +23,17 @@ function requireCollectPayload(payload: Record<string, unknown>): {
 
 export function createCollectHandler(input: {
   port: MiaoshouSourcePort;
-  repository: { saveCollected(value: Record<string, unknown>): Promise<{ revisionId: string }> };
+  repository: { saveCollected(value: Record<string, unknown>, fence: LeaseFence): Promise<{ revisionId: string } | null> };
   audit: { append(value: Record<string, unknown>): Promise<unknown> };
 }): WorkerHandler {
-  return async (job) => {
+  return async (job, execution) => {
     const { sourceUrl, batchId, idempotencyKey } = requireCollectPayload(job.payload);
     await input.audit.append({ action: "miaoshou.collect.call", targetKind: "source_batch", targetId: batchId, payload: { source: "1688" }, redacted: true });
+    execution.assertLease();
     let result;
     try {
       result = await input.port.fetchItem({ sourceUrl, idempotencyKey });
-    } catch (error) {
+    } catch {
       try {
         await input.audit.append({
           action: "miaoshou.collect.result",
@@ -44,9 +45,11 @@ export function createCollectHandler(input: {
       } catch {
         // The original external failure remains the business-visible outcome.
       }
-      throw error;
+      throw new NeedsInputError("miaoshou_collect_failed", "Miaoshou collection failed; review connection settings before retry");
     }
-    const created = await input.repository.saveCollected({ batchId, sourceUrl, result });
+    execution.assertLease();
+    const created = await input.repository.saveCollected({ batchId, sourceUrl, result }, execution.fence);
+    if (!created) throw new LeaseLostError();
     await input.audit.append({ action: "miaoshou.collect.result", targetKind: "product_revision", targetId: created.revisionId, payload: { batchId, canonicalSuccessDetailId: result.canonicalSuccessDetailId }, redacted: true });
     return { next: [] };
   };

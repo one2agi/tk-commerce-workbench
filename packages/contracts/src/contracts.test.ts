@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { ConfirmMiaoshouEditV1, IngestLinksV1, StartAutomationV1 } from "./commands.js";
-import type { MiaoshouCollectPayloadV1 } from "./jobs.js";
+import { JOB_KIND_VERSION, type MiaoshouCollectPayloadV1 } from "./jobs.js";
 
 describe("command contracts", () => {
   it("accepts selected 1688 links only", () => {
@@ -27,6 +27,10 @@ describe("command contracts", () => {
 
     expect(payload.batchId).toBe("batch_01");
     expect(payload).not.toHaveProperty("revisionId");
+  });
+
+  it("versions every persisted internal ready-preview DAG job kind", () => {
+    expect(JOB_KIND_VERSION).toMatchObject({ template_match: 1, image_select: 1, final_preview: 1, staging_cleanup: 1 });
   });
 
   it("requires explicit commands for processing and Miaoshou edit", () => {

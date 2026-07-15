@@ -183,9 +183,11 @@ ALTER TABLE assets ADD COLUMN IF NOT EXISTS visual_score DOUBLE PRECISION;
 ALTER TABLE assets ADD COLUMN IF NOT EXISTS chosen_role TEXT;
 ALTER TABLE assets ADD COLUMN IF NOT EXISTS rejection_reason TEXT;
 
+DROP INDEX IF EXISTS assets_product_remote_unique;
+
 WITH duplicate_assets AS (
   SELECT id, ROW_NUMBER() OVER (
-    PARTITION BY product_id, remote_url
+    PARTITION BY COALESCE(revision_id, product_id), remote_url
     ORDER BY created_at ASC, id ASC
   ) AS duplicate_rank
   FROM assets
@@ -193,8 +195,9 @@ WITH duplicate_assets AS (
 DELETE FROM assets
 WHERE id IN (SELECT id FROM duplicate_assets WHERE duplicate_rank > 1);
 
-CREATE UNIQUE INDEX IF NOT EXISTS assets_product_remote_unique
-  ON assets(product_id, remote_url);
+CREATE UNIQUE INDEX IF NOT EXISTS assets_revision_remote_unique
+  ON assets(revision_id, remote_url)
+  WHERE revision_id IS NOT NULL;
 
 CREATE TABLE IF NOT EXISTS listing_drafts (
   id               TEXT PRIMARY KEY,
@@ -226,6 +229,13 @@ CREATE TABLE IF NOT EXISTS listing_generation_runs (
   updated_at       TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
+WITH duplicate_listing_drafts AS (
+  SELECT id, ROW_NUMBER() OVER (PARTITION BY revision_id, draft_version ORDER BY created_at ASC, id ASC) AS duplicate_rank
+  FROM listing_drafts
+)
+DELETE FROM listing_drafts WHERE id IN (SELECT id FROM duplicate_listing_drafts WHERE duplicate_rank > 1);
+CREATE UNIQUE INDEX IF NOT EXISTS listing_drafts_revision_version_unique ON listing_drafts(revision_id, draft_version);
+
 CREATE TABLE IF NOT EXISTS pricing_runs (
   id               TEXT PRIMARY KEY,
   product_id       TEXT NOT NULL REFERENCES products(id) ON DELETE CASCADE,
@@ -251,6 +261,13 @@ CREATE TABLE IF NOT EXISTS exchange_rate_snapshots (
   is_stale         BOOLEAN NOT NULL DEFAULT false,
   created_at       TIMESTAMPTZ NOT NULL DEFAULT now()
 );
+
+WITH duplicate_pricing_runs AS (
+  SELECT id, ROW_NUMBER() OVER (PARTITION BY revision_id, draft_version ORDER BY created_at ASC, id ASC) AS duplicate_rank
+  FROM pricing_runs
+)
+DELETE FROM pricing_runs WHERE id IN (SELECT id FROM duplicate_pricing_runs WHERE duplicate_rank > 1);
+CREATE UNIQUE INDEX IF NOT EXISTS pricing_runs_revision_version_unique ON pricing_runs(revision_id, draft_version);
 
 CREATE TABLE IF NOT EXISTS automation_runs (
   id               TEXT PRIMARY KEY,
@@ -285,6 +302,13 @@ CREATE TABLE IF NOT EXISTS canvas_daily_reservations (
   PRIMARY KEY (day_key, slot),
   UNIQUE (day_key, run_key)
 );
+
+WITH duplicate_canvas_runs AS (
+  SELECT id, ROW_NUMBER() OVER (PARTITION BY revision_id, template_version ORDER BY created_at ASC, id ASC) AS duplicate_rank
+  FROM canvas_runs
+)
+DELETE FROM canvas_runs WHERE id IN (SELECT id FROM duplicate_canvas_runs WHERE duplicate_rank > 1);
+CREATE UNIQUE INDEX IF NOT EXISTS canvas_runs_revision_template_unique ON canvas_runs(revision_id, template_version);
 
 CREATE TABLE IF NOT EXISTS approval_snapshots (
   id               TEXT PRIMARY KEY,

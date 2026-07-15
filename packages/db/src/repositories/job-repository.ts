@@ -26,6 +26,7 @@ export interface ClaimedJob {
   jobId: string;
   kind: string;
   businessKey: string;
+  batchKey?: string;
   payload: Record<string, unknown>;
   leaseToken: string;
   remoteTaskId: string | null;
@@ -92,6 +93,7 @@ export class JobRepository {
         id: string;
         kind: string;
         business_key: string;
+        batch_key: string | null;
         payload: Record<string, unknown>;
         lease_token: string;
         remote_task_id: string | null;
@@ -118,15 +120,17 @@ export class JobRepository {
              updated_at = now()
          FROM candidate
          WHERE j.id = candidate.id
-         RETURNING j.id, j.kind, j.business_key, j.payload, j.lease_token, j.remote_task_id`,
+         RETURNING j.id, j.kind, j.business_key, j.batch_key, j.payload, j.lease_token, j.remote_task_id`,
         [owner, now, leaseExpiresAt, leaseToken]
       );
       if (updated.rowCount === 0) return null;
       const row = updated.rows[0];
+      assert(row, "claimed job must be returned");
       return {
         jobId: row.id,
         kind: row.kind,
         businessKey: row.business_key,
+        batchKey: row.batch_key ?? undefined,
         payload: row.payload ?? {},
         leaseToken: row.lease_token,
         remoteTaskId: row.remote_task_id
@@ -143,6 +147,7 @@ export class JobRepository {
       id: string;
       kind: string;
       business_key: string;
+      batch_key: string | null;
       payload: Record<string, unknown>;
       lease_token: string;
       remote_task_id: string | null;
@@ -162,7 +167,7 @@ export class JobRepository {
            lease_expires_at = $3::timestamptz, last_heartbeat_at = $4::timestamptz,
            updated_at = now()
        FROM candidate WHERE j.id = candidate.id
-       RETURNING j.id, j.kind, j.business_key, j.payload, j.lease_token, j.remote_task_id`,
+       RETURNING j.id, j.kind, j.business_key, j.batch_key, j.payload, j.lease_token, j.remote_task_id`,
       [owner, leaseToken, leaseExpiresAt, now]
     );
     const row = result.rows[0];
@@ -170,6 +175,7 @@ export class JobRepository {
       jobId: row.id,
       kind: row.kind,
       businessKey: row.business_key,
+      batchKey: row.batch_key ?? undefined,
       payload: row.payload ?? {},
       leaseToken: row.lease_token,
       remoteTaskId: row.remote_task_id
@@ -235,6 +241,64 @@ export class JobRepository {
       [jobId, owner, leaseToken, now, remoteTaskId, JSON.stringify(error)]
     );
     return result.rowCount === 1;
+  }
+
+  async persistRemoteTask(
+    jobId: string,
+    owner: string,
+    leaseToken: string,
+    now: Date,
+    remoteTaskId: string
+  ): Promise<boolean> {
+    assert(remoteTaskId.length > 0, "remoteTaskId required");
+    const result = await this.pool.query(
+      `UPDATE ${schema.jobs}
+       SET remote_task_id = $5, updated_at = now()
+       WHERE id = $1 AND status = 'running' AND owner = $2 AND lease_token = $3
+         AND lease_expires_at > $4::timestamptz`,
+      [jobId, owner, leaseToken, now, remoteTaskId]
+    );
+    return result.rowCount === 1;
+  }
+
+  async enqueueCompensation(
+    jobId: string,
+    owner: string,
+    leaseToken: string,
+    now: Date,
+    cleanup: JobClaimInput & { delayMs?: number }
+  ): Promise<boolean> {
+    const client = await this.pool.connect();
+    try {
+      await client.query("BEGIN");
+      const owned = await client.query(
+        `SELECT id FROM ${schema.jobs}
+         WHERE id = $1 AND status = 'running' AND owner = $2 AND lease_token = $3
+           AND lease_expires_at > $4::timestamptz
+         FOR UPDATE`,
+        [jobId, owner, leaseToken, now]
+      );
+      if ((owned.rowCount ?? 0) === 0) {
+        await client.query("ROLLBACK");
+        return false;
+      }
+      await client.query(
+        `INSERT INTO ${schema.jobs}
+         (id, kind, business_key, idempotency_key, payload, status, max_attempts, batch_key, next_attempt_at)
+         VALUES ($1, $2, $3, $4, $5::jsonb, 'queued', $6, $7, $8::timestamptz)
+         ON CONFLICT (kind, business_key) DO NOTHING`,
+        [newId("job"), cleanup.kind, cleanup.businessKey, cleanup.idempotencyKey ?? cleanup.businessKey,
+          JSON.stringify(cleanup.payload), cleanup.maxAttempts ?? 3, cleanup.batchKey ?? null,
+          new Date(now.getTime() + (cleanup.delayMs ?? 0))]
+      );
+      await client.query("COMMIT");
+      return true;
+    } catch (error) {
+      await client.query("ROLLBACK").catch(() => undefined);
+      throw error;
+    } finally {
+      client.release();
+    }
   }
 
   async markNeedsInput(

@@ -30,12 +30,13 @@ export class AssetRepository {
     assert(input.productId.length > 0, "productId required");
     assert(input.remoteUrl.length > 0, "remoteUrl required");
     const id = newId("asset");
-    // Use ON CONFLICT on product_id+remote_url to keep lookups stable.
+    // Each immutable revision owns its own archived copy of a remote asset.
+    assert(input.revisionId, "revisionId required for immutable asset attachment");
     await this.pool.query(
       `INSERT INTO ${schema.assets}
        (id, product_id, revision_id, remote_url, kind, width, height, sha256)
        VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
-       ON CONFLICT DO NOTHING`,
+       ON CONFLICT (revision_id, remote_url) WHERE revision_id IS NOT NULL DO NOTHING`,
       [
         id,
         input.productId,
@@ -50,9 +51,10 @@ export class AssetRepository {
     // Return existing id when conflict happened.
     const row = await this.pool.query<{ id: string }>(
       `SELECT id FROM ${schema.assets}
-       WHERE product_id = $1 AND remote_url = $2`,
-      [input.productId, input.remoteUrl]
+       WHERE revision_id = $1 AND remote_url = $2`,
+      [input.revisionId, input.remoteUrl]
     );
+    assert(row.rows[0], "asset upsert must return an existing row");
     return row.rows[0].id;
   }
 

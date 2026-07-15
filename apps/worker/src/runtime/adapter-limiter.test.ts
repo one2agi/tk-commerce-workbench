@@ -26,4 +26,14 @@ describe("AdapterLimiterSet", () => {
     expect(maxLlm).toBe(1);
     expect(canvasObservedWhileLlmActive).toBe(true);
   });
+
+  it("serializes start times even when adapter concurrency is greater than one", async () => {
+    const limiters = new AdapterLimiterSet({ canvas: { concurrency: 2, minIntervalMs: 20 } });
+    const starts: number[] = [];
+    await Promise.all([
+      limiters.run("canvas", async () => { starts.push(Date.now()); }),
+      limiters.run("canvas", async () => { starts.push(Date.now()); })
+    ]);
+    expect(starts[1]! - starts[0]!).toBeGreaterThanOrEqual(15);
+  });
 });

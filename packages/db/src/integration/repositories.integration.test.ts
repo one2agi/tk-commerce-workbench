@@ -18,6 +18,7 @@ import { ExchangeRateRepository } from "../repositories/exchange-rate-repository
 import { AutomationRunRepository } from "../repositories/automation-run-repository.js";
 import { CanvasQuotaRepository } from "../repositories/canvas-quota-repository.js";
 import { AssetRepository } from "../repositories/asset-repository.js";
+import { PipelineRepository } from "../repositories/pipeline-repository.js";
 import {
   ApprovalNotReadyError,
   ApprovalRepository
@@ -32,6 +33,7 @@ let automations: AutomationRunRepository;
 let approvals: ApprovalRepository;
 let canvasQuota: CanvasQuotaRepository;
 let assets: AssetRepository;
+let pipeline: PipelineRepository;
 
 beforeAll(async () => {
   handle = await bootTestDb();
@@ -43,6 +45,7 @@ beforeAll(async () => {
   approvals = new ApprovalRepository(handle.pool);
   canvasQuota = new CanvasQuotaRepository(handle.pool);
   assets = new AssetRepository(handle.pool);
+  pipeline = new PipelineRepository(handle.pool);
 });
 
 beforeEach(async () => {
@@ -247,6 +250,71 @@ describe("integration: asset repository", () => {
       rejection_reason: null
     });
   });
+
+  test("keeps the same remote URL independently attached to two immutable revisions", async () => {
+    const operatorId = await catalog.upsertLocalOperator({ handle: "immutable-assets", displayName: "Immutable Assets" });
+    const productId = await catalog.insertProduct({ operatorId, sourceUrl: "https://detail.1688.com/offer/immutable.html", locale: "th-TH", currency: "THB" });
+    const firstRevision = await catalog.insertRevision({ productId, draftVersion: 1, sourceTitle: "one", workingDraft: {} });
+    const secondRevision = await catalog.insertRevision({ productId, draftVersion: 2, sourceTitle: "two", workingDraft: {} });
+    const remoteUrl = "https://cdn.example.test/shared.jpg";
+    const first = await assets.upsert({ productId, revisionId: firstRevision, remoteUrl, kind: "main" });
+    const second = await assets.upsert({ productId, revisionId: secondRevision, remoteUrl, kind: "main" });
+    expect(second).not.toBe(first);
+    const rows = await handle.pool.query("SELECT revision_id FROM assets WHERE product_id = $1 AND remote_url = $2 ORDER BY revision_id", [productId, remoteUrl]);
+    expect(rows.rows.map((row) => row.revision_id)).toEqual([firstRevision, secondRevision].sort());
+  });
+});
+
+describe("integration: durable pipeline repository", () => {
+  const collectedDetail = {
+    detailId: "detail-canonical", sourceItemId: "source-canonical" as never, sourceUrl: "https://detail.1688.com/offer/canonical.html",
+    title: "Canonical", itemNumber: null, description: "Description", category: null,
+    sourcePriceWire: { amountMinor: "1000", currency: "CNY" as const }, sourceStock: 1, weightKg: "0.3", dimensionsCm: null,
+    mainImages: [], detailImages: [], sourceAttributes: [], saleAttributes: [], colors: [], sizes: [], skus: []
+  };
+
+  test("reuses one canonical revision across first-success and duplicate-skip collection attempts", async () => {
+    const firstJob = await jobs.enqueue({ kind: "miaoshou_collect", businessKey: "canonical:first", payload: { version: 1 } });
+    const firstClaim = await jobs.claim("worker-first", new Date(), 30_000);
+    const first = await pipeline.saveCollected({
+      batchId: "batch-first", sourceUrl: collectedDetail.sourceUrl,
+      result: { fetchDetailId: "fetch-first", skippedDetailId: null, canonicalSuccessDetailId: "detail-canonical", detail: collectedDetail }
+    }, { jobId: firstJob, owner: "worker-first", leaseToken: firstClaim!.leaseToken });
+    await jobs.complete(firstJob, "worker-first", firstClaim!.leaseToken, new Date());
+
+    const duplicateJob = await jobs.enqueue({ kind: "miaoshou_collect", businessKey: "canonical:duplicate", payload: { version: 1 } });
+    const duplicateClaim = await jobs.claim("worker-duplicate", new Date(), 30_000);
+    const duplicate = await pipeline.saveCollected({
+      batchId: "batch-duplicate", sourceUrl: collectedDetail.sourceUrl,
+      result: { fetchDetailId: null, skippedDetailId: "skip-duplicate", canonicalSuccessDetailId: "detail-canonical", detail: collectedDetail }
+    }, { jobId: duplicateJob, owner: "worker-duplicate", leaseToken: duplicateClaim!.leaseToken });
+
+    expect(duplicate?.revisionId).toBe(first?.revisionId);
+    expect(Number((await handle.pool.query("SELECT COUNT(*) AS count FROM products WHERE source_item_id = 'source-canonical'")).rows[0]?.count)).toBe(1);
+    expect(Number((await handle.pool.query("SELECT COUNT(*) AS count FROM product_revisions WHERE product_id = (SELECT id FROM products WHERE source_item_id = 'source-canonical')")).rows[0]?.count)).toBe(1);
+    expect(Number((await handle.pool.query("SELECT COUNT(*) AS count FROM miaoshou_source_records WHERE source_item_id = 'source-canonical'")).rows[0]?.count)).toBe(2);
+  });
+
+  test("reuses listing, pricing and Canvas result rows after write-before-complete recovery", async () => {
+    const operatorId = await catalog.upsertLocalOperator({ handle: "durable-results", displayName: "Durable Results" });
+    const productId = await catalog.insertProduct({ operatorId, sourceUrl: "https://detail.1688.com/offer/durable.html", locale: "th-TH", currency: "THB" });
+    const revisionId = await catalog.insertRevision({ productId, draftVersion: 1, sourceTitle: "durable", workingDraft: {} });
+    const invokeTwice = async (kind: string, write: (fence: { jobId: string; owner: string; leaseToken: string }) => Promise<boolean>) => {
+      for (const suffix of ["first", "restart"]) {
+        const id = await jobs.enqueue({ kind, businessKey: `${kind}:${suffix}`, payload: { version: 1, revisionId } });
+        const claim = await jobs.claim(`worker-${suffix}`, new Date(), 30_000);
+        expect(await write({ jobId: id, owner: `worker-${suffix}`, leaseToken: claim!.leaseToken })).toBe(true);
+        await jobs.complete(id, `worker-${suffix}`, claim!.leaseToken, new Date());
+      }
+    };
+    await invokeTwice("listing_generate", (fence) => pipeline.saveResult({ revisionId, title: "Title", description: "Description", attributes: [], styleApplied: "neutral", provider: "rules", fallbackUsed: true }, fence));
+    await invokeTwice("pricing_calculate", (fence) => pipeline.saveReady({ revisionId, finalPrice: { amountMinor: "999", currency: "THB" }, breakdown: { ending: "9" } }, fence));
+    await handle.pool.query("UPDATE product_revisions SET working_draft = working_draft || '{\"templateMatch\":{\"templateId\":\"default\",\"templateVersion\":1}}'::jsonb WHERE id = $1", [revisionId]);
+    await invokeTwice("canvas_generate", (fence) => pipeline.saveOutputs({ revisionId, remoteTaskId: "remote-1", outputs: [{ url: "https://out/1.jpg" }], state: "succeeded" }, fence));
+    expect(Number((await handle.pool.query("SELECT COUNT(*) AS count FROM listing_drafts WHERE revision_id = $1", [revisionId])).rows[0]?.count)).toBe(1);
+    expect(Number((await handle.pool.query("SELECT COUNT(*) AS count FROM pricing_runs WHERE revision_id = $1", [revisionId])).rows[0]?.count)).toBe(1);
+    expect(Number((await handle.pool.query("SELECT COUNT(*) AS count FROM canvas_runs WHERE revision_id = $1", [revisionId])).rows[0]?.count)).toBe(1);
+  });
 });
 
 describe("integration: job repository claim semantics", () => {
@@ -273,6 +341,16 @@ describe("integration: job repository claim semantics", () => {
       { target_id: first, payload: { source: "start-button" }, redacted: true },
       { target_id: first, payload: { source: "start-button" }, redacted: true }
     ]);
+  });
+
+  test("persists a remote task only for the current owner and lease token", async () => {
+    const id = await jobs.enqueue({ kind: "canvas_generate", businessKey: "canvas:persist-remote", payload: { version: 1 }, batchKey: "batch-remote" });
+    const claimed = await jobs.claim("worker-a", new Date("2026-07-16T00:00:00Z"), 30_000);
+    expect(claimed).toMatchObject({ jobId: id, batchKey: "batch-remote" });
+    expect(await jobs.persistRemoteTask(id, "worker-b", claimed!.leaseToken, new Date("2026-07-16T00:00:01Z"), "remote-bad")).toBe(false);
+    expect(await jobs.persistRemoteTask(id, "worker-a", claimed!.leaseToken, new Date("2026-07-16T00:00:01Z"), "remote-good")).toBe(true);
+    const stored = await handle.pool.query("SELECT remote_task_id FROM jobs WHERE id = $1", [id]);
+    expect(stored.rows[0]?.remote_task_id).toBe("remote-good");
   });
 
   test("rolls back a newly inserted job when its same-transaction audit cannot serialize", async () => {

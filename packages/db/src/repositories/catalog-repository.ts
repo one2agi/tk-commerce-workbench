@@ -31,6 +31,7 @@ export class CatalogRepository {
       [input.handle]
     );
     if (existing.rowCount && existing.rowCount > 0) {
+      assert(existing.rows[0], "existing local operator must be returned");
       return existing.rows[0].id;
     }
     const id = newId("op");
@@ -67,7 +68,10 @@ export class CatalogRepository {
         input.currency
       ]
     );
-    if ((inserted.rowCount ?? 0) > 0) return inserted.rows[0].id;
+    if ((inserted.rowCount ?? 0) > 0) {
+      assert(inserted.rows[0], "inserted product must be returned");
+      return inserted.rows[0].id;
+    }
     const existing = await this.pool.query<{ id: string }>(
       `SELECT id FROM ${schema.products}
        WHERE operator_id = $1 AND source_item_id = $2`,

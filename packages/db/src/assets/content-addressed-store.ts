@@ -2,6 +2,8 @@ import { createHash, randomUUID } from "node:crypto";
 import { mkdir, open, rename, rm } from "node:fs/promises";
 import { join } from "node:path";
 import { isIP } from "node:net";
+import { request as httpRequest } from "node:http";
+import { request as httpsRequest } from "node:https";
 import { resolveSafeRemoteUrl, type ResolveHost } from "@tk/domain/assets/validate-remote-url";
 
 export interface AssetFetchResponse {
@@ -22,6 +24,29 @@ export interface AssetFetchRequest {
 }
 
 export type AssetFetch = (request: AssetFetchRequest) => Promise<AssetFetchResponse>;
+
+export function createNodePinnedAssetFetch(timeoutMs = 30_000): AssetFetch {
+  return (input) => new Promise((resolve, reject) => {
+    const url = new URL(input.url);
+    const request = (url.protocol === "https:" ? httpsRequest : httpRequest)(url, {
+      method: "GET",
+      headers: { host: input.hostHeader, accept: "image/png,image/jpeg" },
+      lookup: ((_hostname: string, _options: unknown, callback: (error: NodeJS.ErrnoException | null, address: string, family: number) => void) => {
+        callback(null, input.connectAddress, isIP(input.connectAddress));
+      }) as never,
+      ...(input.servername ? { servername: input.servername } : {})
+    }, (response) => {
+      const headers: Record<string, string | undefined> = {};
+      for (const [name, value] of Object.entries(response.headers)) {
+        headers[name.toLowerCase()] = Array.isArray(value) ? value[0] : value;
+      }
+      resolve({ status: response.statusCode ?? 0, headers, body: response });
+    });
+    request.setTimeout(timeoutMs, () => request.destroy(new Error("asset download timeout")));
+    request.on("error", reject);
+    request.end();
+  });
+}
 
 function imageType(contentType: string | undefined): { extension: "jpg" | "png"; magicLength: number; validMagic: (bytes: Buffer) => boolean } {
   const normalized = contentType?.split(";", 1)[0]?.trim().toLowerCase();
