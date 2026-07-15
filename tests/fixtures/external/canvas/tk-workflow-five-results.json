@@ -1,0 +1,11 @@
+{
+  "task_id": "canvas_task_01",
+  "status": "succeeded",
+  "outputs": [
+    { "url": "/assets/output/tk-01.png", "width": 1024, "height": 1024, "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" },
+    { "url": "https://canvas-n8n.ai2hook.com/assets/output/tk-02.png", "width": 1024, "height": 1024, "sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb" },
+    { "url": "/assets/output/tk-03.png", "width": 1024, "height": 1024, "sha256": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc" },
+    { "url": "/assets/output/tk-04.png", "width": 1024, "height": 1024, "sha256": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd" },
+    { "url": "/assets/output/tk-05.png", "width": 1024, "height": 1024, "sha256": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee" }
+  ]
+}

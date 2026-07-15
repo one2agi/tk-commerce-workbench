@@ -1,6 +1,6 @@
-// Configuration loader. The only public output is `AppConfig` (with non-secret values)
-// and `getSecretStatus()` returning booleans. Never echo secret values into logs, fixtures
-// or error messages. In test / integration / e2e, `EXTERNAL_ADAPTER_MODE=live` aborts startup.
+// Server-only configuration loader. AppConfig may contain adapter credentials and must never
+// be serialized or logged. `getSecretStatus()` is the only safe view and returns booleans.
+// In test / integration / e2e, `EXTERNAL_ADAPTER_MODE=live` aborts startup.
 
 export type ExternalAdapterMode = "mock" | "live";
 
@@ -27,6 +27,12 @@ export interface AppConfig {
   readonly canvasConfigured: boolean;
   readonly llmConfigured: boolean;
   readonly exchangeRateConfigured: boolean;
+  readonly canvasBaseUrl: string;
+  readonly canvasApiKey: string;
+  readonly llmBaseUrl: string;
+  readonly llmApiKey: string;
+  readonly llmModel: string;
+  readonly exchangeRateBaseUrl: string;
 }
 
 const LOOPBACK_HOST_PATTERN = /^(127\.0\.0\.1|localhost|\[::1\]|::1)$/i;
@@ -123,7 +129,13 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
     miaoshouConfigured: Boolean(read(env, "MIAOSHOU_APP_KEY") && read(env, "MIAOSHOU_APP_SECRET")),
     canvasConfigured: Boolean(read(env, "CANVAS_BASE_URL") && read(env, "CANVAS_API_KEY")),
     llmConfigured: Boolean(read(env, "LLM_BASE_URL") && read(env, "LLM_API_KEY")),
-    exchangeRateConfigured: Boolean(read(env, "EXCHANGE_RATE_BASE_URL"))
+    exchangeRateConfigured: Boolean(read(env, "EXCHANGE_RATE_BASE_URL")),
+    canvasBaseUrl: read(env, "CANVAS_BASE_URL") ?? "",
+    canvasApiKey: read(env, "CANVAS_API_KEY") ?? "",
+    llmBaseUrl: read(env, "LLM_BASE_URL") ?? "",
+    llmApiKey: read(env, "LLM_API_KEY") ?? "",
+    llmModel: read(env, "LLM_MODEL") ?? "",
+    exchangeRateBaseUrl: read(env, "EXCHANGE_RATE_BASE_URL") ?? ""
   };
 }
 

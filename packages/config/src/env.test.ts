@@ -38,4 +38,22 @@ describe("config env", () => {
     expect(status).not.toHaveProperty("miaoshouAppKey");
     expect(status).not.toHaveProperty("miaoshouAppSecret");
   });
+
+  it("keeps server-only live adapter settings in AppConfig but never in the safe status view", () => {
+    const cfg = loadConfig({
+      ...BASE_ENV,
+      CANVAS_BASE_URL: "https://canvas.test/",
+      CANVAS_API_KEY: "TEST_CANVAS_SECRET_DO_NOT_LOG",
+      LLM_BASE_URL: "https://llm.test/v1/",
+      LLM_API_KEY: "TEST_LLM_SECRET_DO_NOT_LOG",
+      LLM_MODEL: "model-1",
+      EXCHANGE_RATE_BASE_URL: "https://rates.test/"
+    });
+    expect(cfg.canvasBaseUrl).toBe("https://canvas.test/");
+    expect(cfg.llmModel).toBe("model-1");
+    expect(cfg.canvasApiKey).toBe("TEST_CANVAS_SECRET_DO_NOT_LOG");
+    const safe = JSON.stringify(getSecretStatus(cfg));
+    expect(safe).not.toMatch(/TEST_(?:CANVAS|LLM)_SECRET_DO_NOT_LOG/);
+    expect(JSON.parse(safe)).toEqual({ miaoshouConfigured: false, canvasConfigured: true, llmConfigured: true, exchangeRateConfigured: true });
+  });
 });
