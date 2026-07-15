@@ -1,0 +1,142 @@
+// Configuration loader. The only public output is `AppConfig` (with non-secret values)
+// and `getSecretStatus()` returning booleans. Never echo secret values into logs, fixtures
+// or error messages. In test / integration / e2e, `EXTERNAL_ADAPTER_MODE=live` aborts startup.
+
+export type ExternalAdapterMode = "mock" | "live";
+
+export interface SecretStatus {
+  readonly miaoshouConfigured: boolean;
+  readonly canvasConfigured: boolean;
+  readonly llmConfigured: boolean;
+  readonly exchangeRateConfigured: boolean;
+}
+
+export interface AppConfig {
+  readonly databaseUrl: string;
+  readonly testDatabaseUrl: string;
+  readonly localOperatorId: string;
+  readonly extensionToken: string;
+  readonly allowLan: boolean;
+  readonly externalAdapterMode: ExternalAdapterMode;
+  readonly assetRoot: string;
+  readonly workerConcurrency: number;
+  readonly workerLeaseMs: number;
+  readonly maxCanvasRunsPerDay: number;
+  readonly nodeEnv: "test" | "development" | "production";
+  readonly miaoshouConfigured: boolean;
+  readonly canvasConfigured: boolean;
+  readonly llmConfigured: boolean;
+  readonly exchangeRateConfigured: boolean;
+}
+
+const LOOPBACK_HOST_PATTERN = /^(127\.0\.0\.1|localhost|\[::1\]|::1)$/i;
+
+function read(env: NodeJS.ProcessEnv, key: string): string | undefined {
+  const raw = env[key];
+  if (raw === undefined) return undefined;
+  return raw.trim();
+}
+
+function require_(env: NodeJS.ProcessEnv, key: string): string {
+  const v = read(env, key);
+  if (v === undefined || v.length === 0) {
+    throw new Error(`config: required env var ${key} is missing or empty`);
+  }
+  return v;
+}
+
+function isTestEnv(env: NodeJS.ProcessEnv): boolean {
+  const nodeEnv = (read(env, "NODE_ENV") ?? "development").toLowerCase();
+  return nodeEnv === "test";
+}
+
+function ensureLoopbackUnlessAllowLan(env: NodeJS.ProcessEnv): void {
+  const allowLan = (read(env, "ALLOW_LAN") ?? "false").toLowerCase() === "true";
+  if (allowLan) return;
+
+  const urls = [read(env, "DATABASE_URL"), read(env, "TEST_DATABASE_URL")];
+  for (const url of urls) {
+    if (!url) continue;
+    let host: string;
+    try {
+      host = new URL(url).hostname;
+    } catch {
+      throw new Error(`config: invalid URL value for ${url}`);
+    }
+    if (!LOOPBACK_HOST_PATTERN.test(host)) {
+      throw new Error(
+        `config: refusing to point at non-loopback host '${host}' while ALLOW_LAN=false`
+      );
+    }
+  }
+}
+
+function parseIntStrict(env: NodeJS.ProcessEnv, key: string, fallback: number): number {
+  const raw = read(env, key);
+  if (raw === undefined) return fallback;
+  if (!/^-?\d+$/.test(raw)) {
+    throw new Error(`config: ${key} must be an integer; received '${raw}'`);
+  }
+  return Number.parseInt(raw, 10);
+}
+
+function parseExternalAdapterMode(env: NodeJS.ProcessEnv, nodeEnv: AppConfig["nodeEnv"]): ExternalAdapterMode {
+  const raw = (read(env, "EXTERNAL_ADAPTER_MODE") ?? "mock").toLowerCase();
+  if (raw !== "mock" && raw !== "live") {
+    throw new Error(`config: EXTERNAL_ADAPTER_MODE must be 'mock' or 'live'`);
+  }
+  if (raw === "live" && nodeEnv === "test") {
+    throw new Error(
+      "config: refusing to boot test/integration/e2e process with external adapter mode=live"
+    );
+  }
+  return raw;
+}
+
+function parseNodeEnv(env: NodeJS.ProcessEnv): AppConfig["nodeEnv"] {
+  const raw = (read(env, "NODE_ENV") ?? "development").toLowerCase();
+  if (raw === "test" || raw === "production") return raw;
+  return "development";
+}
+
+export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
+  const nodeEnv = parseNodeEnv(env);
+
+  const databaseUrl = require_(env, "DATABASE_URL");
+  const testDatabaseUrl = require_(env, "TEST_DATABASE_URL");
+  if (!/_test$/i.test(new URL(testDatabaseUrl).pathname.replace(/^\//, ""))) {
+    throw new Error("config: TEST_DATABASE_URL must point at a database whose name ends with _test");
+  }
+
+  ensureLoopbackUnlessAllowLan(env);
+
+  const allowLan = (read(env, "ALLOW_LAN") ?? "false").toLowerCase() === "true";
+  const externalAdapterMode = parseExternalAdapterMode(env, nodeEnv);
+
+  return {
+    databaseUrl,
+    testDatabaseUrl,
+    localOperatorId: require_(env, "LOCAL_OPERATOR_ID"),
+    extensionToken: require_(env, "EXTENSION_TOKEN"),
+    allowLan,
+    externalAdapterMode,
+    assetRoot: read(env, "ASSET_ROOT") ?? "./data/assets",
+    workerConcurrency: parseIntStrict(env, "WORKER_CONCURRENCY", 2),
+    workerLeaseMs: parseIntStrict(env, "WORKER_LEASE_MS", 60_000),
+    maxCanvasRunsPerDay: parseIntStrict(env, "MAX_CANVAS_RUNS_PER_DAY", 50),
+    nodeEnv,
+    miaoshouConfigured: Boolean(read(env, "MIAOSHOU_APP_KEY") && read(env, "MIAOSHOU_APP_SECRET")),
+    canvasConfigured: Boolean(read(env, "CANVAS_BASE_URL") && read(env, "CANVAS_API_KEY")),
+    llmConfigured: Boolean(read(env, "LLM_BASE_URL") && read(env, "LLM_API_KEY")),
+    exchangeRateConfigured: Boolean(read(env, "EXCHANGE_RATE_BASE_URL"))
+  };
+}
+
+export function getSecretStatus(cfg: AppConfig): SecretStatus {
+  return Object.freeze({
+    miaoshouConfigured: cfg.miaoshouConfigured,
+    canvasConfigured: cfg.canvasConfigured,
+    llmConfigured: cfg.llmConfigured,
+    exchangeRateConfigured: cfg.exchangeRateConfigured
+  });
+}
