@@ -4,6 +4,7 @@
 
 export const workerPackageName = "@tk/worker";
 export const workerReady = true as const;
+export * from "./entry.js";
 export * from "./main.js";
 export * from "./runtime/worker-loop.js";
 export * from "./runtime/adapter-limiter.js";

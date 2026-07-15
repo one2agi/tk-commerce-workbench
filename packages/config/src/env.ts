@@ -36,6 +36,7 @@ export interface AppConfig {
 }
 
 const LOOPBACK_HOST_PATTERN = /^(127\.0\.0\.1|localhost|\[::1\]|::1)$/i;
+const PGLITE_TEST_URL = "pglite://_test";
 
 function read(env: NodeJS.ProcessEnv, key: string): string | undefined {
   const raw = env[key];
@@ -58,6 +59,7 @@ function ensureLoopbackUnlessAllowLan(env: NodeJS.ProcessEnv): void {
   const urls = [read(env, "DATABASE_URL"), read(env, "TEST_DATABASE_URL")];
   for (const url of urls) {
     if (!url) continue;
+    if (url === PGLITE_TEST_URL) continue;
     let host: string;
     try {
       host = new URL(url).hostname;
@@ -105,7 +107,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
 
   const databaseUrl = require_(env, "DATABASE_URL");
   const testDatabaseUrl = require_(env, "TEST_DATABASE_URL");
-  if (!/_test$/i.test(new URL(testDatabaseUrl).pathname.replace(/^\//, ""))) {
+  if (testDatabaseUrl !== PGLITE_TEST_URL && !/_test$/i.test(new URL(testDatabaseUrl).pathname.replace(/^\//, ""))) {
     throw new Error("config: TEST_DATABASE_URL must point at a database whose name ends with _test");
   }
 

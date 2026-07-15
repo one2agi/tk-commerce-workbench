@@ -5,7 +5,8 @@
   "type": "module",
   "main": "./src/index.ts",
   "scripts": {
-    "dev": "tsx watch src/index.ts",
+    "dev": "tsx watch src/cli.ts",
+    "start": "tsx src/cli.ts",
     "build": "tsc --noEmit",
     "lint": "eslint src --max-warnings=0",
     "typecheck": "tsc --noEmit",
@@ -13,12 +14,15 @@
     "test:integration": "vitest run --config vitest.integration.config.ts"
   },
   "dependencies": {
+    "@tk/adapters": "workspace:*",
     "@tk/contracts": "workspace:*",
     "@tk/config": "workspace:*",
     "@tk/db": "workspace:*",
-    "@tk/domain": "workspace:*"
+    "@tk/domain": "workspace:*",
+    "pg": "8.22.0"
   },
   "devDependencies": {
+    "@types/pg": "8.20.0",
     "tsx": "4.23.1",
     "typescript": "5.9.3"
   }

@@ -23,6 +23,11 @@ describe("config env", () => {
     expect(cfg.externalAdapterMode).toBe("mock");
   });
 
+  it("accepts the explicit local PGlite test database sentinel", () => {
+    expect(loadConfig({ ...BASE_ENV, TEST_DATABASE_URL: "pglite://_test" }).testDatabaseUrl)
+      .toBe("pglite://_test");
+  });
+
   it("refuses to boot test/integration/e2e in live external adapter mode", () => {
     expect(() =>
       loadConfig({ ...BASE_ENV, EXTERNAL_ADAPTER_MODE: "live", NODE_ENV: "test" })
