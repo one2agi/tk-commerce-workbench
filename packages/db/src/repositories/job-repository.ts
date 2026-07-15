@@ -1,6 +1,5 @@
-// Job repository. claim() uses SELECT ... FOR UPDATE SKIP LOCKED so two concurrent
-// claims with the same logical worker cannot pick the same row. The integration test
-// also runs sequential double-claim as the no-flake equivalent.
+// Durable job repository. A random lease token fences each claim, so a worker whose
+// lease expired cannot overwrite the result produced by a newer owner.
 
 import { strict as assert } from "node:assert";
 
@@ -24,6 +23,7 @@ export interface ClaimedJob {
   jobId: string;
   kind: string;
   payload: Record<string, unknown>;
+  leaseToken: string;
 }
 
 export class JobRepository {
@@ -64,27 +64,29 @@ export class JobRepository {
   }
 
   /**
-   * Claim one queued job under owner+lease. Uses SELECT ... FOR UPDATE SKIP LOCKED.
-   * Two concurrent calls with the same owner/now/leaseMs are guaranteed to return
-   * exactly ONE non-null result (the second finds no available locked row to skip).
+   * Claim one eligible queued job under owner+lease. Expired running jobs must first
+   * pass through releaseExpired(), which distinguishes safe retries from external
+   * operations that require reconciliation.
    */
   async claim(owner: string, now: Date, leaseMs: number): Promise<ClaimedJob | null> {
     assert(owner.length > 0, "owner required");
     const leaseExpiresAt = new Date(now.getTime() + leaseMs);
+    const leaseToken = newId("lease");
     const client = await this.pool.connect();
     try {
-      // Atomic claim via UPDATE ... RETURNING. We pick the earliest row whose status is
-      // "queued" OR whose running lease already expired, then flip it to "running" with
-      // a fresh lease. The CTE makes this race-safe on real Postgres and best-effort
-      // under PGlite (single-connection WAL still serializes the writes).
+      // Atomic claim via UPDATE ... RETURNING. The CTE makes this race-safe on real
+      // Postgres and best-effort under PGlite.
       const updated = await client.query<{
         id: string;
         kind: string;
         payload: Record<string, unknown>;
+        lease_token: string;
       }>(
         `WITH candidate AS (
            SELECT id FROM ${schema.jobs}
-           WHERE status = 'queued' OR (status = 'running' AND lease_expires_at < $2)
+           WHERE status = 'queued'
+             AND (next_attempt_at IS NULL OR next_attempt_at <= $2)
+             AND attempt < max_attempts
            ORDER BY created_at ASC
            FOR UPDATE SKIP LOCKED
            LIMIT 1
@@ -93,60 +95,129 @@ export class JobRepository {
          SET status = 'running',
              owner = $1,
              lease_expires_at = $3::timestamptz,
+             lease_token = $4,
              attempt = attempt + 1,
              last_heartbeat_at = $2::timestamptz,
              updated_at = now()
          FROM candidate
          WHERE j.id = candidate.id
-         RETURNING j.id, j.kind, j.payload`,
-        [owner, now, leaseExpiresAt]
+         RETURNING j.id, j.kind, j.payload, j.lease_token`,
+        [owner, now, leaseExpiresAt, leaseToken]
       );
       if (updated.rowCount === 0) return null;
       const row = updated.rows[0];
       return {
         jobId: row.id,
         kind: row.kind,
-        payload: row.payload ?? {}
+        payload: row.payload ?? {},
+        leaseToken: row.lease_token
       };
     } finally {
       client.release();
     }
   }
 
-  async heartbeat(jobId: string, now: Date, leaseMs: number): Promise<void> {
-    await this.pool.query(
+  async heartbeat(
+    jobId: string,
+    owner: string,
+    leaseToken: string,
+    now: Date,
+    leaseMs: number
+  ): Promise<boolean> {
+    const result = await this.pool.query(
       `UPDATE ${schema.jobs}
        SET last_heartbeat_at = $2::timestamptz, lease_expires_at = $3::timestamptz, updated_at = now()
-       WHERE id = $1 AND status = 'running'`,
-      [jobId, now, new Date(now.getTime() + leaseMs)]
+       WHERE id = $1 AND status = 'running' AND owner = $4 AND lease_token = $5
+         AND lease_expires_at > $2::timestamptz`,
+      [jobId, now, new Date(now.getTime() + leaseMs), owner, leaseToken]
     );
+    return result.rowCount === 1;
   }
 
-  async complete(jobId: string): Promise<void> {
-    await this.pool.query(
+  async complete(
+    jobId: string,
+    owner: string,
+    leaseToken: string,
+    now: Date
+  ): Promise<boolean> {
+    const result = await this.pool.query(
       `UPDATE ${schema.jobs}
-       SET status = 'succeeded', lease_expires_at = NULL, updated_at = now()
-       WHERE id = $1`,
-      [jobId]
+       SET status = 'succeeded', owner = NULL, lease_token = NULL,
+           lease_expires_at = NULL, updated_at = now()
+       WHERE id = $1 AND status = 'running' AND owner = $2 AND lease_token = $3
+         AND lease_expires_at > $4::timestamptz`,
+      [jobId, owner, leaseToken, now]
     );
+    return result.rowCount === 1;
   }
 
-  async fail(jobId: string, error: Record<string, unknown>): Promise<void> {
-    await this.pool.query(
+  async fail(
+    jobId: string,
+    owner: string,
+    leaseToken: string,
+    now: Date,
+    error: Record<string, unknown>
+  ): Promise<boolean> {
+    const result = await this.pool.query(
       `UPDATE ${schema.jobs}
-       SET status = 'failed', error = $2::jsonb, lease_expires_at = NULL, updated_at = now()
-       WHERE id = $1`,
-      [jobId, JSON.stringify(error)]
+       SET status = 'failed', error = $5::jsonb, owner = NULL, lease_token = NULL,
+           lease_expires_at = NULL, updated_at = now()
+       WHERE id = $1 AND status = 'running' AND owner = $2 AND lease_token = $3
+         AND lease_expires_at > $4::timestamptz`,
+      [jobId, owner, leaseToken, now, JSON.stringify(error)]
     );
+    return result.rowCount === 1;
   }
 
   async releaseExpired(now: Date): Promise<number> {
-    const r = await this.pool.query(
-      `UPDATE ${schema.jobs}
-       SET status = 'queued', owner = NULL, lease_expires_at = NULL, updated_at = now()
-       WHERE status = 'running' AND lease_expires_at < $1`,
-      [now]
-    );
-    return r.rowCount ?? 0;
+    const client = await this.pool.connect();
+    try {
+      await client.query("BEGIN");
+      const released = await client.query<{ id: string }>(
+        `UPDATE ${schema.jobs}
+       SET status = CASE
+             WHEN remote_task_id IS NOT NULL
+               OR kind IN ('miaoshou_collect', 'canvas_generate', 'miaoshou_edit')
+               THEN 'needs_input'
+             WHEN attempt >= max_attempts THEN 'failed'
+             ELSE 'queued'
+           END,
+           error = CASE
+             WHEN remote_task_id IS NOT NULL
+               OR kind IN ('miaoshou_collect', 'canvas_generate', 'miaoshou_edit')
+               THEN '{"code":"reconcile_required","message":"Lease expired after an external side effect; reconcile before retry"}'::jsonb
+             WHEN attempt >= max_attempts
+               THEN '{"code":"attempts_exhausted","message":"Maximum attempts exhausted"}'::jsonb
+             ELSE error
+           END,
+           owner = NULL, lease_token = NULL, lease_expires_at = NULL, updated_at = now()
+       WHERE status = 'running' AND lease_expires_at <= $1
+       RETURNING id`,
+        [now]
+      );
+      const releasedIds = released.rows.map((row) => row.id);
+      if (releasedIds.length > 0) {
+        await client.query(
+          `UPDATE ${schema.miaoshouSyncs} sync
+           SET state = 'result_unknown',
+               error = '{"code":"reconcile_required","message":"Miaoshou edit lease expired; reconcile remote result"}'::jsonb,
+               updated_at = now()
+           WHERE sync.approval_snapshot_id IN (
+             SELECT payload->>'approvalSnapshotId'
+             FROM ${schema.jobs}
+             WHERE id = ANY($1::text[]) AND kind = 'miaoshou_edit'
+           )
+             AND sync.state IN ('queued', 'syncing', 'result_unknown')`,
+          [releasedIds]
+        );
+      }
+      await client.query("COMMIT");
+      return released.rowCount ?? 0;
+    } catch (error) {
+      await client.query("ROLLBACK").catch(() => undefined);
+      throw error;
+    } finally {
+      client.release();
+    }
   }
 }

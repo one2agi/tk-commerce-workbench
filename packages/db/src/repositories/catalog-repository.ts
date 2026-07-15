@@ -45,17 +45,36 @@ export class CatalogRepository {
   async insertProduct(input: {
     operatorId: string;
     sourceUrl: string;
+    sourceItemId?: string;
     locale: string;
     currency: string;
   }): Promise<string> {
     assert(input.operatorId.length > 0, "operatorId required");
     const id = newId("prod");
-    await this.pool.query(
-      `INSERT INTO ${schema.products} (id, operator_id, source_url, locale, currency)
-       VALUES ($1, $2, $3, $4, $5)`,
-      [id, input.operatorId, input.sourceUrl, input.locale, input.currency]
+    const inserted = await this.pool.query<{ id: string }>(
+      `INSERT INTO ${schema.products}
+        (id, operator_id, source_url, source_item_id, locale, currency)
+       VALUES ($1, $2, $3, $4, $5, $6)
+       ON CONFLICT (operator_id, source_item_id) WHERE source_item_id IS NOT NULL
+       DO NOTHING
+       RETURNING id`,
+      [
+        id,
+        input.operatorId,
+        input.sourceUrl,
+        input.sourceItemId ?? null,
+        input.locale,
+        input.currency
+      ]
     );
-    return id;
+    if ((inserted.rowCount ?? 0) > 0) return inserted.rows[0].id;
+    const existing = await this.pool.query<{ id: string }>(
+      `SELECT id FROM ${schema.products}
+       WHERE operator_id = $1 AND source_item_id = $2`,
+      [input.operatorId, input.sourceItemId]
+    );
+    assert(existing.rows[0], "conflicting product identity must exist");
+    return existing.rows[0].id;
   }
 
   /**

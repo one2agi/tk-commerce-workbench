@@ -42,50 +42,55 @@ export class AutomationRunRepository {
     try {
       await client.query("BEGIN");
 
-      // Reuse path: same (revision_id, processing_version) already exists.
-      const existing = await client.query<{ id: string }>(
-        `SELECT id FROM ${schema.automationRuns}
-         WHERE revision_id = $1 AND processing_version = $2
-         FOR UPDATE`,
-        [input.revisionId, input.processingVersion]
-      );
-      if (existing.rowCount && existing.rowCount > 0) {
-        await client.query("COMMIT");
-        return { runId: existing.rows[0].id, created: false };
-      }
-
-      // First-touch path: create the run, then enqueue the first free job.
-      const runId = newId("ar");
-      await client.query(
+      // INSERT ... ON CONFLICT is the concurrency boundary. A prior SELECT cannot
+      // protect a missing row: two transactions could both observe absence.
+      const candidateRunId = newId("ar");
+      const inserted = await client.query<{ id: string }>(
         `INSERT INTO ${schema.automationRuns}
          (id, revision_id, processing_version, state)
-         VALUES ($1, $2, $3, 'queued')`,
-        [runId, input.revisionId, input.processingVersion]
+         VALUES ($1, $2, $3, 'queued')
+         ON CONFLICT (revision_id, processing_version) DO NOTHING
+         RETURNING id`,
+        [candidateRunId, input.revisionId, input.processingVersion]
       );
+      const created = (inserted.rowCount ?? 0) > 0;
+      let runId = inserted.rows[0]?.id;
+      if (!runId) {
+        const existing = await client.query<{ id: string }>(
+          `SELECT id FROM ${schema.automationRuns}
+           WHERE revision_id = $1 AND processing_version = $2`,
+          [input.revisionId, input.processingVersion]
+        );
+        assert(existing.rows[0], "conflicting automation run must exist");
+        runId = existing.rows[0].id;
+      }
 
-      // Enqueue the bootstrapping job (miaoshou_collect) keyed by run id so it is also
-      // idempotent across replays. The Worker (Wave 2) picks it up via claim().
-      const jobId = newId("job");
-      const businessKey = `automation:${runId}:boot`;
-      await client.query(
-        `INSERT INTO ${schema.jobs}
-          (id, kind, business_key, idempotency_key, payload, status, max_attempts)
-         VALUES ($1, 'miaoshou_collect', $2, $3, $4::jsonb, 'queued', $5)
-         ON CONFLICT (kind, business_key) DO NOTHING`,
-        [
-          jobId,
-          businessKey,
-          `automation-${runId}`,
-          JSON.stringify({
-            version: 1,
-            revisionId: input.revisionId
-          }),
-          3
-        ]
-      );
+      if (created) {
+        const revision = await client.query<{ source_payload: Record<string, unknown> }>(
+          `SELECT source_payload FROM ${schema.productRevisions} WHERE id = $1`,
+          [input.revisionId]
+        );
+        assert(revision.rows[0], "revision must exist");
+        const remoteUrls = extractRemoteUrls(revision.rows[0].source_payload ?? {});
+        const jobId = newId("job");
+        const businessKey = `automation:${runId}:boot`;
+        await client.query(
+          `INSERT INTO ${schema.jobs}
+            (id, kind, business_key, idempotency_key, payload, status, max_attempts)
+           VALUES ($1, 'asset_archive', $2, $3, $4::jsonb, 'queued', $5)
+           ON CONFLICT (kind, business_key) DO NOTHING`,
+          [
+            jobId,
+            businessKey,
+            `automation-${runId}`,
+            JSON.stringify({ version: 1, revisionId: input.revisionId, remoteUrls }),
+            3
+          ]
+        );
+      }
 
       await client.query("COMMIT");
-      return { runId, created: true };
+      return { runId, created };
     } catch (err) {
       await client.query("ROLLBACK").catch(() => undefined);
       throw err;
@@ -93,4 +98,20 @@ export class AutomationRunRepository {
       client.release();
     }
   }
+}
+
+function extractRemoteUrls(payload: Record<string, unknown>): string[] {
+  const candidates = [payload.remoteUrls, payload.imageUrls, payload.images];
+  const urls = candidates.flatMap((value) => {
+    if (!Array.isArray(value)) return [];
+    return value.flatMap((item) => {
+      if (typeof item === "string") return [item];
+      if (item && typeof item === "object" && "url" in item) {
+        const url = (item as { url?: unknown }).url;
+        return typeof url === "string" ? [url] : [];
+      }
+      return [];
+    });
+  });
+  return [...new Set(urls.filter((url) => /^https?:\/\//.test(url)))];
 }
