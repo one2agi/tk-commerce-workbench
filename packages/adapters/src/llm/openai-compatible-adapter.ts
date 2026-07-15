@@ -8,35 +8,17 @@ export interface OpenAiCompatibleAdapterConfig {
   readonly fetchImpl?: typeof fetch;
 }
 
-const CLAIM_GROUPS: ReadonlyArray<ReadonlyArray<string>> = [
-  ["cotton", "纯棉", "棉质", "ผ้าฝ้าย"],
-  ["polyester", "聚酯纤维", "โพลีเอสเตอร์"],
-  ["leather", "真皮", "หนังแท้"],
-  ["silk", "真丝", "丝绸", "ผ้าไหม"],
-  ["wool", "羊毛", "ขนสัตว์"],
-  ["linen", "亚麻", "ผ้าลินิน"],
-  ["nylon", "尼龙", "ไนลอน"],
-  ["stainless steel", "不锈钢", "สแตนเลส"],
-  ["aluminum", "铝", "อะลูมิเนียม"],
-  ["ce certified", "ce认证", "ได้รับการรับรอง ce"],
-  ["fda approved", "fda认证", "ผ่านการรับรอง fda"],
-  ["iso certified", "iso认证", "ได้รับการรับรอง iso"],
-  ["organic certified", "有机认证", "ได้รับการรับรองออร์แกนิก"],
-  ["antibacterial", "抗菌", "ต้านแบคทีเรีย"],
-  ["waterproof", "防水", "กันน้ำ"],
-  ["fireproof", "防火", "กันไฟ"],
-  ["cures", "治愈", "รักษาโรค"],
-  ["whitening", "美白", "ทำให้ผิวขาว"],
-  ["slimming", "瘦身", "ลดความอ้วน"],
-  ["medical grade", "医用级", "เกรดทางการแพทย์"]
-];
-const PARAMETER_PATTERN = /\b\d+(?:\.\d+)?\s*(?:%|cm|mm|kg|g|ml|mah|w|v)\b/gi;
-
 export function createOpenAiCompatibleAdapter(config: OpenAiCompatibleAdapterConfig): LlmPort {
   const fetchImpl = config.fetchImpl ?? globalThis.fetch;
   const baseUrl = config.baseUrl.replace(/\/+$/, "");
   return {
     async generateListing(input): Promise<LlmStructuredOutputV1> {
+      if (input.sourceLocale.toLowerCase() !== input.targetLocale.toLowerCase()) {
+        // A local validator cannot prove arbitrary cross-language semantic equivalence. Do not
+        // spend money on output that cannot be deterministically grounded; Core must select its
+        // reviewed rules fallback for cross-locale generation.
+        throw externalFailure("needs_input", "llm.cross_locale_requires_rules", "Cross-language listing generation requires the reviewed rules fallback");
+      }
       const controller = new AbortController();
       const timer = setTimeout(() => controller.abort(), config.timeoutMs ?? 30_000);
       let response: Response;
@@ -49,7 +31,7 @@ export function createOpenAiCompatibleAdapter(config: OpenAiCompatibleAdapterCon
             model: config.model,
             temperature: 0,
             messages: [
-              { role: "system", content: "Translate and rewrite only from supplied evidence. Every non-empty output field must cite an exact source quote in evidenceCitations. Never add facts, dimensions, quantities, or technical parameters. Return JSON only." },
+              { role: "system", content: "Return only source-backed fields. For every output field provide evidenceMappings with its exact sourcePath and exact sourceQuote. Do not translate, paraphrase, style, or add any token. Return JSON only." },
               { role: "user", content: JSON.stringify({ sourceLocale: input.sourceLocale, targetLocale: input.targetLocale, style: input.style, evidence: input.evidence }) }
             ],
             response_format: { type: "json_schema", json_schema: { name: "listing_candidate", strict: true, schema: listingSchema } }
@@ -76,7 +58,7 @@ export function createOpenAiCompatibleAdapter(config: OpenAiCompatibleAdapterCon
         throw externalFailure("fatal", "llm.invalid_response", "Listing model returned invalid structured output");
       }
       const parsed = parseListing(candidate, input.style);
-      assertGrounded(parsed.output, parsed.evidenceCitations, input.evidence);
+      assertGrounded(parsed.output, parsed.evidenceMappings, input.evidence, input.style);
       return Object.freeze(parsed.output);
     }
   };
@@ -85,62 +67,53 @@ export function createOpenAiCompatibleAdapter(config: OpenAiCompatibleAdapterCon
 const listingSchema = {
   type: "object",
   additionalProperties: false,
-  required: ["title", "description", "translatedAttributes", "styleApplied", "fallbackUsed", "evidenceCitations"],
+  required: ["title", "description", "translatedAttributes", "styleApplied", "fallbackUsed", "evidenceMappings"],
   properties: {
     title: { type: "string" }, description: { type: "string" },
     translatedAttributes: { type: "array", items: { type: "object", additionalProperties: false, required: ["name", "value"], properties: { name: { type: "string" }, value: { type: "string" } } } },
     styleApplied: { type: "string" }, fallbackUsed: { const: false },
-    evidenceCitations: { type: "array", items: { type: "object", additionalProperties: false, required: ["outputPath", "sourceQuote"], properties: { outputPath: { type: "string" }, sourceQuote: { type: "string" } } } }
+    evidenceMappings: { type: "array", items: { type: "object", additionalProperties: false, required: ["outputPath", "sourcePath", "sourceQuote"], properties: { outputPath: { type: "string" }, sourcePath: { type: "string" }, sourceQuote: { type: "string" } } } }
   }
 } as const;
 
-type EvidenceCitation = { outputPath: string; sourceQuote: string };
+type EvidenceMapping = { outputPath: string; sourcePath: string; sourceQuote: string };
 
-function parseListing(value: unknown, requestedStyle: string): { output: LlmStructuredOutputV1; evidenceCitations: EvidenceCitation[] } {
+function parseListing(value: unknown, requestedStyle: string): { output: LlmStructuredOutputV1; evidenceMappings: EvidenceMapping[] } {
   if (!value || typeof value !== "object") throw externalFailure("fatal", "llm.invalid_response", "Listing model returned invalid structured output");
-  const item = value as Partial<LlmStructuredOutputV1> & { evidenceCitations?: EvidenceCitation[] };
+  const item = value as Partial<LlmStructuredOutputV1> & { evidenceMappings?: EvidenceMapping[] };
   const attrs = item.translatedAttributes;
-  if (typeof item.title !== "string" || !item.title.trim() || typeof item.description !== "string" || !Array.isArray(attrs) || attrs.some((attr) => !attr || typeof attr.name !== "string" || typeof attr.value !== "string") || item.fallbackUsed !== false || !Array.isArray(item.evidenceCitations) || item.evidenceCitations.some((citation) => !citation || typeof citation.outputPath !== "string" || typeof citation.sourceQuote !== "string")) {
+  if (typeof item.title !== "string" || !item.title.trim() || typeof item.description !== "string" || !Array.isArray(attrs) || attrs.some((attr) => !attr || typeof attr.name !== "string" || typeof attr.value !== "string") || item.fallbackUsed !== false || !Array.isArray(item.evidenceMappings) || item.evidenceMappings.some((mapping) => !mapping || typeof mapping.outputPath !== "string" || typeof mapping.sourcePath !== "string" || typeof mapping.sourceQuote !== "string")) {
     throw externalFailure("fatal", "llm.invalid_response", "Listing model returned invalid structured output");
   }
-  return { output: { title: item.title.trim(), description: item.description.trim(), translatedAttributes: attrs, styleApplied: typeof item.styleApplied === "string" ? item.styleApplied : requestedStyle, fallbackUsed: false }, evidenceCitations: item.evidenceCitations };
+  return { output: { title: item.title.trim(), description: item.description.trim(), translatedAttributes: attrs, styleApplied: typeof item.styleApplied === "string" ? item.styleApplied : requestedStyle, fallbackUsed: false }, evidenceMappings: item.evidenceMappings };
 }
 
-function assertGrounded(output: LlmStructuredOutputV1, citations: EvidenceCitation[], evidence: Parameters<LlmPort["generateListing"]>[0]["evidence"]): void {
-  const source = `${evidence.sourceTitle} ${evidence.sourceDescription} ${evidence.sourceAttributes.map((attr) => `${attr.name} ${attr.value}`).join(" ")}`.toLowerCase();
-  const sourceSegments = new Set([evidence.sourceTitle, evidence.sourceDescription, ...evidence.sourceAttributes.flatMap((attr) => [attr.name, attr.value])].map((segment) => segment.trim().toLowerCase()).filter(Boolean));
-  const generated = `${output.title} ${output.description} ${output.translatedAttributes.map((attr) => `${attr.name} ${attr.value}`).join(" ")}`.toLowerCase();
-  const requiredPaths = ["title", ...(output.description ? ["description"] : []), ...output.translatedAttributes.flatMap((_attr, index) => [`translatedAttributes.${index}.name`, `translatedAttributes.${index}.value`])];
-  const citedPaths = new Set<string>();
-  for (const citation of citations) {
-    const quote = citation.sourceQuote.trim().toLowerCase();
-    if (!requiredPaths.includes(citation.outputPath) || !quote || !sourceSegments.has(quote)) {
-      throw externalFailure("fatal", "llm.ungrounded_claim", "Listing model introduced a claim absent from source evidence");
-    }
-    citedPaths.add(citation.outputPath);
+function assertGrounded(output: LlmStructuredOutputV1, mappings: EvidenceMapping[], evidence: Parameters<LlmPort["generateListing"]>[0]["evidence"], requestedStyle: string): void {
+  const sourceByPath = new Map<string, string>([["sourceTitle", evidence.sourceTitle], ["sourceDescription", evidence.sourceDescription]]);
+  const outputByPath = new Map<string, string>([["title", output.title], ["description", output.description]]);
+  const expectedSourcePath = new Map<string, string>([["title", "sourceTitle"], ["description", "sourceDescription"]]);
+  evidence.sourceAttributes.forEach((attribute, index) => {
+    sourceByPath.set(`sourceAttributes.${index}.name`, attribute.name);
+    sourceByPath.set(`sourceAttributes.${index}.value`, attribute.value);
+  });
+  output.translatedAttributes.forEach((attribute, index) => {
+    outputByPath.set(`translatedAttributes.${index}.name`, attribute.name);
+    outputByPath.set(`translatedAttributes.${index}.value`, attribute.value);
+    expectedSourcePath.set(`translatedAttributes.${index}.name`, `sourceAttributes.${index}.name`);
+    expectedSourcePath.set(`translatedAttributes.${index}.value`, `sourceAttributes.${index}.value`);
+  });
+  const mapped = new Set<string>();
+  const invalidShape = output.translatedAttributes.length !== evidence.sourceAttributes.length || output.styleApplied !== requestedStyle || mappings.length !== outputByPath.size;
+  if (invalidShape) throwUngrounded();
+  for (const mapping of mappings) {
+    const sourceValue = sourceByPath.get(mapping.sourcePath);
+    const outputValue = outputByPath.get(mapping.outputPath);
+    if (mapped.has(mapping.outputPath) || expectedSourcePath.get(mapping.outputPath) !== mapping.sourcePath || sourceValue === undefined || outputValue === undefined || mapping.sourceQuote !== sourceValue || outputValue !== sourceValue) throwUngrounded();
+    mapped.add(mapping.outputPath);
   }
-  if (requiredPaths.some((path) => !citedPaths.has(path))) {
-    throw externalFailure("fatal", "llm.ungrounded_claim", "Listing model introduced a claim absent from source evidence");
-  }
-  for (const aliases of CLAIM_GROUPS) {
-    if (aliases.some((term) => includesClaim(generated, term)) && !aliases.some((term) => includesClaim(source, term))) {
-      throw externalFailure("fatal", "llm.ungrounded_claim", "Listing model introduced a claim absent from source evidence");
-    }
-  }
-  const sourceParameters = new Set(source.match(PARAMETER_PATTERN) ?? []);
-  for (const parameter of generated.match(PARAMETER_PATTERN) ?? []) {
-    if (!sourceParameters.has(parameter)) throw externalFailure("fatal", "llm.ungrounded_claim", "Listing model introduced a parameter absent from source evidence");
-  }
-  const sourceNumbers = new Set(source.match(/\p{N}+(?:[.,]\p{N}+)?/gu) ?? []);
-  for (const numericFact of generated.match(/\p{N}+(?:[.,]\p{N}+)?/gu) ?? []) {
-    if (!sourceNumbers.has(numericFact)) throw externalFailure("fatal", "llm.ungrounded_claim", "Listing model introduced a numeric fact absent from source evidence");
-  }
+  if ([...outputByPath.keys()].some((path) => !mapped.has(path))) throwUngrounded();
 }
 
-function includesClaim(text: string, claim: string): boolean {
-  if (/^[a-z0-9 ]+$/i.test(claim)) {
-    const escaped = claim.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-    return new RegExp(`\\b${escaped}\\b`, "i").test(text);
-  }
-  return text.includes(claim);
+function throwUngrounded(): never {
+  throw externalFailure("fatal", "llm.ungrounded_claim", "Listing model introduced content that cannot be proven from source evidence");
 }

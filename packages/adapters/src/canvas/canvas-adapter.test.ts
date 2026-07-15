@@ -39,7 +39,7 @@ describe("Canvas automation adapter", () => {
       calls.push({ url: String(url), init });
       return calls.length <= 2 ? response(metadata) : response({ task_id: "canvas_task_01" });
     });
-    const adapter = createCanvasAdapter({ baseUrl: "https://canvas-n8n.ai2hook.com/", canvasId: "0f91cb2d8f2846c091829af30ea2d18d", workflowName: "TK工作流", fetchImpl, now: () => "2026-07-16T00:00:00.000Z" });
+    const adapter = createCanvasAdapter({ baseUrl: "https://canvas-n8n.ai2hook.com/", canvasId: "0f91cb2d8f2846c091829af30ea2d18d", workflowName: "TK工作流", fetchImpl, resolveHost: async () => [{ address: "93.184.216.34", family: 4 }], now: () => "2026-07-16T00:00:00.000Z" });
     const capacity = await adapter.readWorkflowCapacity("workflow_1");
     await expect(adapter.submit({ workflowId: "workflow_1", workflowVersion: capacity.workflowVersion, imageUrls: ["https://assets.test/product.jpg"], referenceImageUrls: ["https://assets.test/reference.jpg"], promptContext: { sourceLocale: "zh-CN", targetLocale: "th-TH", style: "tiktok" }, idempotencyKey: idempotencyKey("canvas:product_1:revision_1") })).resolves.toEqual({ remoteTaskId: "canvas_task_01", submittedAt: "2026-07-16T00:00:00.000Z" });
     const body = JSON.parse(String(calls[2]?.init?.body));
@@ -73,6 +73,22 @@ describe("Canvas automation adapter", () => {
     await expect(adapter.submit({ workflowId: "workflow_1", workflowVersion: 1, imageUrls: ["https://assets.test/same.jpg", "https://assets.test/same.jpg"], referenceImageUrls: [], promptContext: { sourceLocale: "zh-CN", targetLocale: "th-TH", style: "neutral" }, idempotencyKey: idempotencyKey("canvas:duplicate:test") })).rejects.toMatchObject({ code: "canvas.invalid_image_urls" });
     await expect(adapter.submit({ workflowId: "workflow_1", workflowVersion: 1, imageUrls: ["file:///tmp/private.jpg"], referenceImageUrls: [], promptContext: { sourceLocale: "zh-CN", targetLocale: "th-TH", style: "neutral" }, idempotencyKey: idempotencyKey("canvas:private:test") })).rejects.toMatchObject({ code: "canvas.invalid_image_urls" });
     expect(fetchImpl).toHaveBeenCalledTimes(3);
+  });
+
+  it.each([
+    ["metadata hostname", "http://metadata.google.internal/latest/meta-data", [{ address: "93.184.216.34", family: 4 as const }]],
+    ["DNS to private IPv4", "https://private-dns.test/a.jpg", [{ address: "10.0.0.8", family: 4 as const }]],
+    ["direct private IPv4", "http://169.254.169.254/latest", [{ address: "93.184.216.34", family: 4 as const }]],
+    ["direct private IPv6", "http://[fe80::1]/a.jpg", [{ address: "93.184.216.34", family: 4 as const }]],
+    ["DNS to private IPv6", "https://private-v6.test/a.jpg", [{ address: "fc00::1", family: 6 as const }]]
+  ])("does not POST workflow-runs when an input URL fails public DNS validation: %s", async (_case, imageUrl, addresses) => {
+    const calls: string[] = [];
+    const fetchImpl = vi.fn(async (url: string | URL | Request) => { calls.push(String(url)); return response(metadata); });
+    const resolveHost = vi.fn(async () => addresses);
+    const adapter = createCanvasAdapter({ baseUrl: "https://canvas.test", canvasId: "canvas", fetchImpl, resolveHost });
+    const capacity = await adapter.readWorkflowCapacity("workflow_1");
+    await expect(adapter.submit({ workflowId: "workflow_1", workflowVersion: capacity.workflowVersion, imageUrls: [imageUrl], referenceImageUrls: [], promptContext: { sourceLocale: "zh-CN", targetLocale: "th-TH", style: "neutral" }, idempotencyKey: idempotencyKey("canvas:ssrf:input") })).rejects.toMatchObject({ code: "canvas.invalid_image_urls" });
+    expect(calls.some((url) => url.endsWith("/api/automation/workflow-runs"))).toBe(false);
   });
 
   it("returns five valid outputs and resolves relative URLs", async () => {

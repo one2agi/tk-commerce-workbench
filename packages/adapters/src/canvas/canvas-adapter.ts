@@ -6,7 +6,7 @@ import {
   type CanvasSubmitResult
 } from "@tk/contracts";
 import { createHash } from "node:crypto";
-import { createSafeImageDownloader } from "../security/safe-image-download.js";
+import { assertPublicHttpUrl, createSafeImageDownloader, type ResolveHost } from "../security/safe-image-download.js";
 
 export interface CanvasAdapterConfig {
   readonly baseUrl: string;
@@ -17,6 +17,7 @@ export interface CanvasAdapterConfig {
   readonly fetchImpl?: typeof fetch;
   readonly now?: () => string;
   readonly downloadImage?: (url: string) => Promise<{ bytes: Uint8Array; finalUrl: string }>;
+  readonly resolveHost?: ResolveHost;
 }
 
 type WorkflowMetadata = {
@@ -85,6 +86,11 @@ export function createCanvasAdapter(config: CanvasAdapterConfig): CanvasPort {
         throw externalFailure("needs_input", "canvas.invalid_image_count", "Canvas image count is outside the current workflow capacity");
       }
       if (new Set(imageUrls).size !== imageUrls.length || imageUrls.some((url) => !isPublicHttpUrl(url))) {
+        throw externalFailure("needs_input", "canvas.invalid_image_urls", "Canvas requires unique publicly accessible image URLs");
+      }
+      try {
+        await Promise.all(imageUrls.map((url) => assertPublicHttpUrl(url, config.resolveHost)));
+      } catch {
         throw externalFailure("needs_input", "canvas.invalid_image_urls", "Canvas requires unique publicly accessible image URLs");
       }
       const raw = await request("/api/automation/workflow-runs", {

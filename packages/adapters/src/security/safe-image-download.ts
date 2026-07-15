@@ -5,11 +5,12 @@ import { isIP } from "node:net";
 import { externalFailure } from "@tk/contracts";
 
 export type ResolvedAddress = Readonly<{ address: string; family: 4 | 6 }>;
+export type ResolveHost = (host: string) => Promise<ResolvedAddress[]>;
 type TransportResponse = Readonly<{ status: number; headers: Record<string, string>; body: Uint8Array }>;
 export type PinnedImageTransport = (url: URL, pinned: ResolvedAddress, timeoutMs: number, maxBytes: number) => Promise<TransportResponse>;
 
 export interface SafeImageDownloadOptions {
-  readonly resolveHost?: (host: string) => Promise<ResolvedAddress[]>;
+  readonly resolveHost?: ResolveHost;
   readonly transport?: PinnedImageTransport;
   readonly timeoutMs?: number;
   readonly maxBytes?: number;
@@ -26,12 +27,7 @@ export function createSafeImageDownloader(options: SafeImageDownloadOptions = {}
   return async (input: string): Promise<{ bytes: Uint8Array; finalUrl: string }> => {
     let current = parseHttpUrl(input);
     for (let redirects = 0; ; redirects += 1) {
-      const addresses = isIP(current.hostname)
-        ? [{ address: normalizeIpLiteral(current.hostname), family: isIP(normalizeIpLiteral(current.hostname)) as 4 | 6 }]
-        : await resolveHost(current.hostname);
-      if (addresses.length === 0 || addresses.some((entry) => !isPublicIp(entry.address))) {
-        throw externalFailure("fatal", "download.blocked_address", "Remote image address is not publicly routable");
-      }
+      const addresses = await resolveAndValidate(current, resolveHost);
       // The transport receives the validated address and pins socket DNS lookup to it. This
       // closes the validation-to-connect DNS rebinding window for every redirect hop.
       const result = await transport(current, addresses[0]!, timeoutMs, maxBytes);
@@ -54,6 +50,26 @@ export function createSafeImageDownloader(options: SafeImageDownloadOptions = {}
       return Object.freeze({ bytes: result.body, finalUrl: current.toString() });
     }
   };
+}
+
+/** Validates a URL host without downloading it. Used before handing URLs to remote workers. */
+export async function assertPublicHttpUrl(value: string, resolveHost: ResolveHost = resolvePublicAddresses): Promise<void> {
+  const url = parseHttpUrl(value);
+  await resolveAndValidate(url, resolveHost);
+}
+
+async function resolveAndValidate(url: URL, resolveHost: ResolveHost): Promise<ResolvedAddress[]> {
+  const host = normalizeIpLiteral(url.hostname).toLowerCase().replace(/\.$/, "");
+  if (host === "metadata.google.internal" || host === "metadata.azure.internal" || host === "instance-data") {
+    throw externalFailure("fatal", "download.blocked_address", "Remote image address is not publicly routable");
+  }
+  const addresses = isIP(host)
+    ? [{ address: host, family: isIP(host) as 4 | 6 }]
+    : await resolveHost(host);
+  if (addresses.length === 0 || addresses.some((entry) => !isPublicIp(entry.address))) {
+    throw externalFailure("fatal", "download.blocked_address", "Remote image address is not publicly routable");
+  }
+  return addresses;
 }
 
 async function resolvePublicAddresses(host: string): Promise<ResolvedAddress[]> {
