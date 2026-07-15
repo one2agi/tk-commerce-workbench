@@ -12,7 +12,7 @@ import {
   type ProductPoolItem,
   type WorkbenchState
 } from "./product-workbench.state";
-import { productId, sourceItemId } from "@tk/contracts/ids";
+import { miaoshouDetailId, productId, sourceItemId } from "@tk/contracts/ids";
 
 const items: ProductPoolItem[] = [
   {
@@ -20,12 +20,13 @@ const items: ProductPoolItem[] = [
     sourceItemId: sourceItemId("s-1"),
     canonicalSourceTitle: "A",
     targetTitle: null,
-    canonicalSuccessDetailId: null,
+    canonicalSuccessDetailId: miaoshouDetailId("detail-1"),
     locale: "th-TH",
     currency: "CNY",
     priceWire: null,
-    imageCount: 0,
-    miaoshouSource: "queued" as ProductPoolItem["miaoshouSource"],
+    imageCount: 1,
+    usableCanvasOutputCount: 0,
+    miaoshouSource: "success",
     automation: "not_started",
     assetArchive: "pending",
     listing: "pending",
@@ -39,11 +40,12 @@ const items: ProductPoolItem[] = [
     sourceItemId: sourceItemId("s-2"),
     canonicalSourceTitle: "B",
     targetTitle: null,
-    canonicalSuccessDetailId: null,
+    canonicalSuccessDetailId: miaoshouDetailId("detail-2"),
     locale: "th-TH",
     currency: "CNY",
     priceWire: null,
-    imageCount: 0,
+    imageCount: 1,
+    usableCanvasOutputCount: 5,
     miaoshouSource: "success",
     automation: "running",
     assetArchive: "ready",
@@ -94,6 +96,20 @@ describe("workbench state machine", () => {
   it("only selects products whose automation has not started", () => {
     let s: WorkbenchState = createWorkbenchState(items);
     s = toggleSelection(s, "892408514999");
+    expect(s.selectedIds.size).toBe(0);
+    expect(s.batchButtonEnabled).toBe(false);
+  });
+
+  it.each([
+    ["source not started", { miaoshouSource: "not_started" as const }],
+    ["source pending", { miaoshouSource: "pending" as const }],
+    ["source failed", { miaoshouSource: "failed" as const }],
+    ["missing canonical detail", { canonicalSuccessDetailId: null }],
+    ["missing source images", { imageCount: 0 }]
+  ])("does not select a product when %s", (_label, override) => {
+    const blocked = { ...items[0]!, ...override };
+    const s = toggleSelection(createWorkbenchState([blocked]), String(blocked.productId));
+
     expect(s.selectedIds.size).toBe(0);
     expect(s.batchButtonEnabled).toBe(false);
   });

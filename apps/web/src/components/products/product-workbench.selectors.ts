@@ -42,12 +42,17 @@ export function productStage(item: ProductPoolItem): UiStageLabel {
     canvas: item.canvas,
     approval: item.approval,
     miaoshouEdit: item.miaoshouEdit,
-    hasUsableCanvasOutputs: item.imageCount > 0
+    hasUsableCanvasOutputs: item.usableCanvasOutputCount > 0
   }).label;
 }
 
 export function canStartAutomation(item: ProductPoolItem): boolean {
-  return item.automation === "not_started";
+  return (
+    item.automation === "not_started" &&
+    (item.miaoshouSource === "success" || item.miaoshouSource === "skipped_duplicate") &&
+    item.canonicalSuccessDetailId !== null &&
+    item.imageCount > 0
+  );
 }
 
 export function buildStageOverview(items: ReadonlyArray<ProductPoolItem>): StageOverview {

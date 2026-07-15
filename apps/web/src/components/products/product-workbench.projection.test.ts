@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   buildStageOverview,
   applyStageFilter,
+  productStage,
   type ProductPoolItem
 } from "./product-workbench.selectors";
 import { productId, sourceItemId } from "@tk/contracts/ids";
@@ -20,6 +21,7 @@ function item(
     currency: "CNY",
     priceWire: null,
     imageCount: 0,
+    usableCanvasOutputCount: 0,
     miaoshouSource: "success",
     automation: "not_started",
     assetArchive: "pending",
@@ -47,6 +49,7 @@ const items = [
     listing: "ready",
     canvas: "partial",
     imageCount: 3,
+    usableCanvasOutputCount: 1,
     warningCodes: ["canvas_partial"]
   }),
   item("attention", { automation: "needs_input" }),
@@ -82,5 +85,19 @@ describe("stage overview projection", () => {
       "partial-review"
     ]);
     expect(items.map((row) => JSON.stringify(row))).toEqual(before);
+  });
+
+  it("does not treat original product images as usable partial Canvas outputs", () => {
+    const partial = item("partial-with-originals-only", {
+      automation: "ready",
+      assetArchive: "ready",
+      listing: "ready",
+      canvas: "partial",
+      imageCount: 9,
+      usableCanvasOutputCount: 0
+    });
+
+    expect(productStage(partial)).toBe("needs_attention");
+    expect(productStage({ ...partial, usableCanvasOutputCount: 1 })).toBe("review");
   });
 });
