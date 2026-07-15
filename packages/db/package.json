@@ -10,8 +10,8 @@
     "typecheck": "tsc --noEmit",
     "test": "vitest run --config vitest.config.ts",
     "test:integration": "vitest run --config vitest.integration.config.ts",
-    "db:generate": "tsx src/migrations/generate.ts",
-    "db:migrate": "tsx src/migrations/run.ts"
+    "db:generate": "node --import tsx src/migrations/generate.ts",
+    "db:migrate": "node --import tsx src/migrations/run.ts"
   },
   "dependencies": {
     "@tk/contracts": "workspace:*",
