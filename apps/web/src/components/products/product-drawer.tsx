@@ -7,6 +7,7 @@ type Props = Readonly<{
   item: ProductPoolItemV1 | null;
   open: boolean;
   startButtonLabel: string;
+  startButtonEnabled: boolean;
   onClose: () => void;
   onStart: (productId: string) => void;
 }>;
@@ -15,6 +16,7 @@ export function ProductDrawer({
   item,
   open,
   startButtonLabel,
+  startButtonEnabled,
   onClose,
   onStart
 }: Props): ReactElement {
@@ -61,7 +63,7 @@ export function ProductDrawer({
           type="button"
           aria-label={`${startButtonLabel} ${productId}`}
           onClick={() => onStart(productId)}
-          disabled={item.automation !== "not_started" && item.automation !== "needs_input"}
+          disabled={!startButtonEnabled}
         >
           {startButtonLabel}
         </button>

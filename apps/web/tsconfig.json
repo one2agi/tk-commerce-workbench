@@ -7,7 +7,9 @@
     "plugins": [{ "name": "next" }],
     "paths": {
       "@tk/contracts": ["../../packages/contracts/src/index.ts"],
-      "@tk/contracts/*": ["../../packages/contracts/src/*"]
+      "@tk/contracts/*": ["../../packages/contracts/src/*"],
+      "@tk/domain": ["../../packages/domain/src/index.ts"],
+      "@tk/domain/*": ["../../packages/domain/src/*"]
     }
   },
   "include": ["next-env.d.ts", "src/**/*", ".next/types/**/*.ts"],

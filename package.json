@@ -8,9 +8,9 @@
   },
   "scripts": {
     "dev": "pnpm --parallel --filter @tk/web --filter @tk/worker dev",
-    "build": "pnpm -r --filter=!@tk/extension build",
-    "lint": "pnpm -r --filter=!@tk/extension lint",
-    "typecheck": "pnpm -r --filter=!@tk/extension typecheck",
+    "build": "pnpm -r build",
+    "lint": "eslint apps packages tests --max-warnings=0",
+    "typecheck": "pnpm -r typecheck",
     "test": "vitest run",
     "test:integration": "pnpm --filter @tk/db test:integration",
     "test:e2e": "playwright test",
@@ -28,6 +28,7 @@
     "jsdom": "29.1.1",
     "tsx": "4.23.1",
     "typescript": "5.9.3",
+    "typescript-eslint": "8.64.0",
     "vitest": "4.1.10"
   }
 }

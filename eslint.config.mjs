@@ -1,6 +1,6 @@
-// 极简 flat config。
-// Web 包内部使用 eslint-config-next 提供的 next lint 命令；本配置只为其它非 Web 工作空间提供兜底。
-export default [
+import tseslint from "typescript-eslint";
+
+export default tseslint.config(
   {
     ignores: [
       "**/dist/**",
@@ -12,14 +12,15 @@ export default [
       "**/data/**"
     ]
   },
+  ...tseslint.configs.recommended,
   {
     files: ["**/*.{ts,tsx}"],
-    languageOptions: {
-      ecmaVersion: 2022,
-      sourceType: "module"
-    },
     rules: {
-      "no-unused-vars": "off"
+      "@typescript-eslint/no-explicit-any": "off",
+      "@typescript-eslint/no-unused-vars": [
+        "error",
+        { "argsIgnorePattern": "^_", "varsIgnorePattern": "^_" }
+      ]
     }
   }
-];
+);

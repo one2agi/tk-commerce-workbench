@@ -80,15 +80,32 @@ describe("workbench state machine", () => {
 
   it("drawer close preserves stage filter, row selection and scroll position", () => {
     let s: WorkbenchState = createWorkbenchState(items);
-    s = setStage(s, "collection");
+    s = setStage(s, "pending");
     s = toggleSelection(s, "892408514788");
     s = recordScroll(s, 120);
     const beforeScroll = s.scrollTop;
     s = openDrawer(s, "892408514788");
     s = closeDrawer(s);
-    expect(s.activeStage).toBe("collection");
+    expect(s.activeStage).toBe("pending");
     expect(s.selectedIds.has("892408514788")).toBe(true);
     expect(s.scrollTop).toBe(beforeScroll);
+  });
+
+  it("only selects products whose automation has not started", () => {
+    let s: WorkbenchState = createWorkbenchState(items);
+    s = toggleSelection(s, "892408514999");
+    expect(s.selectedIds.size).toBe(0);
+    expect(s.batchButtonEnabled).toBe(false);
+  });
+
+  it("never offers start processing again for a needs-input product", () => {
+    const needsInput = {
+      ...items[0]!,
+      automation: "needs_input" as const
+    };
+    let s = createWorkbenchState([needsInput]);
+    s = openDrawer(s, String(needsInput.productId));
+    expect(s.drawerStartButtonEnabled).toBe(false);
   });
 
   it("single-row '开始处理' and batch '批量开始处理（N）' both go through the contract command path", () => {

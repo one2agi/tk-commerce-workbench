@@ -4,7 +4,11 @@
 // useReducer.
 
 import type { ProductPoolItemV1 } from "@tk/contracts/read-models";
-import type { StageKey } from "./product-workbench.selectors";
+import {
+  applyStageFilter,
+  canStartAutomation,
+  type StageKey
+} from "./product-workbench.selectors";
 
 export type ProductPoolItem = ProductPoolItemV1;
 
@@ -20,6 +24,7 @@ export type WorkbenchState = Readonly<{
   batchButtonLabel: string;
   batchButtonEnabled: boolean;
   drawerStartButtonLabel: string;
+  drawerStartButtonEnabled: boolean;
 }>;
 
 export function createWorkbenchState(items: ReadonlyArray<ProductPoolItem>): WorkbenchState {
@@ -41,8 +46,11 @@ type Internal = {
 };
 
 function derive(s: Internal): WorkbenchState {
-  const filtered = filterByStage(s.items, s.activeStage);
+  const filtered = applyStageFilter(s.items, s.activeStage);
   const count = s.selectedIds.size;
+  const drawerItem = s.drawerProductId
+    ? s.items.find((item) => String(item.productId) === s.drawerProductId)
+    : undefined;
   return {
     items: s.items,
     filtered,
@@ -52,24 +60,14 @@ function derive(s: Internal): WorkbenchState {
     scrollTop: s.scrollTop,
     batchButtonLabel: `批量开始处理（${count}）`,
     batchButtonEnabled: count > 0,
-    drawerStartButtonLabel: "开始处理"
+    drawerStartButtonLabel: "开始处理",
+    drawerStartButtonEnabled: drawerItem ? canStartAutomation(drawerItem) : false
   };
 }
 
-function filterByStage(items: ReadonlyArray<ProductPoolItem>, stage: StageKey): ReadonlyArray<ProductPoolItem> {
-  switch (stage) {
-    case "all":
-      return items;
-    case "collection":
-      return items.filter((i) => !["success", "skipped_duplicate"].includes(i.miaoshouSource));
-    case "listing":
-      return items.filter((i) => i.listing !== "ready");
-    case "miaoshouEdit":
-      return items.filter((i) => i.miaoshouEdit !== "succeeded");
-  }
-}
-
 export function toggleSelection(s: WorkbenchState, productId: string): WorkbenchState {
+  const item = s.items.find((candidate) => String(candidate.productId) === productId);
+  if (!item || !canStartAutomation(item)) return s;
   const next = new Set(s.selectedIds);
   if (next.has(productId)) next.delete(productId);
   else next.add(productId);

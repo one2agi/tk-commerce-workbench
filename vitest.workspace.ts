@@ -29,4 +29,3 @@ export default defineWorkspace([
   // 全局排除 Wave 1/2/3/4 工作树中的源码，避免在 Gate 合并关卡误扫描。
   exclude: [".worktrees/**", ".superpowers/**"]
 });
-

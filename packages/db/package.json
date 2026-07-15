@@ -5,13 +5,13 @@
   "type": "module",
   "main": "./src/index.ts",
   "scripts": {
-    "build": "echo skip",
-    "lint": "echo skip",
+    "build": "tsc --noEmit",
+    "lint": "eslint src --max-warnings=0",
     "typecheck": "tsc --noEmit",
-    "test": "vitest run",
-    "test:integration": "vitest run src/integration/repositories.integration.test.ts",
-    "db:generate": "echo drizzle placeholder",
-    "db:migrate": "echo drizzle placeholder"
+    "test": "vitest run --config vitest.config.ts",
+    "test:integration": "vitest run --config vitest.integration.config.ts",
+    "db:generate": "tsx src/migrations/generate.ts",
+    "db:migrate": "tsx src/migrations/run.ts"
   },
   "dependencies": {
     "@tk/contracts": "workspace:*",

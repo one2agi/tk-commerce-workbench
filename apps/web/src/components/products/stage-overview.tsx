@@ -1,7 +1,11 @@
 "use client";
 
 import type { ReactElement } from "react";
-import type { StageKey, StageOverview } from "./product-workbench.selectors";
+import {
+  STAGE_ORDER,
+  type StageKey,
+  type StageOverview
+} from "./product-workbench.selectors";
 
 type Props = Readonly<{
   overview: StageOverview;
@@ -10,10 +14,9 @@ type Props = Readonly<{
 }>;
 
 export function StageOverview({ overview, activeStage, onSelect }: Props): ReactElement {
-  const order: ReadonlyArray<StageKey> = ["all", "collection", "listing", "miaoshouEdit"];
   return (
     <section aria-label="阶段看板" className="tk-stage-overview">
-      {order.map((key) => {
+      {STAGE_ORDER.map((key) => {
         const card = overview[key];
         const pressed = activeStage === key;
         return (
