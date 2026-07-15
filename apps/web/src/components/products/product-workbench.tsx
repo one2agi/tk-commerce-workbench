@@ -8,6 +8,7 @@ import { ProductTable } from "./product-table";
 import { ProductDrawer } from "./product-drawer";
 import { AutomationProgress } from "./automation-progress";
 import {
+  buildAutomationProgress,
   buildStageOverview,
   type StageKey
 } from "./product-workbench.selectors";
@@ -97,6 +98,13 @@ export function ProductWorkbench({
     );
   }, [state.drawerProductId, initialItems]);
 
+  const progressItem = useMemo<ProductPoolItemV1 | null>(() => {
+    if (drawerItem) return drawerItem;
+    if (state.selectedIds.size !== 1) return null;
+    const selectedId = state.selectedIds.values().next().value as string | undefined;
+    return initialItems.find((item) => String(item.productId) === selectedId) ?? null;
+  }, [drawerItem, initialItems, state.selectedIds]);
+
   const startProducts = useCallback(async (productIds: ReadonlyArray<string>) => {
     dispatch({ type: "start-pending", productIds: [...productIds] });
     onStartAutomation?.(productIds);
@@ -164,14 +172,14 @@ export function ProductWorkbench({
         >
           {state.batchButtonLabel}
         </button>
-        <AutomationProgress
-          nodes={[
-            { key: "collect", label: "采集", state: "running" },
-            { key: "listing", label: "Listing", state: "pending" },
-            { key: "canvas", label: "Canvas", state: "pending" },
-            { key: "edit", label: "妙手编辑", state: "pending" }
-          ]}
-        />
+        {progressItem ? (
+          <AutomationProgress
+            productId={String(progressItem.productId)}
+            nodes={buildAutomationProgress(progressItem)}
+          />
+        ) : (
+          <span className="tk-automation-progress__empty">选择一个商品查看真实进度</span>
+        )}
       </footer>
     </section>
   );

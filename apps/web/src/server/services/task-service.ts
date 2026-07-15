@@ -16,7 +16,7 @@ type AuditInput = {
 
 export interface TaskActionUnitOfWork {
   execute<T>(command: (transaction: {
-    tasks: { act(taskId: string, action: TaskAction): Promise<boolean> };
+    tasks: { act(taskId: string, action: TaskAction, reason?: string): Promise<boolean> };
     audit: { append(input: AuditInput): Promise<string> };
   }) => Promise<T>): Promise<T>;
 }
@@ -45,7 +45,7 @@ export class TaskService {
   async list(): Promise<{ items: TaskCenterItemV1[] }> {
     const result = await this.database.query(
       `SELECT id, kind, status, attempt, max_attempts, next_attempt_at,
-              payload->>'pauseReason' AS pause_reason, owner, error,
+              pause_reason, owner, error,
               payload->>'revisionId' AS revision_id
        FROM jobs ORDER BY updated_at DESC, created_at DESC`
     );
@@ -65,16 +65,17 @@ export class TaskService {
     };
   }
 
-  async act(taskIdValue: string, action: TaskAction): Promise<boolean> {
+  async act(taskIdValue: string, action: TaskAction, reason?: string): Promise<boolean> {
     return this.actions.execute(async ({ tasks, audit }) => {
-      const changed = await tasks.act(taskIdValue, action);
+      const normalizedReason = reason?.trim() || undefined;
+      const changed = await tasks.act(taskIdValue, action, normalizedReason);
       if (!changed) return false;
       await audit.append({
         actorType: "operator",
         action: `task_${action}`,
         targetKind: "job",
         targetId: taskIdValue,
-        payload: {}
+        payload: normalizedReason ? { reason: normalizedReason } : {}
       });
       return true;
     });

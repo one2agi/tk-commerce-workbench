@@ -6,6 +6,11 @@ import {
 
 export type ProductPoolItem = ProductPoolItemV1;
 export type StageKey = "all" | UiStageLabel;
+export type AutomationProgressNode = Readonly<{
+  key: "collect" | "listing" | "canvas" | "edit";
+  label: string;
+  state: "pending" | "running" | "ready" | "failed";
+}>;
 
 export type StageCard = Readonly<{
   key: StageKey;
@@ -53,6 +58,43 @@ export function canStartAutomation(item: ProductPoolItem): boolean {
     item.canonicalSuccessDetailId !== null &&
     item.imageCount > 0
   );
+}
+
+export function buildAutomationProgress(item: ProductPoolItem): AutomationProgressNode[] {
+  const collect: AutomationProgressNode["state"] = item.miaoshouSource === "success" || item.miaoshouSource === "skipped_duplicate"
+    ? "ready"
+    : item.miaoshouSource === "submitted" || item.miaoshouSource === "pending"
+      ? "running"
+      : item.miaoshouSource === "failed"
+        ? "failed"
+        : "pending";
+  const listing: AutomationProgressNode["state"] = item.listing === "ready"
+    ? "ready"
+    : item.listing === "failed" || item.listing === "needs_input" || item.assetArchive === "failed"
+      ? "failed"
+      : item.listing === "generating" || item.assetArchive === "downloading"
+        ? "running"
+        : "pending";
+  const canvas: AutomationProgressNode["state"] = item.canvas === "succeeded" || item.canvas === "partial"
+    ? "ready"
+    : item.canvas === "running" || item.canvas === "queued"
+      ? "running"
+      : item.canvas === "failed"
+        ? "failed"
+        : "pending";
+  const edit: AutomationProgressNode["state"] = item.miaoshouEdit === "succeeded"
+    ? "ready"
+    : item.miaoshouEdit === "syncing"
+      ? "running"
+      : item.miaoshouEdit === "failed" || item.miaoshouEdit === "result_unknown"
+        ? "failed"
+        : "pending";
+  return [
+    { key: "collect", label: "采集", state: collect },
+    { key: "listing", label: "Listing", state: listing },
+    { key: "canvas", label: "Canvas", state: canvas },
+    { key: "edit", label: "妙手编辑", state: edit }
+  ];
 }
 
 export function buildStageOverview(items: ReadonlyArray<ProductPoolItem>): StageOverview {

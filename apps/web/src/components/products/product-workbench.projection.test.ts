@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   buildStageOverview,
+  buildAutomationProgress,
   applyStageFilter,
   productStage,
   type ProductPoolItem
@@ -100,5 +101,22 @@ describe("stage overview projection", () => {
 
     expect(productStage(partial)).toBe("needs_attention");
     expect(productStage({ ...partial, usableCanvasOutputCount: 1 })).toBe("review");
+  });
+
+  it("derives each progress node from the focused product's persisted aggregate states", () => {
+    const focused = item("focused", {
+      automation: "running",
+      assetArchive: "ready",
+      listing: "ready",
+      canvas: "partial",
+      miaoshouEdit: "result_unknown"
+    });
+
+    expect(buildAutomationProgress(focused)).toEqual([
+      { key: "collect", label: "采集", state: "ready" },
+      { key: "listing", label: "Listing", state: "ready" },
+      { key: "canvas", label: "Canvas", state: "ready" },
+      { key: "edit", label: "妙手编辑", state: "failed" }
+    ]);
   });
 });

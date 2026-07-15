@@ -1,12 +1,14 @@
 import { StartAutomationV1 } from "@tk/contracts/commands";
 
 import type { AutomationService } from "../../../../server/services/automation-service";
-import { rejectNonLoopback } from "../../../../server/auth/loopback";
+import { rejectNonLoopback, rejectUnsafeBrowserMutation } from "../../../../server/auth/loopback";
 
 export function createPostHandler(dependencies: { service: AutomationService }) {
   return async function post(request: Request): Promise<Response> {
     const rejected = rejectNonLoopback(request);
     if (rejected) return rejected;
+    const unsafeMutation = rejectUnsafeBrowserMutation(request);
+    if (unsafeMutation) return unsafeMutation;
     const parsed = StartAutomationV1.safeParse(await request.json().catch(() => null));
     if (!parsed.success) {
       return Response.json({ error: "invalid_request" }, { status: 400 });

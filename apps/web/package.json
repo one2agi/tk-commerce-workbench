@@ -4,7 +4,8 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "dev": "next dev --webpack",
+    "dev": "node scripts/run-next.mjs dev",
+    "start": "node scripts/run-next.mjs start",
     "build": "next build --webpack",
     "lint": "eslint src --max-warnings=0",
     "typecheck": "tsc --noEmit",

@@ -85,8 +85,11 @@ class PgTaskActions implements TaskActionUnitOfWork {
       await client.query("BEGIN");
       const value = await command({
         tasks: {
-          act: async (taskId, action) => {
-            const result = await client.query(taskActionSql(action), [taskId]);
+          act: async (taskId, action, reason) => {
+            const values = action === "pause"
+              ? [taskId, reason ?? "Paused by operator"]
+              : [taskId];
+            const result = await client.query(taskActionSql(action), values);
             return result.rowCount === 1;
           }
         },
@@ -121,18 +124,21 @@ function taskActionSql(action: TaskAction): string {
       // Never break a running worker's fenced lease from the Web process. A
       // queued task can be paused before it is claimed; running work must reach
       // a worker-owned safe point or expire through repository reconciliation.
-      return `UPDATE jobs SET status = 'paused', updated_at = now()
+      return `UPDATE jobs SET status = 'paused', pause_reason = $2, updated_at = now()
               WHERE id = $1 AND status = 'queued'`;
     case "resume":
-      return `UPDATE jobs SET status = 'queued', updated_at = now()
+      return `UPDATE jobs SET status = 'queued', pause_reason = NULL, updated_at = now()
               WHERE id = $1 AND status = 'paused'`;
     case "retry":
       return `UPDATE jobs SET status = 'queued', error = NULL, next_attempt_at = NULL,
-                updated_at = now()
-              WHERE id = $1 AND status = 'failed' AND attempt < max_attempts`;
+                pause_reason = NULL, updated_at = now()
+              WHERE id = $1 AND status IN ('failed', 'needs_input')
+                AND remote_task_id IS NULL
+                AND COALESCE(error->>'code', '') <> 'reconcile_required'
+                AND attempt < max_attempts`;
     case "cancel":
       return `UPDATE jobs SET status = 'failed', owner = NULL, lease_token = NULL,
-                lease_expires_at = NULL,
+                lease_expires_at = NULL, pause_reason = NULL,
                 error = '{"kind":"fatal","code":"cancelled","safeMessage":"Cancelled by operator"}'::jsonb,
                 updated_at = now()
               WHERE id = $1 AND status IN ('queued', 'paused')`;

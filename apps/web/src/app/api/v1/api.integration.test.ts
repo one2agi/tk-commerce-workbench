@@ -1,4 +1,7 @@
 import { describe, expect, it } from "vitest";
+import { execFileSync } from "node:child_process";
+import { readFileSync } from "node:fs";
+import { fileURLToPath } from "node:url";
 import pg from "pg";
 import { INITIAL_SQL } from "../../../../../../packages/db/src/migrations/0000_initial.js";
 
@@ -24,12 +27,14 @@ import { SettingsService } from "../../../server/services/settings-service";
 import { TaskService } from "../../../server/services/task-service";
 import { TemplateService } from "../../../server/services/template-service";
 import { createServerServices, loadRuntimeConfig } from "../../../server/composition";
+import { createHttpApiClient, dispatchStartAutomation } from "../../../lib/api-client";
 
 function jsonRequest(url: string, body: unknown, token = "extension-secret"): Request {
   return new Request(url, {
     method: "POST",
     headers: {
       authorization: `Bearer ${token}`,
+      origin: new URL(url).origin,
       "content-type": "application/json"
     },
     body: JSON.stringify(body)
@@ -70,6 +75,80 @@ class MemoryAutomationRuns implements AutomationRunRepositoryPort {
 }
 
 describe("v1 API integration", () => {
+  it("binds Next to loopback even when ALLOW_LAN permits non-loopback dependencies", () => {
+    const webRoot = fileURLToPath(new URL("../../../../", import.meta.url));
+    const manifest = JSON.parse(readFileSync(new URL("../../../../package.json", import.meta.url), "utf8")) as {
+      scripts: Record<string, string>;
+    };
+    expect(manifest.scripts.dev).toContain("scripts/run-next.mjs dev");
+    expect(manifest.scripts.start).toContain("scripts/run-next.mjs start");
+    const command = [fileURLToPath(new URL("../../../../scripts/run-next.mjs", import.meta.url)), "host"];
+    expect(execFileSync(process.execPath, command, { cwd: webRoot, env: { ...process.env, ALLOW_LAN: "false" }, encoding: "utf8" }).trim()).toBe("127.0.0.1");
+    expect(execFileSync(process.execPath, command, { cwd: webRoot, env: { ...process.env, ALLOW_LAN: "true" }, encoding: "utf8" }).trim()).toBe("127.0.0.1");
+    const argsCommand = [fileURLToPath(new URL("../../../../scripts/run-next.mjs", import.meta.url)), "args", "start"];
+    expect(JSON.parse(execFileSync(process.execPath, argsCommand, { cwd: webRoot, encoding: "utf8" }))).toEqual([
+      "start", "-H", "127.0.0.1"
+    ]);
+  });
+
+  it("rejects a Host-spoofed automation mutation without same-origin JSON proof", async () => {
+    const repository = new MemoryAutomationRuns();
+    const handler = createAutomationHandler({
+      service: new AutomationService({ processingVersion: async () => 1 }, repository)
+    });
+    const response = await handler(new Request("http://127.0.0.1/api/v1/automation-runs", {
+      method: "POST",
+      headers: { host: "127.0.0.1", "content-type": "application/json" },
+      body: JSON.stringify({ version: 1, revisionIds: ["rev-spoofed"] })
+    }));
+
+    expect(response.status).toBe(403);
+    expect(repository.calls).toHaveLength(0);
+  });
+
+  it("rejects a Host-spoofed task mutation without same-origin JSON proof", async () => {
+    let actionCalls = 0;
+    const taskService = new TaskService({ query: async () => ({ rows: [] }) }, {
+      execute: async (command) => command({
+        tasks: { act: async () => { actionCalls += 1; return true; } },
+        audit: { append: async () => "audit-spoofed" }
+      })
+    });
+    const response = await createTaskActionHandler({ service: taskService })(
+      new Request("http://127.0.0.1/api/v1/tasks/job-spoofed/actions", {
+        method: "POST",
+        headers: { host: "127.0.0.1", "content-type": "application/json" },
+        body: JSON.stringify({ action: "retry" })
+      }),
+      { params: Promise.resolve({ taskId: "job-spoofed" }) }
+    );
+
+    expect(response.status).toBe(403);
+    expect(actionCalls).toBe(0);
+  });
+
+  it("connects the ProductWorkbench HTTP client to the same-origin automation route without exposing a secret", async () => {
+    const repository = new MemoryAutomationRuns();
+    const route = createAutomationHandler({
+      service: new AutomationService({ processingVersion: async () => 1 }, repository)
+    });
+    let sentAuthorization: string | null = null;
+    const browserFetch = async (input: string | URL | Request, init?: RequestInit) => {
+      const headers = new Headers(init?.headers);
+      sentAuthorization = headers.get("authorization");
+      headers.set("origin", "http://127.0.0.1");
+      return route(new Request(new URL(String(input), "http://127.0.0.1"), { ...init, headers }));
+    };
+
+    const response = await dispatchStartAutomation(createHttpApiClient(browserFetch), {
+      revisionIds: ["revision-from-workbench"]
+    });
+
+    expect(response.runs[0]).toMatchObject({ revisionId: "revision-from-workbench", created: true });
+    expect(repository.calls).toEqual([{ revisionId: "revision-from-workbench", processingVersion: 1 }]);
+    expect(sentAuthorization).toBeNull();
+  });
+
   it("starts the Web read/control plane in live mode without constructing external adapters", () => {
     const network = {
       query: () => { throw new Error("database must stay lazy during composition"); },
@@ -408,16 +487,29 @@ describe.runIf(Boolean(pgTestUrl))("v1 API PostgreSQL integration", () => {
       await pool.query(
         `INSERT INTO jobs
           (id, kind, business_key, idempotency_key, payload, status, attempt,
-           max_attempts, owner, lease_token, lease_expires_at, error)
+           max_attempts, owner, lease_token, lease_expires_at, remote_task_id, error)
          VALUES
           ('job-running-canvas', 'canvas_generate', 'running-canvas', 'running-canvas', '{}',
-           'running', 1, 3, 'worker-1', 'lease-1', now() + interval '5 minutes', NULL),
+           'running', 1, 3, 'worker-1', 'lease-1', now() + interval '5 minutes', NULL, NULL),
           ('job-unknown-canvas', 'canvas_generate', 'unknown-canvas', 'unknown-canvas', '{}',
-           'needs_input', 1, 3, NULL, NULL, NULL,
-           '{"kind":"reconcile_required","code":"result_unknown","safeMessage":"Reconcile first"}')`
+           'needs_input', 1, 3, NULL, NULL, NULL, NULL,
+           '{"kind":"reconcile_required","code":"reconcile_required","safeMessage":"Result unknown; reconcile first"}'),
+          ('job-external-failed', 'canvas_generate', 'external-failed', 'external-failed', '{}',
+           'failed', 1, 3, NULL, NULL, NULL, 'remote-task-1',
+           '{"kind":"retryable","code":"remote_failed","safeMessage":"Remote failed"}'),
+          ('job-reconcile-failed', 'canvas_generate', 'reconcile-failed', 'reconcile-failed', '{}',
+           'failed', 1, 3, NULL, NULL, NULL, NULL,
+           '{"kind":"reconcile_required","code":"reconcile_required","safeMessage":"Reconcile first"}'),
+          ('job-queued-pause', 'asset_archive', 'queued-pause', 'queued-pause', '{}',
+           'queued', 0, 3, NULL, NULL, NULL, NULL, NULL)`
       );
       await expect(services.tasks.act("job-running-canvas", "pause")).resolves.toBe(false);
       await expect(services.tasks.act("job-unknown-canvas", "retry")).resolves.toBe(false);
+      await expect(services.tasks.act("job-external-failed", "retry")).resolves.toBe(false);
+      await expect(services.tasks.act("job-reconcile-failed", "retry")).resolves.toBe(false);
+      await expect(services.tasks.act("job-queued-pause", "pause", "Check image quality")).resolves.toBe(true);
+      const pausedTask = (await services.tasks.list()).items.find((item) => String(item.jobId) === "job-queued-pause");
+      expect(pausedTask).toMatchObject({ status: "paused", pauseReason: "Check image quality" });
       const protectedJobs = await pool.query<{
         id: string; status: string; owner: string | null; lease_token: string | null;
       }>(
@@ -432,7 +524,7 @@ describe.runIf(Boolean(pgTestUrl))("v1 API PostgreSQL integration", () => {
       const audits = await pool.query<{ payload: Record<string, unknown>; redacted: boolean }>(
         "SELECT payload, redacted FROM audit_events ORDER BY created_at"
       );
-      expect(audits.rows).toHaveLength(4);
+      expect(audits.rows).toHaveLength(5);
       expect(audits.rows.every((row) => row.redacted)).toBe(true);
       expect(JSON.stringify(audits.rows)).not.toContain("extension-secret");
     } finally {
