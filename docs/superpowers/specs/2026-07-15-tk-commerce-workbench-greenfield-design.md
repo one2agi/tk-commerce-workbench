@@ -1,0 +1,348 @@
+# TK Commerce Workbench Greenfield Design
+
+**Status:** Approved by product review on 2026-07-15
+
+## 1. Goal
+
+从零建设一个本地单用户的 TikTok Shop 商品处理工作台。系统从 1688 店铺预览列表中采集用户勾选的商品，自动下载素材、结构化商品与 SKU、生成目标语言 Listing、自动定价、选择图片并运行 Canvas `TK工作流`，最后仅在推送妙手 ERP 公共采集箱前要求一次人工确认。
+
+MVP 的终点是妙手 ERP 公共采集箱。系统不自动认领到 TikTok 采集箱，不自动发布到 TikTok Shop，也不接入 Shopee、Ozon 等其他平台。
+
+## 2. Greenfield Boundary
+
+项目目录与仓库名称为 `tk-commerce-workbench`。
+
+`one-click-publish`、`tk-autopilot` 和 `TKskill` 只用于理解现有业务、解析思路和外部 API，不复制其认证、数据库、发布链路或运行时结构。新项目必须拥有独立的依赖、数据库迁移、测试基线、配置和版本历史。
+
+MVP 为本地单用户，不提供注册、登录、角色或多租户。应用启动时确保数据库中存在一个固定本地操作员。浏览器扩展使用独立 Bearer Token 调用本机摄取 API。
+
+## 3. Product Scope
+
+### 3.1 Target Channel
+
+- 首发平台：TikTok Shop。
+- 首发站点：泰国。
+- 默认 locale：`th-TH`。
+- 默认币种：`THB`。
+- 默认重量单位：`kg`。
+- 默认尺寸单位：`cm`。
+
+语言不可写死。工作区可设置默认目标语言和翻译风格，单个商品可覆盖默认值。品牌、型号和专有词可按规则保留英文；1688 中文原文必须始终保留。
+
+### 3.2 Human Decision Boundary
+
+正常成功路径只有一个强制人工动作：在最终预览中点击“确认并推送妙手”。
+
+以下步骤默认自动执行：
+
+1. 扩展采集选中商品；
+2. 下载并归档原始素材；
+3. 标准化商品、SKU、属性和单位；
+4. 清洗标题并生成目标语言 Listing；
+5. 自动计算目标站点售价；
+6. 匹配生图模板和参考图；
+7. 自动过滤并排序 Canvas 输入图；
+8. 预检并运行 Canvas `TK工作流`；
+9. 下载并归档 Canvas 输出；
+10. 生成最终待确认预览。
+
+验证码、1688 登录失效、缺少关键成本、外部密钥缺失或不可恢复错误会暂停相应任务并要求用户处理，不得用猜测数据继续推送。
+
+## 4. Architecture
+
+采用 pnpm workspace 管理的模块化 TypeScript Monorepo，不引入 Turborepo 或微服务编排器。
+
+```text
+apps/web          Next.js 本地操作台与 HTTP API
+apps/worker       可恢复的后台任务执行器
+apps/extension    Manifest V3 1688 浏览器扩展
+packages/contracts 版本化采集与 API 合同
+packages/domain     商品、状态、定价、审批等纯领域逻辑
+packages/db         Drizzle schema、迁移和 repositories
+packages/adapters   Canvas、LLM、汇率、妙手和临时图片中转适配器
+packages/config     环境变量解析、默认值和脱敏配置视图
+```
+
+运行依赖：
+
+- Node.js 22 LTS；
+- pnpm 9；
+- Next.js App Router；
+- PostgreSQL 16；
+- Drizzle ORM 与显式版本迁移；
+- Vitest；
+- Playwright；
+- Docker Compose 仅负责本地 PostgreSQL 和测试依赖。
+
+Web 与 Worker 是不同进程，但共享领域、数据库和适配器包。网页请求只创建或查询任务，绝不在 HTTP 生命周期中执行长时间的批量下载、生图轮询或妙手同步。
+
+## 5. End-to-End Flow
+
+```text
+1688 店铺页
+  -> 扩展扫描商品卡片并生成预览
+  -> 用户勾选商品
+  -> 扩展限速采集详情
+  -> 本机摄取 API
+  -> PostgreSQL 商品修订 + 持久任务
+  -> Worker 下载素材到本地
+  -> Listing/价格/模板/选图自动处理
+  -> Canvas 临时上传 + TK工作流
+  -> Canvas 输出下载到本地
+  -> 最终预览
+  -> 用户确认一次
+  -> 妙手公共采集箱 create/update
+```
+
+扩展每个商品使用稳定的幂等键。摄取 API 对相同幂等键返回同一结果；同一来源商品的新采集批次创建新修订，不覆盖历史修订。
+
+## 6. 1688 Collection
+
+### 6.1 Store Preview
+
+扩展在 1688 店铺商品列表页扫描当前可见和按用户操作加载出的商品卡片，生成包含商品 ID、标题、价格摘要、缩略图和来源链接的预览列表。只有用户勾选的商品进入详情采集；MVP 不提供无确认的全店采集。
+
+### 6.2 Detail Capture
+
+详情采集尽可能提取：
+
+- 来源商品 ID、店铺身份、原始 URL 与规范 URL；
+- 中文标题、描述、可见属性；
+- 主图、商品图、详情图和 SKU 图；
+- SKU 维度、组合、阶梯价、MOQ 和可见库存；
+- 重量、长宽高及其原始单位；
+- 采集警告与原始证据片段。
+
+扩展按可配置的并发数、固定间隔和随机抖动工作。验证码或登录失效时暂停批次，用户处理后从检查点继续。单个商品失败不终止批次；成功、跳过和失败分别记录。
+
+扩展不得绕过登录、验证码或平台访问控制。
+
+## 7. Product Graph and Revisions
+
+“商品图谱”使用 PostgreSQL 的结构化关系模型，不使用图数据库。
+
+主要聚合：
+
+- `source_shops`：1688 店铺身份；
+- `products`：稳定的来源商品身份；
+- `product_revisions`：每次采集形成的只读原始快照；
+- `skus` 与 `sku_dimensions`：规格维度、组合、成本和库存；
+- `assets`：本地素材、角色、来源、哈希与可用状态；
+- `listing_drafts`：按站点与语言生成的可编辑工作副本；
+- `pricing_runs`：输入、汇率、费用、公式版本和输出；
+- `canvas_runs`：输入顺序、实时合同、远端任务和输出；
+- `approval_snapshots`：最终不可变确认快照；
+- `miaoshou_syncs`：写入、对账和远端商品映射；
+- `jobs` 与 `worker_instances`：可恢复任务及 Worker 心跳；
+- `audit_events`：脱敏操作记录。
+
+原始修订永远只读。修改 Listing、图片选择、模板、语言或定价会递增工作副本版本并使已有审批失效。妙手适配器只能读取有效的不可变审批快照。
+
+## 8. State Model
+
+状态必须分轴保存：
+
+- collection：`queued | running | paused | partial | complete | failed`；
+- asset archive：`pending | downloading | ready | partial | failed`；
+- listing：`pending | generating | needs_input | ready | failed`；
+- canvas：`not_started | queued | running | partial | succeeded | failed`；
+- approval：`unapproved | approved | invalidated`；
+- Miaoshou：`not_started | queued | syncing | result_unknown | succeeded | failed`。
+
+UI 可以组合展示一个用户友好阶段，但业务逻辑不得依赖单一总状态。
+
+## 9. Local Asset Storage
+
+本地文件系统是图片的永久事实来源。默认内容寻址路径：
+
+```text
+data/assets/<sha256[0:2]>/<sha256>.<normalized-extension>
+```
+
+每个素材保存 SHA-256、MIME、字节数、像素尺寸、本地相对路径、来源 URL、来源类型、业务角色、排序和生成溯源。相同内容只保存一份文件，多个业务记录可以引用同一内容。
+
+调用 Canvas 时，`AssetStagingAdapter` 通过 Canvas 已有 multipart 或 Base64 上传接口把本地文件临时上传，并返回本次任务可用的外部 URL 或远端文件标识。Canvas 输出完成后立即下载到本地并校验。
+
+妙手的图片字段要求 URL。同步前适配器为已批准的本地图片创建临时可访问 URL，执行可达性检查，随后立即提交。URL 失效时自动重新上传。S3、OSS 或 R2 是可选的未来 staging/storage adapter，不是 MVP 运行依赖。
+
+## 10. Listing Generation
+
+标题清洗和翻译使用可配置的 OpenAI-compatible provider：base URL、API key、model 和超时由本地设置管理。实现不得绑定单一厂商。
+
+确定性规则在模型调用前后执行：
+
+- 清除重复词、批发话术、联系方式和不可见字符；
+- 保留品牌、型号和配置的 allowlist；
+- 禁止生成原始证据中不存在的材质、认证、功效或参数；
+- 按目标站点的长度和禁词规则验证；
+- 模型失败时降级为规则清洗，并明确标记降级结果。
+
+每次生成保存 provider、model、prompt 版本、输入摘要和结构化输出，不保存明文 API key。
+
+## 11. Automated Pricing
+
+基础公式：
+
+```text
+target_price = round_rule(
+  ((source_cost_cny + domestic_shipping_cny + cross_border_cost_cny)
+    * cny_to_target_rate
+    + fixed_target_cost)
+  / (1 - platform_fee_rate - payment_fee_rate - target_profit_rate)
+)
+```
+
+工作区可配置成本项、平台佣金、支付手续费、利润率、最低利润、最低售价和尾数规则。单个商品可覆盖参数。
+
+汇率每天自动获取一次，成功值带来源和时间戳缓存。远端获取失败时使用最近一次成功值并显示过期提示；用户可手动覆盖。缺少重量、关键成本或有效汇率时，Listing 进入 `needs_input`，不得自动推送妙手。
+
+价格、重量和尺寸在数据库中使用明确单位；妙手 mapper 负责一次性转换，不允许在 UI、领域层和适配器中重复换算。
+
+## 12. Template Library and Automatic Image Selection
+
+模板库保存：名称、适用品类规则、参考图、提示词片段、目标语言、图片风格、启用状态和版本。
+
+系统按品类规则选择最高优先级模板；无法唯一匹配时使用工作区默认模板。参考图属于模板素材，可自动加入 Canvas 输入。
+
+自动选图依次考虑：
+
+1. 商品主图；
+2. 不同角度商品图；
+3. 材质、结构和功能细节；
+4. 差异明显的 SKU 图；
+5. 模板参考图。
+
+选择器使用像素尺寸、可下载性、感知哈希、清晰度、重复度和可配置视觉评分过滤低清、重复、水印、拼接和非商品图。
+
+每次运行前 `CanvasAdapter` 必须读取实时工作流元信息。当前目标为 Canvas `TK` 画布、`TK工作流` 子工作流；实时输入容量可变，当前观察值九个槽位不是固定合同。至少选择一张商品图，不超过实时容量，未用槽位保持空白，禁止用重复图补齐。
+
+正常期望五张生成图。少于五张但至少一张有效图记为 partial，并保留全部有效结果；零张有效图记为 failed。失败重试不得删除历史成功输出。
+
+## 13. Durable Automation
+
+任务队列基于 PostgreSQL 租约，不引入 Redis。每个 job 保存：类型、业务键、幂等键、payload snapshot、状态、attempt、最大尝试次数、next attempt、lease owner、lease expiry、last heartbeat、远端 task ID、错误分类和结果摘要。
+
+Worker 使用 `FOR UPDATE SKIP LOCKED` 认领任务，定期续租；进程重启后可回收过期租约。重试采用带抖动的指数退避。
+
+Canvas 生成和妙手写入具有费用或外部副作用：
+
+- 已存在成功幂等结果时直接复用；
+- 网络超时导致结果未知时进入 `result_unknown`；
+- `result_unknown` 必须先用远端任务 ID、来源商品 ID、item number 或审计键对账；
+- 未完成对账前不得直接再次创建。
+
+应用提供全局暂停、单批次暂停/继续、单任务取消和失败任务重跑。
+
+## 14. Approval and Miaoshou
+
+最终确认页展示：目标站点、语言、标题、描述摘要、售价计算明细、SKU 数、库存、重量、尺寸、最终图片、警告和妙手目标。
+
+点击“确认并推送妙手”时，服务端先在事务中创建不可变审批快照，再排队 Miaoshou sync job。快照至少包含：
+
+- source platform、source product ID、canonical URL；
+- locale、currency 和 channel；
+- title、description、attributes；
+- item number；
+- price、stock、weight、dimensions 及明确单位；
+- SKU 属性、价格、库存和图片关系；
+- 有序最终素材 ID；
+- product revision、listing version、pricing run 和 template version。
+
+Miaoshou MVP 只执行公共采集箱商品 create/update。`fetch_item` 来源链接采集仅作为人工可见的故障降级路径，不是正常流程。系统不调用认领或发布接口。
+
+## 15. User Interface
+
+### Product Pool
+
+展示来源、店铺、中文标题、目标标题、站点、价格、图片数量、自动化阶段、警告和最终确认状态，支持筛选与批量重跑非写入步骤。
+
+### Product Workspace
+
+对照原始中文数据与目标 Listing；展示 SKU、定价明细、原图、自动选图原因、模板参考图、Canvas 输出和最终图片顺序。允许修改工作副本、切换语言或模板并重新运行后续步骤。
+
+### Task Center
+
+展示店铺采集、素材、Listing、Canvas 和妙手任务，包含尝试次数、下次重试、暂停原因和恢复操作。
+
+### Template Library
+
+管理品类规则、参考图、提示词、语言、风格、版本和默认模板。
+
+### Settings
+
+管理扩展 Token、语言、翻译 provider、定价、汇率、Canvas、妙手、本地素材目录、并发、速率和重试策略。密钥只显示是否已配置，不回显明文。
+
+## 16. Error Handling
+
+- 采集缺少来源 ID 或任何可用商品图：invalid，不进入自动生图。
+- 采集缺少标题、价格、SKU 或部分属性：partial，进入处理但在 UI 保留明确 warning code。
+- 素材下载失败：保留来源 URL 和失败原因；至少一张可用商品图时允许继续。
+- LLM 不可用：规则降级或 `needs_input`，不得伪造事实。
+- Canvas 合同变化：预检失败并暂停，不发送不兼容请求。
+- Canvas 部分输出：保存有效输出，标记 partial，可人工重跑。
+- 妙手校验失败：展示字段级错误并回到工作副本；审批快照保留用于审计。
+- 妙手结果未知：先对账，不盲目重试创建。
+
+## 17. Security
+
+- API key、妙手 AppSecret 和扩展 Token 仅存环境变量或本地加密 secrets 文件；数据库只保存引用和配置状态。
+- 扩展 Token 保存为 SHA-256 digest，比较使用常量时间算法。
+- 本地 API 默认仅监听 loopback；如用户显式开放局域网，必须配置允许来源。
+- 服务端下载外部 URL 时仅允许 `http/https`，跟随有限次重定向，并阻止 loopback、private、link-local 和云元数据地址，防止 SSRF。
+- 日志和审计必须脱敏 headers、tokens、signed body 和 credentials。
+- Canvas 自动生图提供每日运行上限和全局暂停开关，避免异常循环产生费用。
+
+## 18. Testing and Acceptance
+
+### Test Layers
+
+- Domain tests：URL 规范化、幂等、修订、状态、价格、单位、选图、审批失效。
+- Adapter contract tests：Canvas、LLM、汇率、临时图片 staging 和妙手固定 fixtures。
+- Integration tests：真实 PostgreSQL、迁移、repository、租约、恢复和本地素材。
+- Extension tests：店铺预览解析、勾选、检查点、详情合同和暂停恢复。
+- Playwright E2E：从模拟扩展提交到 Mock 妙手接收唯一审批商品。
+
+### MVP Acceptance
+
+1. 全新机器按文档可启动 Web、Worker、PostgreSQL 和扩展开发包；
+2. 1688 店铺预览中只有勾选商品被采集；
+3. 同一摄取请求不会创建重复商品或重复下游任务；
+4. 原始中文数据和下载到本地的素材不会被重跑覆盖；
+5. 自动生成可配置语言 Listing，并保存模型或规则降级证据；
+6. 泰国站价格使用可审计公式与汇率，缺少关键输入时不会推送；
+7. Canvas 读取实时容量，不重复补图，输出立即下载到本地；
+8. Worker 中断后恢复，不重复产生 Canvas 或妙手外部副作用；
+9. 修改工作副本会使旧审批失效；
+10. 一次最终确认后，Mock 或沙箱妙手只收到一份公共采集箱商品；
+11. UI 和 API 不存在自动认领或自动发布 TikTok Shop 的路径；
+12. 全仓测试、类型检查、lint 和构建从初始提交起保持通过。
+
+## 19. Non-Goals
+
+- 多用户、注册登录、角色权限和云端 SaaS；
+- 无选择的全店自动采集；
+- 绕过 1688 登录、验证码或风控；
+- 图数据库；
+- Redis、Kafka 或 Kubernetes；
+- 依赖 S3、OSS、R2 才能运行；
+- 自动认领到 TikTok 采集箱；
+- 自动发布到 TikTok Shop；
+- 其他电商平台；
+- 自动生成原始证据中不存在的商品事实。
+
+## 20. Confirmed Decisions
+
+- 全新 `tk-commerce-workbench` 仓库，不改造旧应用；
+- 模块化 TypeScript Monorepo；
+- 本地单用户，无账号登录；
+- 1688 店铺预览后只采集勾选商品；
+- 本地文件为永久素材来源，外部 URL 仅临时中转；
+- 除最终妙手推送外尽量全自动；
+- TikTok Shop 泰国站为首发站点；
+- 目标语言可自定义，默认 `th-TH`；
+- OpenAI-compatible 模型可替换，并有规则降级；
+- 定价公式自动计算，汇率自动更新且可手动覆盖；
+- 模板素材库支持品类匹配和参考图；
+- Canvas 输入容量动态读取，当前九槽不是固定合同；
+- 正常期望五张生成图，部分结果保留；
+- 妙手公共采集箱是 MVP 终点，只有一次最终人工确认。
