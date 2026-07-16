@@ -1,4 +1,5 @@
 import { externalFailure, type AssetStagingPort } from "@tk/contracts";
+import { isRetryableHttpStatus } from "../http-status.js";
 
 export interface ResolvedLocalAsset {
   readonly bytes: Uint8Array;
@@ -41,7 +42,7 @@ export function createAssetStagingAdapter(config: AssetStagingAdapterConfig): As
         } catch {
           throw externalFailure("retryable", "staging.upload_network", "Asset upload is temporarily unavailable");
         }
-        if (!response.ok) throw externalFailure(response.status >= 500 || response.status === 429 ? "retryable" : "fatal", `staging.http_${response.status}`, "Asset upload failed");
+        if (!response.ok) throw externalFailure(isRetryableHttpStatus(response.status) ? "retryable" : "fatal", `staging.http_${response.status}`, "Asset upload failed");
         let raw: unknown;
         try { raw = await response.json(); } catch { throw externalFailure("fatal", "staging.invalid_response", "Asset upload returned invalid data"); }
         const remoteUrl = extractUploadUrl(raw, config.uploadUrl);

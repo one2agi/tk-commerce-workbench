@@ -3,6 +3,17 @@ import { exchangeRateSnapshotId } from "@tk/contracts";
 import { createExchangeRateAdapter } from "./exchange-rate-adapter.js";
 
 describe("exchange rate adapter", () => {
+  it.each([408, 425])("classifies transient HTTP %i as retryable", async (status) => {
+    const adapter = createExchangeRateAdapter({
+      baseUrl: "https://rates.test",
+      fetchImpl: vi.fn(async () => new Response(null, { status }))
+    });
+    await expect(adapter.fetchSnapshot({ base: "CNY", target: "THB" })).rejects.toMatchObject({
+      kind: "retryable",
+      code: `exchange_rate.http_${status}`
+    });
+  });
+
   it("translates a provider CNY to THB snapshot and caches the latest observation", async () => {
     const fetchImpl = vi.fn(async () => new Response(JSON.stringify({ base: "CNY", rates: { THB: 4.82 }, timestamp: "2026-07-16T00:00:00.000Z" }), { status: 200 }));
     const adapter = createExchangeRateAdapter({ baseUrl: "https://rates.test", fetchImpl, now: () => "2026-07-16T00:00:00.000Z" });

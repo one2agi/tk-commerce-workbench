@@ -5,6 +5,7 @@
 // NEVER log or echo the secret into errors, fixtures, or console output.
 
 import { createHmac } from "node:crypto";
+import { isRetryableHttpStatus } from "../http-status.js";
 
 export const MIAOSHOU_DEFAULT_BASE_URL = "https://openapi-erp.91miaoshou.com";
 
@@ -93,7 +94,7 @@ export function createMiaoshouHttp(
       }
       if (!response.ok) {
         throw Object.freeze({
-          kind: response.status >= 500 || response.status === 429 ? "retryable" : "fatal",
+          kind: isRetryableHttpStatus(response.status) ? "retryable" : "fatal",
           code: `miaoshou.http_${response.status}`,
           safeMessage: "Miaoshou API request failed"
         });

@@ -1,4 +1,5 @@
 import { externalFailure, type LlmPort, type LlmStructuredOutputV1 } from "@tk/contracts";
+import { isRetryableHttpStatus } from "../http-status.js";
 
 export interface OpenAiCompatibleAdapterConfig {
   readonly baseUrl: string;
@@ -42,7 +43,7 @@ export function createOpenAiCompatibleAdapter(config: OpenAiCompatibleAdapterCon
       } finally {
         clearTimeout(timer);
       }
-      if (!response.ok) throw externalFailure(response.status >= 500 || response.status === 429 ? "retryable" : "fatal", `llm.http_${response.status}`, "Listing model request failed");
+      if (!response.ok) throw externalFailure(isRetryableHttpStatus(response.status) ? "retryable" : "fatal", `llm.http_${response.status}`, "Listing model request failed");
       let raw: unknown;
       try {
         raw = await response.json();

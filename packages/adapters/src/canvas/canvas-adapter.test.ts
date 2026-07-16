@@ -16,6 +16,45 @@ function response(body: unknown, status = 200): Response {
 const downloadedImage = { bytes: new Uint8Array([137, 80, 78, 71, 13, 10, 26, 10, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 2, 0, 0, 0, 3]), finalUrl: "https://canvas-n8n.ai2hook.com/assets/output/final.png" };
 
 describe("Canvas automation adapter", () => {
+  it.each([408, 425])("classifies transient HTTP %i as retryable", async (status) => {
+    const adapter = createCanvasAdapter({
+      baseUrl: "https://canvas.test",
+      canvasId: "canvas",
+      fetchImpl: vi.fn(async () => response({}, status))
+    });
+    await expect(adapter.readWorkflowCapacity("workflow_1")).rejects.toMatchObject({
+      kind: "retryable",
+      code: `canvas.http_${status}`
+    });
+  });
+
+  it.each([408, 425])("treats HTTP %i from submit as result unknown without issuing a second write", async (status) => {
+    const calls: Array<{ url: string; method: string }> = [];
+    const fetchImpl = vi.fn(async (url: string | URL | Request, init?: RequestInit) => {
+      calls.push({ url: String(url), method: init?.method ?? "GET" });
+      return String(url).endsWith("/workflows") ? response(metadata) : response({}, status);
+    });
+    const adapter = createCanvasAdapter({
+      baseUrl: "https://canvas.test",
+      canvasId: "canvas",
+      fetchImpl,
+      resolveHost: async () => [{ address: "93.184.216.34", family: 4 }]
+    });
+
+    await expect(adapter.submit({
+      workflowId: "workflow_1",
+      workflowVersion: 1,
+      imageUrls: ["https://assets.test/product.jpg"],
+      referenceImageUrls: [],
+      promptContext: { sourceLocale: "zh-CN", targetLocale: "th-TH", style: "neutral" },
+      idempotencyKey: idempotencyKey(`canvas:http-${status}`)
+    })).rejects.toMatchObject({
+      kind: "reconcile_required",
+      code: "canvas.submit_result_unknown"
+    });
+    expect(calls.filter((call) => call.method === "POST" && call.url.endsWith("/api/automation/workflow-runs"))).toHaveLength(1);
+  });
+
   it("reads live input capacity and expected generator count from workflow metadata", async () => {
     const fetchImpl = vi.fn(async () => response(metadata));
     const adapter = createCanvasAdapter({ baseUrl: "https://canvas-n8n.ai2hook.com", canvasId: "0f91cb2d8f2846c091829af30ea2d18d", fetchImpl });

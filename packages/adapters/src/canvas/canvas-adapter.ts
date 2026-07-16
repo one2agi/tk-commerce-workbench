@@ -1,11 +1,13 @@
 import {
   externalFailure,
+  reconcileRequiredFailure,
   type CanvasFetchOutputsResult,
   type CanvasPort,
   type CanvasReadCapacityResult,
   type CanvasSubmitResult
 } from "@tk/contracts";
 import { createHash } from "node:crypto";
+import { isRetryableHttpStatus } from "../http-status.js";
 import { assertPublicHttpUrl, createSafeImageDownloader, type ResolveHost } from "../security/safe-image-download.js";
 
 export interface CanvasAdapterConfig {
@@ -48,7 +50,7 @@ export function createCanvasAdapter(config: CanvasAdapterConfig): CanvasPort {
     try {
       const response = await fetchImpl(`${baseUrl}${path}`, { ...init, headers, signal: controller.signal });
       if (!response.ok) {
-        throw externalFailure(response.status >= 500 || response.status === 429 ? "retryable" : "fatal", `canvas.http_${response.status}`, "Canvas request failed");
+        throw externalFailure(isRetryableHttpStatus(response.status) ? "retryable" : "fatal", `canvas.http_${response.status}`, "Canvas request failed");
       }
       return await response.json();
     } catch (error) {
@@ -93,20 +95,28 @@ export function createCanvasAdapter(config: CanvasAdapterConfig): CanvasPort {
       } catch {
         throw externalFailure("needs_input", "canvas.invalid_image_urls", "Canvas requires unique publicly accessible image URLs");
       }
-      const raw = await request("/api/automation/workflow-runs", {
-        method: "POST",
-        headers: { "content-type": "application/json", "idempotency-key": String(input.idempotencyKey) },
-        body: JSON.stringify({
-          workflow: { prompt_context: { source_locale: input.promptContext.sourceLocale, target_locale: input.promptContext.targetLocale, style: input.promptContext.style } },
-          canvas_id: config.canvasId,
-          canvas_workflow_id: observed.workflowId,
-          canvas_workflow_name: config.workflowName ?? "",
-          image_urls: imageUrls,
-          callback_url: ""
-        })
-      }) as { task_id?: string; taskId?: string; id?: string };
+      let raw: { task_id?: string; taskId?: string; id?: string };
+      try {
+        raw = await request("/api/automation/workflow-runs", {
+          method: "POST",
+          headers: { "content-type": "application/json", "idempotency-key": String(input.idempotencyKey) },
+          body: JSON.stringify({
+            workflow: { prompt_context: { source_locale: input.promptContext.sourceLocale, target_locale: input.promptContext.targetLocale, style: input.promptContext.style } },
+            canvas_id: config.canvasId,
+            canvas_workflow_id: observed.workflowId,
+            canvas_workflow_name: config.workflowName ?? "",
+            image_urls: imageUrls,
+            callback_url: ""
+          })
+        }) as typeof raw;
+      } catch (error) {
+        if (isExternalFailure(error) && error.kind === "retryable") {
+          throw reconcileRequiredFailure("canvas.submit_result_unknown", "Canvas submission result is unknown and must be reconciled");
+        }
+        throw error;
+      }
       const remoteTaskId = raw.task_id ?? raw.taskId ?? raw.id;
-      if (!remoteTaskId) throw externalFailure("retryable", "canvas.missing_task_id", "Canvas did not return a task identifier");
+      if (!remoteTaskId) throw reconcileRequiredFailure("canvas.submit_result_unknown", "Canvas submission result is unknown and must be reconciled");
       return Object.freeze({ remoteTaskId, submittedAt: config.now?.() ?? new Date().toISOString() });
     },
 
