@@ -232,15 +232,39 @@ export class JobRepository {
     remoteTaskId: string,
     error: Record<string, unknown>
   ): Promise<boolean> {
-    const result = await this.pool.query(
-      `UPDATE ${schema.jobs}
-       SET status = 'needs_input', remote_task_id = $5, error = $6::jsonb,
-           owner = NULL, lease_token = NULL, lease_expires_at = NULL, updated_at = now()
-       WHERE id = $1 AND status = 'running' AND owner = $2 AND lease_token = $3
-         AND lease_expires_at > $4::timestamptz`,
-      [jobId, owner, leaseToken, now, remoteTaskId, JSON.stringify(error)]
-    );
-    return result.rowCount === 1;
+    const client = await this.pool.connect();
+    try {
+      await client.query("BEGIN");
+      const result = await client.query(
+        `UPDATE ${schema.jobs}
+         SET status = 'needs_input', remote_task_id = $5, error = $6::jsonb,
+             owner = NULL, lease_token = NULL, lease_expires_at = NULL, updated_at = now()
+         WHERE id = $1 AND status = 'running' AND owner = $2 AND lease_token = $3
+           AND lease_expires_at > $4::timestamptz
+         RETURNING payload`,
+        [jobId, owner, leaseToken, now, remoteTaskId, JSON.stringify(error)]
+      );
+      if ((result.rowCount ?? 0) === 0) {
+        await client.query("ROLLBACK");
+        return false;
+      }
+      await client.query(
+        `UPDATE ${schema.miaoshouSyncs} sync
+         SET state = 'result_unknown', error = $2::jsonb, updated_at = now()
+         WHERE sync.approval_snapshot_id = (
+           SELECT payload->>'approvalSnapshotId' FROM ${schema.jobs} WHERE id = $1
+         )
+           AND sync.state IN ('queued', 'syncing', 'result_unknown')`,
+        [jobId, JSON.stringify(error)]
+      );
+      await client.query("COMMIT");
+      return true;
+    } catch (caught) {
+      await client.query("ROLLBACK").catch(() => undefined);
+      throw caught;
+    } finally {
+      client.release();
+    }
   }
 
   async persistRemoteTask(

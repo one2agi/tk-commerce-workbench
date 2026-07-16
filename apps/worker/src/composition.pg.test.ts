@@ -5,6 +5,7 @@ import { join } from "node:path";
 import { createFakePorts } from "@tk/contracts/testing";
 import {
   AuditRepository,
+  ApprovalRepository,
   CanvasQuotaRepository,
   ContentAddressedStore,
   ExchangeRateRepository,
@@ -16,7 +17,8 @@ import {
   type TestDbHandle
 } from "@tk/db";
 import { buildWorkerRuntime } from "./main.js";
-import { adaptLeasedJobRepository } from "./runtime/worker-loop.js";
+import { createMiaoshouEditHandler } from "./handlers/miaoshou-edit.js";
+import { adaptLeasedJobRepository, runWorkerLoop } from "./runtime/worker-loop.js";
 
 let handle: TestDbHandle;
 const assetRoots: string[] = [];
@@ -107,7 +109,9 @@ describe("real PostgreSQL worker composition", () => {
       })) },
       quota,
       audit,
-      now: () => new Date("2026-07-16T00:00:00Z"),
+      // Repository fences compare against database now(); use wall-clock time so this
+      // integration remains valid after the original authoring date.
+      now: () => new Date(),
       maxCanvasRunsPerDay: 10,
       adapterLimits: {
         miaoshou: { concurrency: 1, minIntervalMs: 0 }, llm: { concurrency: 1, minIntervalMs: 0 }, exchangeRate: { concurrency: 1, minIntervalMs: 0 },
@@ -217,5 +221,110 @@ describe("real PostgreSQL worker composition", () => {
     expect(ports.llm.calls).toHaveLength(llmCallsBeforeRestart);
     const paidJob = await handle.pool.query("SELECT status, error FROM jobs WHERE id = $1", [paidJobId]);
     expect(paidJob.rows[0]).toMatchObject({ status: "needs_input", error: { code: "reconcile_required" } });
+  });
+
+  it("recovers a crash after Miaoshou acceptance through JobRepository marker and reconciliation only", async () => {
+    const suffix = Date.now().toString(36);
+    const operatorId = `operator-edit-${suffix}`;
+    const productId = `product-edit-${suffix}`;
+    const revisionId = `revision-edit-${suffix}`;
+    const approvalSnapshotId = `approval-edit-${suffix}`;
+    await handle.pool.query(
+      `INSERT INTO local_operators (id, handle, display_name) VALUES ($1, $2, 'Edit Recovery')`,
+      [operatorId, `edit-recovery-${suffix}`]
+    );
+    await handle.pool.query(
+      `INSERT INTO products
+       (id, operator_id, source_url, source_item_id, canonical_success_detail_id,
+        state_automation, state_approval, state_miaoshou_edit)
+       VALUES ($1, $2, $3, 'source-edit', 'canonical-edit', 'ready', 'approved', 'queued')`,
+      [productId, operatorId, `https://detail.1688.com/offer/${suffix}.html`]
+    );
+    await handle.pool.query(
+      `INSERT INTO product_revisions (id, product_id, draft_version, source_payload, working_draft)
+       VALUES ($1, $2, 1, '{}'::jsonb, '{}'::jsonb)`,
+      [revisionId, productId]
+    );
+    await handle.pool.query(
+      `INSERT INTO approval_snapshots
+       (id, product_id, revision_id, draft_version, listing_run_id, pricing_run_id,
+        template_version, ordered_final_asset_ids, source_platform, source_canonical_url,
+        source_item_id, canonical_success_detail_id, locale, currency, title, description,
+        attributes, price_minor, price_currency, stock, weight_kg, skus, state)
+       VALUES ($1, $2, $3, 1, 'listing-edit', 'pricing-edit', 1, '["asset-edit"]'::jsonb,
+               '1688', $4, 'source-edit', 'canonical-edit', 'th-TH', 'THB', 'title',
+               'description', '[]'::jsonb, '25900', 'THB', 1, '0.3', '[]'::jsonb, 'approved')`,
+      [approvalSnapshotId, productId, revisionId, `https://detail.1688.com/offer/${suffix}.html`]
+    );
+    await handle.pool.query(
+      `INSERT INTO miaoshou_syncs (id, approval_snapshot_id, state)
+       VALUES ($1, $2, 'queued')`,
+      [`sync-edit-${suffix}`, approvalSnapshotId]
+    );
+
+    const jobs = new JobRepository(handle.pool);
+    const approvals = new ApprovalRepository(handle.pool);
+    const jobId = await jobs.enqueue({
+      kind: "miaoshou_edit",
+      businessKey: `miaoshou-edit:${approvalSnapshotId}`,
+      payload: { version: 1, approvalSnapshotId, productId, canonicalSuccessDetailId: "canonical-edit" }
+    });
+    const ports = createFakePorts();
+    ports.miaoshouEdit.responses.push({ kind: "succeeded", remoteDetailId: "canonical-edit" });
+    let crashAfterRemoteAcceptance = true;
+    const repository = {
+      loadSnapshot: (id: string) => approvals.loadSnapshot(id),
+      saveSucceeded: async (...args: Parameters<ApprovalRepository["saveSucceeded"]>) => {
+        if (crashAfterRemoteAcceptance) {
+          crashAfterRemoteAcceptance = false;
+          throw new Error("simulated database crash after remote acceptance");
+        }
+        return approvals.saveSucceeded(...args);
+      },
+      saveValidationFailure: (...args: Parameters<ApprovalRepository["saveValidationFailure"]>) => approvals.saveValidationFailure(...args),
+      saveResultUnknown: (...args: Parameters<ApprovalRepository["saveResultUnknown"]>) => approvals.saveResultUnknown(...args),
+      saveReconciled: (...args: Parameters<ApprovalRepository["saveReconciled"]>) => approvals.saveReconciled(...args)
+    };
+    const handler = createMiaoshouEditHandler({
+      edit: ports.miaoshouEdit,
+      staging: ports.assetStaging,
+      repository,
+      reachability: { assertReachable: async () => undefined },
+      audit: { append: async () => undefined }
+    });
+    const leasedJobs = adaptLeasedJobRepository(jobs);
+
+    await runWorkerLoop({
+      jobs: leasedJobs,
+      handlers: { miaoshou_edit: handler },
+      clock: { now: () => new Date() },
+      workerId: "edit-worker-before-crash",
+      leaseMs: 30_000,
+      maxJobs: 1
+    });
+    const unknown = await handle.pool.query("SELECT status, remote_task_id, error FROM jobs WHERE id = $1", [jobId]);
+    expect(unknown.rows[0]).toMatchObject({
+      status: "needs_input",
+      remote_task_id: "canonical:canonical-edit",
+      error: { code: "reconcile_required" }
+    });
+
+    await runWorkerLoop({
+      jobs: leasedJobs,
+      handlers: { miaoshou_edit: handler },
+      clock: { now: () => new Date() },
+      workerId: "edit-worker-after-restart",
+      leaseMs: 30_000,
+      maxJobs: 1
+    });
+    expect(ports.miaoshouEdit.calls.filter((call) => call.method === "applyEdit")).toHaveLength(1);
+    expect(ports.miaoshouEdit.calls.filter((call) => call.method === "reconcileByCanonicalDetailId")).toHaveLength(1);
+    const recovered = await handle.pool.query(
+      `SELECT job.status, sync.state
+       FROM jobs job JOIN miaoshou_syncs sync ON sync.approval_snapshot_id = $2
+       WHERE job.id = $1`,
+      [jobId, approvalSnapshotId]
+    );
+    expect(recovered.rows[0]).toEqual({ status: "succeeded", state: "succeeded" });
   });
 });
