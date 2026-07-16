@@ -1,6 +1,6 @@
 "use client";
 
-import type { ReactElement } from "react";
+import { useLayoutEffect, useRef, type ReactElement } from "react";
 import type { ProductPoolItemV1 } from "@tk/contracts/read-models";
 
 type Props = Readonly<{
@@ -20,6 +20,39 @@ export function ProductDrawer({
   onClose,
   onStart
 }: Props): ReactElement {
+  const closeButtonRef = useRef<HTMLButtonElement>(null);
+  const openerRef = useRef<HTMLElement | null>(null);
+  const onCloseRef = useRef(onClose);
+  onCloseRef.current = onClose;
+  const activeProductId = open && item ? String(item.productId) : null;
+  const isOpen = activeProductId !== null;
+
+  useLayoutEffect(() => {
+    if (!activeProductId) return;
+    const activeElement = document.activeElement;
+    if (activeElement instanceof HTMLElement && activeElement !== closeButtonRef.current) {
+      openerRef.current = activeElement;
+    }
+    closeButtonRef.current?.focus();
+  }, [activeProductId]);
+
+  useLayoutEffect(() => {
+    if (!isOpen) return;
+    const handleKeyDown = (event: globalThis.KeyboardEvent): void => {
+      if (event.key === "Escape") {
+        event.preventDefault();
+        onCloseRef.current();
+      }
+    };
+    document.addEventListener("keydown", handleKeyDown);
+    return () => {
+      document.removeEventListener("keydown", handleKeyDown);
+      const opener = openerRef.current;
+      openerRef.current = null;
+      if (opener?.isConnected) opener.focus();
+    };
+  }, [isOpen]);
+
   if (!open || !item) {
     return (
       <aside
@@ -40,7 +73,7 @@ export function ProductDrawer({
     >
       <header>
         <h2>{item.canonicalSourceTitle ?? productId}</h2>
-        <button type="button" aria-label="关闭详情" onClick={onClose}>
+        <button ref={closeButtonRef} type="button" aria-label="关闭详情" onClick={onClose}>
           关闭详情
         </button>
       </header>

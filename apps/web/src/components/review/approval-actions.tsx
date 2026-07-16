@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useRef, useState } from "react";
 import type { ConfirmMiaoshouEditV1, RerunDownstreamV1, UpdateProductOverridesV1 } from "@tk/contracts";
 import { BASIC_BCP47_PATTERN_SOURCE, isBasicBcp47 } from "../../lib/locale";
 
@@ -72,6 +72,8 @@ export function ApprovalActions(props: Readonly<{
   const [revisionId, setRevisionId] = useState(props.revisionId);
   const [approvalInvalidated, setApprovalInvalidated] = useState(false);
   const [status, setStatus] = useState("待确认");
+  const confirmInFlight = useRef(false);
+  const [confirmPending, setConfirmPending] = useState(false);
   const actions = props.actions ?? {
     ...defaultActions,
     rerun: (command: RerunDownstreamV1) => request(`/api/v1/products/${props.productId}/rerun`, "POST", command)
@@ -116,6 +118,9 @@ export function ApprovalActions(props: Readonly<{
   }
 
   async function confirm() {
+    if (confirmInFlight.current) return;
+    confirmInFlight.current = true;
+    setConfirmPending(true);
     setStatus("正在创建不可变审批快照…");
     try {
       await actions.confirm({
@@ -131,12 +136,15 @@ export function ApprovalActions(props: Readonly<{
       setStatus("已进入妙手同步队列");
     } catch {
       setStatus("确认失败，请刷新版本后重试");
+    } finally {
+      confirmInFlight.current = false;
+      setConfirmPending(false);
     }
   }
 
   return (
     <section aria-label="审核操作" className="tk-panel tk-review__actions">
-      <header><h2>审核与同步</h2><span>{approvalInvalidated ? "审批状态：已失效，需重新确认" : `审批状态：${status}`}</span></header>
+      <header><h2>审核与同步</h2><span role="status" aria-live="polite">{approvalInvalidated ? "审批状态：已失效，需重新确认" : `审批状态：${status}`}</span></header>
       <div className="tk-form-row">
         <label>目标语言
           <input
@@ -174,7 +182,7 @@ export function ApprovalActions(props: Readonly<{
           </select>
         </label>
         <button type="button" onClick={() => void rerun()}>开始局部重跑</button>
-        <button type="button" disabled={props.orderedFinalAssetIds.length === 0 || !props.listingRunId || !props.pricingRunId} onClick={() => void confirm()}>
+        <button type="button" disabled={confirmPending || props.orderedFinalAssetIds.length === 0 || !props.listingRunId || !props.pricingRunId} onClick={() => void confirm()}>
           确认并推送妙手
         </button>
       </div>
