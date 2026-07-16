@@ -12,6 +12,7 @@ type RecordedCall = {
 export interface MockMiaoshouServer {
   readonly baseUrl: string;
   readonly calls: readonly RecordedCall[];
+  count(pathSuffix: string): number;
   close(): Promise<void>;
 }
 
@@ -120,6 +121,21 @@ export async function startMockMiaoshouServer(): Promise<MockMiaoshouServer> {
         json(response, detailEnvelope());
         return;
       }
+      if (request.url.endsWith("/edit_common_collect_box_detail")) {
+        const requestedDetailId = String(
+          body.commonCollectBoxDetailId ?? body.detailId ?? ""
+        );
+        if (requestedDetailId !== CANONICAL_DETAIL_ID) {
+          json(response, { result: "fail", code: "detailNotFound" }, 404);
+          return;
+        }
+        json(response, {
+          result: "success",
+          code: "0",
+          data: { commonCollectBoxDetailId: CANONICAL_DETAIL_ID }
+        });
+        return;
+      }
       json(response, { error: "not_found" }, 404);
     } catch {
       json(response, { error: "invalid_request" }, 400);
@@ -136,6 +152,7 @@ export async function startMockMiaoshouServer(): Promise<MockMiaoshouServer> {
   return {
     baseUrl: `http://127.0.0.1:${address.port}`,
     calls,
+    count: (pathSuffix) => calls.filter((call) => call.path.endsWith(pathSuffix)).length,
     close: () => new Promise<void>((resolve, reject) => {
       server.close((error) => error ? reject(error) : resolve());
     })
