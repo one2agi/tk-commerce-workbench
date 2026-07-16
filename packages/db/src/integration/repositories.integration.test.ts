@@ -536,7 +536,6 @@ describe("integration: job repository claim semantics", () => {
       sourceTitle: "t",
       workingDraft: {}
     });
-
     // Sequential double-claim invariant (brief: "concurrent two-worker simulation if
     // feasible without timing flakiness, else by sequential double-claim"). Only one
     // queued job is available; the second claim must observe it as running and return null.
@@ -890,6 +889,20 @@ describe("integration: automation run repository", () => {
       sourceTitle: "t",
       workingDraft: {}
     });
+    await handle.pool.query(
+      `UPDATE product_revisions SET source_payload = $2::jsonb WHERE id = $1`,
+      [revId, JSON.stringify({
+        mainImages: [
+          { url: "https://cdn.example/main.jpg", width: 1200, height: 1200 },
+          { url: "https://cdn.example/shared.jpg" }
+        ],
+        detailImages: [
+          { url: "https://cdn.example/shared.jpg" },
+          { url: "https://cdn.example/detail.jpg" },
+          { url: "file:///not-remote.jpg" }
+        ]
+      })]
+    );
 
     const [first, second] = await Promise.all([
       automations.createOrReuseAndEnqueue({ revisionId: revId, processingVersion: 1 }),
@@ -909,7 +922,15 @@ describe("integration: automation run repository", () => {
     expect(runs.rowCount).toBe(1);
     expect(queued.rowCount).toBe(1);
     expect(queued.rows[0].kind).toBe("asset_archive");
-    expect(queued.rows[0].payload).toEqual({ version: 1, revisionId: revId, remoteUrls: [] });
+    expect(queued.rows[0].payload).toEqual({
+      version: 1,
+      revisionId: revId,
+      remoteUrls: [
+        "https://cdn.example/main.jpg",
+        "https://cdn.example/shared.jpg",
+        "https://cdn.example/detail.jpg"
+      ]
+    });
   });
 
   test("records every repeated human start against the reused run", async () => {
