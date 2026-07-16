@@ -90,7 +90,7 @@ async function startWebServer(input: {
   };
 }
 
-test("sample 1688 URL converges duplicate collection before any paid processing starts", async () => {
+test("sample 1688 URL converges duplicate collection and replays the same ingest request without extra downstream work", async () => {
   const previousTestDatabaseUrl = process.env.TEST_DATABASE_URL;
   const previousAdapterMode = process.env.EXTERNAL_ADAPTER_MODE;
   process.env.TEST_DATABASE_URL = E2E_TEST_DATABASE_URL;
@@ -128,7 +128,8 @@ test("sample 1688 URL converges duplicate collection before any paid processing 
       products: createGetHandler({ service: services.products })
     });
 
-    for (const idempotencyKey of ["collect-first", "collect-duplicate"]) {
+    const queuedJobIds = new Map<string, string[]>();
+    for (const idempotencyKey of ["collect-first", "collect-first", "collect-duplicate"]) {
       const response = await fetch(`${web.baseUrl}/api/v1/ingest-links`, {
         method: "POST",
         headers: {
@@ -142,8 +143,14 @@ test("sample 1688 URL converges duplicate collection before any paid processing 
         })
       });
       expect(response.status).toBe(202);
-      expect((await response.json()).jobs).toHaveLength(1);
+      const body = await response.json() as { jobs: Array<{ jobId: string }> };
+      expect(body.jobs).toHaveLength(1);
+      const jobId = body.jobs[0]?.jobId;
+      expect(jobId).toBeTruthy();
+      queuedJobIds.set(idempotencyKey, [...(queuedJobIds.get(idempotencyKey) ?? []), jobId!]);
     }
+    expect(queuedJobIds.get("collect-first")).toHaveLength(2);
+    expect(new Set(queuedJobIds.get("collect-first"))).toHaveProperty("size", 1);
 
     const application = createWorkerApplication({
       processKind: "e2e",
@@ -205,6 +212,7 @@ test("sample 1688 URL converges duplicate collection before any paid processing 
       assetStaging: 0
     });
     expect(miaoshou.calls).toHaveLength(6);
+    expect(Number((await database.pool.query("SELECT count(*) AS count FROM jobs")).rows[0]?.count)).toBe(2);
     expect(await database.pool.query("SELECT kind, status FROM jobs ORDER BY created_at")).toMatchObject({
       rows: [
         { kind: "miaoshou_collect", status: "succeeded" },
