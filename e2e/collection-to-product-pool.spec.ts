@@ -4,11 +4,9 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { expect, test } from "@playwright/test";
-import { createLiveMiaoshouSourceAdapter } from "@tk/adapters";
-import {
-  bootTestDb,
-  INITIAL_SQL
-} from "@tk/db";
+import { createLiveMiaoshouSourceAdapter } from "../packages/adapters/src/index.js";
+import { bootTestDb } from "../packages/db/src/integration/runner.js";
+import { INITIAL_SQL } from "../packages/db/src/migrations/0000_initial.js";
 
 import { createWorkerApplication, type ClosableDbPool } from "../apps/worker/src/entry.js";
 import { createPostHandler } from "../apps/web/src/app/api/v1/ingest-links/route.js";
