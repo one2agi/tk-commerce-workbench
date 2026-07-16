@@ -328,6 +328,11 @@ describe("integration: durable pipeline repository", () => {
     expect(generated.rows[0]).toMatchObject({ revision_id: revisionId, kind: "generated", local_path: "/data/assets/ge/generated-hash.jpg" });
     const canvas = await handle.pool.query<{ outputs: string[] }>("SELECT outputs FROM canvas_runs WHERE revision_id = $1", [revisionId]);
     expect(canvas.rows[0]?.outputs).toEqual([generated.rows[0]?.id]);
+    const draft = await handle.pool.query<{ working_draft: { finalAssetOrder?: string[] } }>(
+      "SELECT working_draft FROM product_revisions WHERE id = $1",
+      [revisionId]
+    );
+    expect(draft.rows[0]?.working_draft.finalAssetOrder).toEqual([generated.rows[0]?.id]);
   });
 
   test("loads source minor units without losing precision above Number.MAX_SAFE_INTEGER", async () => {

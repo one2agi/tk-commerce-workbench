@@ -330,12 +330,16 @@ describe("persisted ready-preview DAG nodes", () => {
       loadMatchInputs: vi.fn(async () => ({
         category: "unknown",
         defaultTemplateId: "default",
-        templates: [{ id: "default", enabled: true, rules: [] }]
+        templates: [{ id: "default", version: 7, enabled: true, rules: [] }]
       })),
       saveMatch: vi.fn(async () => true)
     };
     const result = await invoke(createTemplateMatchHandler({ repository }), job("template_match", { revisionId: "rev-1" }));
-    expect(repository.saveMatch).toHaveBeenCalledWith(expect.objectContaining({ templateId: "default", fallbackUsed: true }), execution.fence);
+    expect(repository.saveMatch).toHaveBeenCalledWith(expect.objectContaining({
+      templateId: "default",
+      templateVersion: 7,
+      fallbackUsed: true
+    }), execution.fence);
     expect(result.next[0]).toMatchObject({ kind: "image_select", businessKey: "rev-1:images" });
   });
 
