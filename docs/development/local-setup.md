@@ -43,7 +43,7 @@ bash scripts/verify-fresh-install.sh
 | 12 | PASS | `pnpm exec playwright test e2e/full-mocked-flow.spec.ts -g "勾选采集到当前版本审批" && pnpm --filter @tk/db exec vitest run --config vitest.integration.config.ts -t "transactionally invalidates"` |
 | 13 | PASS | `pnpm exec playwright test e2e/full-mocked-flow.spec.ts -g "勾选采集到当前版本审批"` |
 | 14 | PASS | `pnpm --filter @tk/web exec vitest run src/app/product-safety.test.tsx src/components/products/product-workbench.scan.test.ts` |
-| 15 | PASS | `pnpm lint && pnpm typecheck && pnpm test && pnpm test:integration && pnpm test:e2e && pnpm build` |
+| 15 | PASS | `pnpm lint && pnpm typecheck && pnpm build && pnpm test && pnpm test:integration && pnpm test:e2e` |
 | 16 | PASS | `pnpm exec playwright test e2e/browser-workbench.spec.ts && pnpm exec playwright test e2e/ui-context.spec.ts` |
 | 17 | PASS | `pnpm exec playwright test e2e/browser-workbench.spec.ts && pnpm --filter @tk/web exec vitest run src/components/products/product-workbench.projection.test.ts src/components/products/product-workbench.scan.test.ts` |
 
