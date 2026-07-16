@@ -1,4 +1,5 @@
 import { externalFailure, type ExchangeRatePort, type ExchangeRateSnapshotWire } from "@tk/contracts";
+import { isRetryableHttpStatus } from "../http-status.js";
 
 export interface ExchangeRateAdapterConfig {
   readonly baseUrl: string;
@@ -27,7 +28,7 @@ export function createExchangeRateAdapter(config: ExchangeRateAdapterConfig): Ex
       } finally {
         clearTimeout(timer);
       }
-      if (!response.ok) throw externalFailure(response.status >= 500 || response.status === 429 ? "retryable" : "fatal", `exchange_rate.http_${response.status}`, "Exchange-rate provider request failed");
+      if (!response.ok) throw externalFailure(isRetryableHttpStatus(response.status) ? "retryable" : "fatal", `exchange_rate.http_${response.status}`, "Exchange-rate provider request failed");
       let raw: { rates?: Record<string, unknown>; rate?: unknown; timestamp?: unknown; observedAt?: unknown };
       try { raw = await response.json() as typeof raw; } catch { throw externalFailure("fatal", "exchange_rate.invalid_response", "Exchange-rate provider returned invalid data"); }
       const rateValue = raw.rates?.[target] ?? raw.rate;

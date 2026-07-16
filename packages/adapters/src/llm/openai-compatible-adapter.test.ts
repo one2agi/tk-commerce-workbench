@@ -32,6 +32,19 @@ function groundedOutput(overrides: Record<string, unknown> = {}) {
 }
 
 describe("OpenAI-compatible listing adapter", () => {
+  it.each([408, 425])("classifies transient HTTP %i as retryable", async (status) => {
+    const adapter = createOpenAiCompatibleAdapter({
+      baseUrl: "https://llm.test/v1",
+      apiKey: "secret",
+      model: "model-1",
+      fetchImpl: vi.fn(async () => new Response(null, { status }))
+    });
+    await expect(adapter.generateListing(input)).rejects.toMatchObject({
+      kind: "retryable",
+      code: `llm.http_${status}`
+    });
+  });
+
   it("returns grounded structured listing output", async () => {
     const fetchImpl = vi.fn(async () => llmResponse(groundedOutput()));
     const adapter = createOpenAiCompatibleAdapter({ baseUrl: "https://llm.test/v1", apiKey: "secret", model: "model-1", fetchImpl });

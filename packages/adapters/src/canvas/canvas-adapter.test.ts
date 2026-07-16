@@ -16,6 +16,18 @@ function response(body: unknown, status = 200): Response {
 const downloadedImage = { bytes: new Uint8Array([137, 80, 78, 71, 13, 10, 26, 10, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 2, 0, 0, 0, 3]), finalUrl: "https://canvas-n8n.ai2hook.com/assets/output/final.png" };
 
 describe("Canvas automation adapter", () => {
+  it.each([408, 425])("classifies transient HTTP %i as retryable", async (status) => {
+    const adapter = createCanvasAdapter({
+      baseUrl: "https://canvas.test",
+      canvasId: "canvas",
+      fetchImpl: vi.fn(async () => response({}, status))
+    });
+    await expect(adapter.readWorkflowCapacity("workflow_1")).rejects.toMatchObject({
+      kind: "retryable",
+      code: `canvas.http_${status}`
+    });
+  });
+
   it("reads live input capacity and expected generator count from workflow metadata", async () => {
     const fetchImpl = vi.fn(async () => response(metadata));
     const adapter = createCanvasAdapter({ baseUrl: "https://canvas-n8n.ai2hook.com", canvasId: "0f91cb2d8f2846c091829af30ea2d18d", fetchImpl });

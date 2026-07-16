@@ -6,6 +6,7 @@ import {
   type CanvasSubmitResult
 } from "@tk/contracts";
 import { createHash } from "node:crypto";
+import { isRetryableHttpStatus } from "../http-status.js";
 import { assertPublicHttpUrl, createSafeImageDownloader, type ResolveHost } from "../security/safe-image-download.js";
 
 export interface CanvasAdapterConfig {
@@ -48,7 +49,7 @@ export function createCanvasAdapter(config: CanvasAdapterConfig): CanvasPort {
     try {
       const response = await fetchImpl(`${baseUrl}${path}`, { ...init, headers, signal: controller.signal });
       if (!response.ok) {
-        throw externalFailure(response.status >= 500 || response.status === 429 ? "retryable" : "fatal", `canvas.http_${response.status}`, "Canvas request failed");
+        throw externalFailure(isRetryableHttpStatus(response.status) ? "retryable" : "fatal", `canvas.http_${response.status}`, "Canvas request failed");
       }
       return await response.json();
     } catch (error) {

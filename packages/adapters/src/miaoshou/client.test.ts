@@ -3,6 +3,18 @@ import { describe, expect, it, vi } from "vitest";
 import { createMiaoshouClient, createMiaoshouHttp, MIAOSHOU_DEFAULT_BASE_URL } from "./client.js";
 
 describe("Miaoshou OpenAPI client", () => {
+  it.each([408, 425])("classifies transient HTTP %i as retryable", async (status) => {
+    const http = createMiaoshouHttp({
+      baseUrl: MIAOSHOU_DEFAULT_BASE_URL,
+      appKey: "test-key",
+      appSecret: "test-secret"
+    }, vi.fn(async () => new Response(null, { status })) as unknown as typeof fetch);
+    await expect(http.post("/open/v1/example", { value: 1 })).rejects.toMatchObject({
+      kind: "retryable",
+      code: `miaoshou.http_${status}`
+    });
+  });
+
   it("uses the verified ERP OpenAPI base URL", () => {
     expect(MIAOSHOU_DEFAULT_BASE_URL).toBe("https://openapi-erp.91miaoshou.com");
   });

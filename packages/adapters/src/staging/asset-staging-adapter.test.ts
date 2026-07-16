@@ -2,6 +2,22 @@ import { describe, expect, it, vi } from "vitest";
 import { createAssetStagingAdapter } from "./asset-staging-adapter.js";
 
 describe("asset staging adapter", () => {
+  it.each([408, 425])("classifies transient HTTP %i as retryable", async (status) => {
+    const adapter = createAssetStagingAdapter({
+      uploadUrl: "https://canvas.test/api/automation/upload",
+      resolveLocalAsset: vi.fn(async () => ({
+        bytes: new Uint8Array([1]),
+        fileName: "a.png",
+        contentType: "image/png" as const
+      })),
+      fetchImpl: vi.fn(async () => new Response(null, { status }))
+    });
+    await expect(adapter.stage({ localAssetIds: ["a"], purpose: "canvas" })).rejects.toMatchObject({
+      kind: "retryable",
+      code: `staging.http_${status}`
+    });
+  });
+
   it("preserves input order while uploading assets", async () => {
     const adapter = createAssetStagingAdapter({
       uploadUrl: "https://canvas.test/api/automation/upload",
