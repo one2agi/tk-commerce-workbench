@@ -11,12 +11,16 @@ export function TaskRecoveryActions({ taskId, status, hasRemoteTask }: {
   const retryAllowed = ["failed", "needs_input"].includes(status) && !hasRemoteTask;
 
   async function act(action: "pause" | "resume" | "cancel" | "retry") {
-    const response = await fetch(`/api/v1/tasks/${taskId}/actions`, {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ action })
-    });
-    setMessage(response.ok ? "操作已受理" : "当前状态不允许此操作");
+    try {
+      const response = await fetch(`/api/v1/tasks/${taskId}/actions`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ action })
+      });
+      setMessage(response.ok ? "操作已受理" : "当前状态不允许此操作");
+    } catch {
+      setMessage("网络异常，操作未提交，请重试");
+    }
   }
 
   return <div className="tk-task-actions">
@@ -25,6 +29,6 @@ export function TaskRecoveryActions({ taskId, status, hasRemoteTask }: {
     {retryAllowed && <button type="button" onClick={() => void act("retry")}>安全重试</button>}
     {["queued", "paused"].includes(status) && <button type="button" onClick={() => void act("cancel")}>取消</button>}
     {hasRemoteTask && <span>已存在远端任务，仅允许对账，不会重复提交</span>}
-    <output>{message}</output>
+    <output aria-live="polite">{message}</output>
   </div>;
 }

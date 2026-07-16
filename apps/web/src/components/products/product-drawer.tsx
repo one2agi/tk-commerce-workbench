@@ -1,6 +1,6 @@
 "use client";
 
-import type { ReactElement } from "react";
+import type { KeyboardEvent, ReactElement } from "react";
 import type { ProductPoolItemV1 } from "@tk/contracts/read-models";
 
 type Props = Readonly<{
@@ -20,6 +20,13 @@ export function ProductDrawer({
   onClose,
   onStart
 }: Props): ReactElement {
+  function handleKeyDown(event: KeyboardEvent<HTMLElement>): void {
+    if (event.key === "Escape") {
+      event.preventDefault();
+      onClose();
+    }
+  }
+
   if (!open || !item) {
     return (
       <aside
@@ -37,10 +44,11 @@ export function ProductDrawer({
       className="tk-product-drawer"
       role="dialog"
       aria-modal="false"
+      onKeyDown={handleKeyDown}
     >
       <header>
         <h2>{item.canonicalSourceTitle ?? productId}</h2>
-        <button type="button" aria-label="关闭详情" onClick={onClose}>
+        <button type="button" aria-label="关闭详情" autoFocus onClick={onClose}>
           关闭详情
         </button>
       </header>
