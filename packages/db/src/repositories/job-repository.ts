@@ -7,6 +7,12 @@ import { createHash } from "node:crypto";
 import { schema, type DbPool } from "../schema/index.js";
 import { appendAuditInTransaction, assertSafeAuditPayload, type TransactionAuditMetadata } from "./audit-repository.js";
 
+export interface ReconciliationIntent extends Readonly<Record<string, unknown>> {
+  readonly version: 1;
+  readonly operation: string;
+  readonly idempotencyKey: string;
+}
+
 function newId(prefix: string): string {
   const t = Date.now().toString(36);
   const r = Math.random().toString(36).slice(2, 10);
@@ -307,10 +313,31 @@ export class JobRepository {
     assert(remoteTaskId.length > 0, "remoteTaskId required");
     const result = await this.pool.query(
       `UPDATE ${schema.jobs}
-       SET remote_task_id = $5, updated_at = now()
+       SET remote_task_id = $5, payload = payload - 'reconciliationIntent', updated_at = now()
        WHERE id = $1 AND status = 'running' AND owner = $2 AND lease_token = $3
          AND lease_expires_at > $4::timestamptz`,
       [jobId, owner, leaseToken, now, remoteTaskId]
+    );
+    return result.rowCount === 1;
+  }
+
+  async persistReconciliationIntent(
+    jobId: string,
+    owner: string,
+    leaseToken: string,
+    now: Date,
+    intent: ReconciliationIntent
+  ): Promise<boolean> {
+    assert(intent.version === 1, "reconciliation intent version must be 1");
+    assert(intent.operation.length > 0, "reconciliation intent operation required");
+    assert(intent.idempotencyKey.length > 0, "reconciliation intent idempotencyKey required");
+    const result = await this.pool.query(
+      `UPDATE ${schema.jobs}
+       SET payload = jsonb_set(payload, '{reconciliationIntent}', $5::jsonb, true), updated_at = now()
+       WHERE id = $1 AND status = 'running' AND owner = $2 AND lease_token = $3
+         AND lease_expires_at > $4::timestamptz
+         AND (payload->'reconciliationIntent' IS NULL OR payload->'reconciliationIntent' = $5::jsonb)`,
+      [jobId, owner, leaseToken, now, JSON.stringify(intent)]
     );
     return result.rowCount === 1;
   }

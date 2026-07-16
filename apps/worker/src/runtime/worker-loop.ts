@@ -50,6 +50,12 @@ export interface WorkerJobRepository {
   ): Promise<boolean>;
   heartbeat(job: ClaimedWorkerJob, owner: string, now: Date, leaseMs: number): Promise<boolean>;
   persistRemoteTask(job: ClaimedWorkerJob, owner: string, now: Date, remoteTaskId: string): Promise<boolean>;
+  persistReconciliationIntent(
+    job: ClaimedWorkerJob,
+    owner: string,
+    now: Date,
+    intent: ReconciliationIntent
+  ): Promise<boolean>;
   enqueueCompensation(job: ClaimedWorkerJob, owner: string, now: Date, cleanup: EnqueueJob): Promise<boolean>;
 }
 
@@ -64,6 +70,13 @@ export interface LeasedJobRepository {
   retry(jobId: string, owner: string, leaseToken: string, now: Date, delayMs: number, error: Record<string, unknown>): Promise<boolean>;
   heartbeat(jobId: string, owner: string, leaseToken: string, now: Date, leaseMs: number): Promise<boolean>;
   persistRemoteTask(jobId: string, owner: string, leaseToken: string, now: Date, remoteTaskId: string): Promise<boolean>;
+  persistReconciliationIntent(
+    jobId: string,
+    owner: string,
+    leaseToken: string,
+    now: Date,
+    intent: ReconciliationIntent
+  ): Promise<boolean>;
   enqueueCompensation(jobId: string, owner: string, leaseToken: string, now: Date, cleanup: EnqueueJob): Promise<boolean>;
 }
 
@@ -79,6 +92,7 @@ export function adaptLeasedJobRepository(repository: LeasedJobRepository): Worke
     retry: (job, owner, now, delayMs, error) => repository.retry(job.jobId, owner, job.leaseToken, now, delayMs, error),
     heartbeat: (job, owner, now, leaseMs) => repository.heartbeat(job.jobId, owner, job.leaseToken, now, leaseMs),
     persistRemoteTask: (job, owner, now, remoteTaskId) => repository.persistRemoteTask(job.jobId, owner, job.leaseToken, now, remoteTaskId),
+    persistReconciliationIntent: (job, owner, now, intent) => repository.persistReconciliationIntent(job.jobId, owner, job.leaseToken, now, intent),
     enqueueCompensation: (job, owner, now, cleanup) => repository.enqueueCompensation(job.jobId, owner, job.leaseToken, now, cleanup)
   };
 }
@@ -93,10 +107,17 @@ export interface LeaseFence {
   leaseToken: string;
 }
 
+export interface ReconciliationIntent extends Readonly<Record<string, unknown>> {
+  readonly version: 1;
+  readonly operation: string;
+  readonly idempotencyKey: string;
+}
+
 export interface WorkerExecutionContext {
   readonly fence: LeaseFence;
   readonly signal: AbortSignal;
   assertLease(): void;
+  persistReconciliationIntent(intent: ReconciliationIntent): Promise<void>;
   persistRemoteTask(remoteTaskId: string): Promise<void>;
   scheduleCompensation(cleanup: EnqueueJob): Promise<void>;
 }
@@ -185,6 +206,14 @@ export async function runWorkerLoop(input: {
         persistRemoteTask: async (remoteTaskId) => {
           if (leaseLost) throw new LeaseLostError();
           const persisted = await input.jobs.persistRemoteTask(job, input.workerId, input.clock.now(), remoteTaskId);
+          if (!persisted) {
+            loseLease();
+            throw new LeaseLostError();
+          }
+        },
+        persistReconciliationIntent: async (intent) => {
+          if (leaseLost) throw new LeaseLostError();
+          const persisted = await input.jobs.persistReconciliationIntent(job, input.workerId, input.clock.now(), intent);
           if (!persisted) {
             loseLease();
             throw new LeaseLostError();

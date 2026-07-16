@@ -86,6 +86,15 @@ class DurableJobs implements WorkerJobRepository {
     const row = this.owned(job, owner);
     if (!row) return false;
     row.remoteTaskId = remoteTaskId;
+    const { reconciliationIntent: _intent, ...payload } = row.payload;
+    row.payload = payload;
+    return true;
+  }
+
+  async persistReconciliationIntent(job: ClaimedWorkerJob, owner: string, _now: Date, intent: Record<string, unknown>): Promise<boolean> {
+    const row = this.owned(job, owner);
+    if (!row) return false;
+    row.payload = { ...row.payload, reconciliationIntent: intent };
     return true;
   }
 

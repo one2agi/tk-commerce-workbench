@@ -122,6 +122,150 @@ const approvalSnapshot = {
 } as unknown as ApprovalSnapshotV1;
 
 describe("real PostgreSQL hard-crash recovery through production handlers", () => {
+  it("persists a stable Canvas submit intent before the paid call and never submits again after a response-to-database crash", async () => {
+    const jobs = new JobRepository(handle.pool);
+    let now = new Date("2026-07-18T00:00:00.000Z");
+    const jobId = await jobs.enqueue({
+      kind: "canvas_generate",
+      businessKey: "canvas_generate:response-before-remote-id",
+      payload: { version: 1, revisionId: "revision-intent" }
+    });
+    const ports = createFakePorts();
+    let submitCalls = 0;
+    ports.canvas.submit = vi.fn(async () => {
+      submitCalls += 1;
+      // The paid request was accepted, but this worker loses its fence before it
+      // can persist Canvas' remote task id. This models a hard process stop at
+      // the exact response-to-local-write boundary without making a real call.
+      await handle.pool.query(
+        "UPDATE jobs SET lease_expires_at = $2::timestamptz WHERE id = $1",
+        [jobId, new Date("2026-07-17T23:59:59.999Z")]
+      );
+      now = new Date("2026-07-18T00:00:00.050Z");
+      expect(await jobs.releaseExpired(now)).toBe(1);
+      return { remoteTaskId: "canvas-accepted-but-not-persisted", submittedAt: now.toISOString() };
+    });
+    const handler = createCanvasHandler({
+      canvas: ports.canvas,
+      staging: ports.assetStaging,
+      store: { archive: vi.fn() },
+      repository: {
+        loadPlan: vi.fn(async () => ({
+          workflowId: "TKWorkflow",
+          templateVersion: 7,
+          productImages: [{ assetId: "asset-intent", url: "local:asset-intent", role: "primary" as const, score: 1, perceptualHash: "intent" }],
+          referenceAssetIds: [],
+          localAssetIds: ["asset-intent"],
+          sourceLocale: "zh-CN",
+          targetLocale: "th-TH",
+          style: "clean",
+          promptFragment: "",
+          expectedOutputCount: 5
+        })),
+        saveOutputs: vi.fn(async () => true)
+      },
+      quota: { reserve: vi.fn(async () => true) },
+      audit: { append: vi.fn(async () => undefined) },
+      now: () => now,
+      cleanupCodec: { protect: vi.fn(() => "protected"), unprotect: vi.fn(() => ({ remoteUrls: [], expiresAt: now.toISOString() })) },
+      maxRunsPerDay: 1
+    });
+
+    await runWorkerLoop({
+      jobs: adaptLeasedJobRepository(jobs),
+      handlers: { canvas_generate: handler },
+      clock: { now: () => now },
+      workerId: "runtime-crashes-after-canvas-response",
+      leaseMs: 25,
+      maxJobs: 1
+    });
+
+    const afterCrash = await handle.pool.query(
+      "SELECT status, remote_task_id, payload, error FROM jobs WHERE id = $1",
+      [jobId]
+    );
+    expect(afterCrash.rows[0]).toMatchObject({
+      status: "needs_input",
+      remote_task_id: null,
+      payload: {
+        reconciliationIntent: {
+          version: 1,
+          operation: "canvas_submit",
+          idempotencyKey: "canvas:revision-intent:7",
+          revisionId: "revision-intent",
+          workflowId: "TKWorkflow",
+          workflowVersion: 1,
+          templateVersion: 7
+        }
+      },
+      error: { kind: "reconcile_required", code: "reconcile_required" }
+    });
+
+    // Even if an older operator/tool incorrectly puts this row back in the
+    // queue, the production handler itself must observe the durable intent and
+    // fail closed before capacity, staging or another paid submit.
+    await handle.pool.query("UPDATE jobs SET status = 'queued', error = NULL WHERE id = $1", [jobId]);
+    now = new Date("2026-07-18T00:00:01.000Z");
+    await runWorkerLoop({
+      jobs: adaptLeasedJobRepository(new JobRepository(handle.pool)),
+      handlers: { canvas_generate: handler },
+      clock: { now: () => now },
+      workerId: "runtime-after-canvas-response-crash",
+      leaseMs: 25,
+      maxJobs: 1
+    });
+    expect(submitCalls).toBe(1);
+    expect(ports.canvas.calls.filter((call) => call.method === "fetchOutputs")).toHaveLength(0);
+    const afterGuard = await handle.pool.query("SELECT status, remote_task_id, payload, error FROM jobs WHERE id = $1", [jobId]);
+    expect(afterGuard.rows[0]).toMatchObject({
+      status: "needs_input",
+      remote_task_id: null,
+      payload: { reconciliationIntent: { operation: "canvas_submit", idempotencyKey: "canvas:revision-intent:7" } },
+      error: { kind: "reconcile_required", code: "reconcile_required" }
+    });
+    await handle.pool.query("UPDATE jobs SET status = 'succeeded' WHERE status = 'queued'");
+  });
+
+  it("atomically replaces a Canvas submit intent with the real remote task id after a normal response", async () => {
+    const jobs = new JobRepository(handle.pool);
+    const now = new Date("2026-07-18T01:00:00.000Z");
+    const jobId = await jobs.enqueue({
+      kind: "canvas_generate",
+      businessKey: "canvas_generate:normal-response",
+      payload: { version: 1, revisionId: "revision-normal" }
+    });
+    const claim = await jobs.claim("runtime-normal-response", now, 30_000);
+    expect(claim?.jobId).toBe(jobId);
+    expect(await jobs.persistReconciliationIntent(jobId, "runtime-normal-response", claim!.leaseToken, now, {
+      version: 1,
+      operation: "canvas_submit",
+      idempotencyKey: "canvas:revision-normal:3",
+      revisionId: "revision-normal",
+      workflowId: "TKWorkflow",
+      workflowVersion: 1,
+      templateVersion: 3
+    })).toBe(true);
+    expect(await jobs.persistReconciliationIntent(jobId, "runtime-normal-response", claim!.leaseToken, now, {
+      version: 1,
+      operation: "canvas_submit",
+      idempotencyKey: "canvas:revision-normal:DIFFERENT"
+    })).toBe(false);
+    expect(await jobs.persistRemoteTask(
+      jobId,
+      "runtime-normal-response",
+      claim!.leaseToken,
+      now,
+      "canvas-real-remote-task"
+    )).toBe(true);
+
+    const persisted = await handle.pool.query("SELECT remote_task_id, payload FROM jobs WHERE id = $1", [jobId]);
+    expect(persisted.rows[0]).toEqual({
+      remote_task_id: "canvas-real-remote-task",
+      payload: { version: 1, revisionId: "revision-normal" }
+    });
+    expect(await jobs.complete(jobId, "runtime-normal-response", claim!.leaseToken, now)).toBe(true);
+  });
+
   it("expires a crashed Canvas lease and the production handler fetches outputs without submitting again", async () => {
     const remoteMarker = "canvas-task:TK:accepted-once";
     const { afterRestart, jobId, restartedAt } = await persistAcceptedRemoteThenExpire("canvas_generate", remoteMarker);
