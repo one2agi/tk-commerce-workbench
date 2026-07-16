@@ -69,6 +69,111 @@ describe("integration: bootstrap", () => {
     expect(names).toContain("automation_runs");
   });
 
+  test("upgrades legacy settings and templates without overwriting saved values", async () => {
+    await handle.pool.query("DROP TABLE templates, workspace_settings");
+    await handle.pool.query(`
+      CREATE TABLE templates (
+        id TEXT PRIMARY KEY, name TEXT NOT NULL, category_rules JSONB NOT NULL DEFAULT '[]',
+        reference_asset_ids JSONB NOT NULL DEFAULT '[]', prompt_fragment TEXT NOT NULL DEFAULT '',
+        target_locale TEXT NOT NULL, visual_style TEXT NOT NULL DEFAULT '', enabled BOOLEAN NOT NULL DEFAULT true,
+        version INTEGER NOT NULL DEFAULT 1, created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+      );
+      CREATE TABLE workspace_settings (
+        id INTEGER PRIMARY KEY, default_locale TEXT NOT NULL DEFAULT 'th-TH',
+        default_currency TEXT NOT NULL DEFAULT 'THB', external_adapter_mode TEXT NOT NULL DEFAULT 'mock',
+        miaoshou_configured BOOLEAN NOT NULL DEFAULT false, canvas_configured BOOLEAN NOT NULL DEFAULT false,
+        llm_configured BOOLEAN NOT NULL DEFAULT false, exchange_rate_configured BOOLEAN NOT NULL DEFAULT false,
+        worker_concurrency INTEGER NOT NULL DEFAULT 1, max_canvas_runs_per_day INTEGER NOT NULL DEFAULT 50,
+        asset_root TEXT NOT NULL DEFAULT './var/assets'
+      );
+      INSERT INTO templates (id, name, target_locale, prompt_fragment)
+        VALUES ('legacy-template', 'Legacy TK', 'th-TH', 'keep me');
+      INSERT INTO workspace_settings (id, default_locale, worker_concurrency, asset_root)
+        VALUES (1, 'vi-VN', 7, './legacy-assets');
+    `);
+
+    await handle.migrate(INITIAL_SQL);
+    await handle.migrate(INITIAL_SQL);
+
+    const template = await handle.pool.query(
+      "SELECT id, template_key, prompt_fragment, version FROM templates WHERE id = 'legacy-template'"
+    );
+    expect(template.rows[0]).toEqual({
+      id: "legacy-template", template_key: "legacy-template", prompt_fragment: "keep me", version: 1
+    });
+    const settings = await handle.pool.query(
+      `SELECT default_locale, worker_concurrency, asset_root, version,
+              pricing_defaults, provider_options, retry_policy
+       FROM workspace_settings WHERE id = 1`
+    );
+    expect(settings.rows[0]).toMatchObject({
+      default_locale: "vi-VN", worker_concurrency: 7, asset_root: "./legacy-assets", version: "1",
+      pricing_defaults: { targetProfitRate: "0.30" },
+      provider_options: { canvasWorkflow: "TK工作流" },
+      retry_policy: { maxAttempts: 3 }
+    });
+  });
+
+  test("template matching sees only the latest enabled version of each template family", async () => {
+    const operatorId = await catalog.upsertLocalOperator({ handle: "template-match", displayName: "Template Match" });
+    const productId = await catalog.insertProduct({
+      operatorId, sourceUrl: "https://detail.1688.com/offer/template.html", locale: "th-TH", currency: "THB"
+    });
+    const revisionId = await catalog.insertRevision({
+      productId, draftVersion: 1, sourceTitle: "Dress", workingDraft: {}
+    });
+    await handle.pool.query(
+      `INSERT INTO templates
+        (id, template_key, name, category_rules, target_locale, enabled, version)
+       VALUES
+        ('family-a-v1', 'family-a', 'Old A', '[{"categoryKey":"old","priority":1}]', 'th-TH', true, 1),
+        ('family-a-v2', 'family-a', 'Current A', '[{"categoryKey":"dress","priority":10}]', 'th-TH', true, 2),
+        ('family-b-v1', 'family-b', 'Old B', '[]', 'th-TH', true, 1),
+        ('family-b-v2', 'family-b', 'Disabled B', '[]', 'th-TH', false, 2)`
+    );
+
+    const inputs = await pipeline.loadMatchInputs(revisionId);
+    expect(inputs.templates).toHaveLength(1);
+    expect(inputs.templates[0]).toMatchObject({
+      id: "family-a", enabled: true,
+      rules: [{ category: "dress", priority: 10 }], version: 2
+    });
+    expect(inputs.defaultTemplateId).toBe("family-a");
+  });
+
+  test("loadPlan fails closed when any immutable template reference is not ready locally", async () => {
+    const operatorId = await catalog.upsertLocalOperator({ handle: "template-refs", displayName: "Template Refs" });
+    const productId = await catalog.insertProduct({
+      operatorId, sourceUrl: "https://detail.1688.com/offer/refs.html", locale: "th-TH", currency: "THB"
+    });
+    const revisionId = await catalog.insertRevision({
+      productId, draftVersion: 1, sourceTitle: "Refs",
+      workingDraft: {
+        templateMatch: { templateId: "template-refs", templateVersion: 1 },
+        imageSelection: { assetIds: [] }
+      }
+    });
+    await handle.pool.query(
+      `INSERT INTO templates
+        (id, template_key, name, reference_asset_ids, target_locale, enabled, version)
+       VALUES ('template-refs-v1', 'template-refs', 'Refs',
+               '["ref-ready","ref-missing","ref-rejected","ref-no-local"]', 'th-TH', true, 1)`
+    );
+    await handle.pool.query(
+      `INSERT INTO assets
+        (id, product_id, revision_id, remote_url, kind, state, local_path, rejection_reason)
+       VALUES
+        ('ref-ready', $1, $2, 'local:ready', 'reference', 'ready', '/assets/ready.png', NULL),
+        ('ref-rejected', $1, $2, 'local:rejected', 'reference', 'rejected', '/assets/rejected.png', 'watermark'),
+        ('ref-no-local', $1, $2, 'local:no-local', 'reference', 'ready', NULL, NULL)`,
+      [productId, revisionId]
+    );
+
+    await expect(pipeline.loadPlan(revisionId)).rejects.toMatchObject({
+      code: "template_reference_unavailable"
+    });
+  });
+
   test("upgrades duplicate product identities and legacy detail_id without data loss or canonical guessing", async () => {
     const operatorId = await catalog.upsertLocalOperator({
       handle: "legacy-operator",

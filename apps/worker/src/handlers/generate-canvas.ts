@@ -7,11 +7,12 @@ export interface CanvasPlan {
   workflowId: string;
   templateVersion: number;
   productImages: CanvasCandidate[];
-  referenceUrls: string[];
+  referenceAssetIds: string[];
   localAssetIds: string[];
   sourceLocale: string;
   targetLocale: string;
   style: string;
+  promptFragment: string;
   expectedOutputCount: number;
 }
 
@@ -29,6 +30,20 @@ export function createCanvasHandler(input: {
   cleanupCodec: StagingCleanupCodec;
   maxRunsPerDay: number;
 }): WorkerHandler {
+  const loadPlan = async (revisionId: string) => {
+    try {
+      return await input.repository.loadPlan(revisionId);
+    } catch (error) {
+      if (typeof error === "object" && error !== null &&
+          (error as { code?: unknown }).code === "template_reference_unavailable") {
+        throw new NeedsInputError(
+          "template_reference_unavailable",
+          "One or more template reference assets are not ready locally"
+        );
+      }
+      throw error;
+    }
+  };
   const archiveOutputs = async (
     outputs: Array<{ url: string; width: number; height: number; sha256: string }>,
     execution: Parameters<WorkerHandler>[1]
@@ -53,7 +68,7 @@ export function createCanvasHandler(input: {
   return async (job, execution) => {
     const revisionId = String(job.payload.revisionId ?? "");
     if (job.remoteTaskId) {
-      const plan = await input.repository.loadPlan(revisionId);
+      const plan = await loadPlan(revisionId);
       await input.audit.append({ action: "canvas.fetch.call", targetKind: "product_revision", targetId: revisionId, payload: { remoteTaskId: job.remoteTaskId }, redacted: true });
       execution.assertLease();
       let fetched;
@@ -78,7 +93,7 @@ export function createCanvasHandler(input: {
       return { next: [{ kind: "final_preview", businessKey: `${revisionId}:preview`, payload: { version: 1, revisionId } }] };
     }
 
-    const plan = await input.repository.loadPlan(revisionId);
+    const plan = await loadPlan(revisionId);
     await input.audit.append({ action: "canvas.capacity.call", targetKind: "product_revision", targetId: revisionId, payload: { workflowId: plan.workflowId }, redacted: true });
     execution.assertLease();
     let capacity;
@@ -93,7 +108,10 @@ export function createCanvasHandler(input: {
       throw error;
     }
     await input.audit.append({ action: "canvas.capacity.result", targetKind: "product_revision", targetId: revisionId, payload: { workflowVersion: capacity.workflowVersion, inputCapacity: capacity.inputCapacity }, redacted: true });
-    const selected = selectCanvasInputs({ candidates: plan.productImages, referenceUrls: plan.referenceUrls, capacity: capacity.inputCapacity });
+    const referenceIds = [...new Set(plan.referenceAssetIds)];
+    const referenceSet = new Set(referenceIds);
+    const productImages = plan.productImages.filter((asset) => !referenceSet.has(asset.assetId));
+    const selected = selectCanvasInputs({ candidates: productImages, referenceUrls: referenceIds, capacity: capacity.inputCapacity });
     const day = input.now().toISOString().slice(0, 10);
     const reserved = await input.quota.reserve({ runKey: job.businessKey ?? job.jobId, day, limit: input.maxRunsPerDay });
     if (!reserved) {
@@ -102,13 +120,18 @@ export function createCanvasHandler(input: {
     }
 
     const selectedIds = selected.productImages.map((asset) => asset.assetId);
+    const selectedReferenceIds = selected.referenceUrls;
+    const allStagedIds = [...selectedIds, ...selectedReferenceIds];
     let staged: Awaited<ReturnType<AssetStagingPort["stage"]>> = [];
     let submitted: Awaited<ReturnType<CanvasPort["submit"]>> | null = null;
     try {
       execution.assertLease();
       await input.audit.append({ action: "staging.stage.call", targetKind: "product_revision", targetId: revisionId, payload: { assetCount: selectedIds.length, purpose: "canvas" }, redacted: true });
       try {
-        staged = await input.staging.stage({ localAssetIds: selectedIds, purpose: "canvas" });
+        staged = await input.staging.stage({ localAssetIds: allStagedIds, purpose: "canvas" });
+        if (staged.length !== allStagedIds.length) {
+          throw new NeedsInputError("canvas_staging_incomplete", "Canvas inputs could not all be staged");
+        }
         await input.audit.append({ action: "staging.stage.result", targetKind: "product_revision", targetId: revisionId, payload: { state: "succeeded", stagedCount: staged.length }, redacted: true });
       } catch (error) {
         await input.audit.append({ action: "staging.stage.result", targetKind: "product_revision", targetId: revisionId, payload: { state: "failed", code: "staging_failed" }, redacted: true });
@@ -133,9 +156,15 @@ export function createCanvasHandler(input: {
         submitted = await input.canvas.submit({
           workflowId: capacity.workflowId,
           workflowVersion: capacity.workflowVersion,
-          imageUrls: staged.map((asset) => asset.remoteUrl),
-          referenceImageUrls: selected.referenceUrls,
-          promptContext: { sourceLocale: plan.sourceLocale, targetLocale: plan.targetLocale, style: plan.style },
+          imageUrls: staged.slice(0, selectedIds.length).map((asset) => asset.remoteUrl),
+          referenceImageUrls: staged.slice(selectedIds.length).map((asset) => asset.remoteUrl),
+          promptContext: {
+            sourceLocale: plan.sourceLocale,
+            targetLocale: plan.targetLocale,
+            style: plan.promptFragment
+              ? `${plan.style}\n--- template prompt ---\n${plan.promptFragment}`
+              : plan.style
+          },
           idempotencyKey: `canvas:${revisionId}:${plan.templateVersion}` as IdempotencyKey
         });
       } catch {

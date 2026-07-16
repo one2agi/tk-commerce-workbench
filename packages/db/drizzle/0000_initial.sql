@@ -408,6 +408,11 @@ CREATE TABLE IF NOT EXISTS templates (
   version          INTEGER NOT NULL DEFAULT 1,
   created_at       TIMESTAMPTZ NOT NULL DEFAULT now()
 );
+ALTER TABLE templates ADD COLUMN IF NOT EXISTS template_key TEXT;
+UPDATE templates SET template_key = id WHERE template_key IS NULL;
+ALTER TABLE templates ALTER COLUMN template_key SET NOT NULL;
+CREATE UNIQUE INDEX IF NOT EXISTS templates_key_version_unique
+  ON templates (template_key, version);
 
 CREATE TABLE IF NOT EXISTS workspace_settings (
   id                       INTEGER PRIMARY KEY,
@@ -423,3 +428,11 @@ CREATE TABLE IF NOT EXISTS workspace_settings (
   asset_root               TEXT NOT NULL DEFAULT './var/assets'
 );
 ALTER TABLE workspace_settings ADD COLUMN IF NOT EXISTS worker_paused BOOLEAN NOT NULL DEFAULT false;
+ALTER TABLE workspace_settings ADD COLUMN IF NOT EXISTS version BIGINT NOT NULL DEFAULT 1;
+ALTER TABLE workspace_settings ADD COLUMN IF NOT EXISTS pricing_defaults JSONB NOT NULL DEFAULT
+  '{"domesticShippingCny":"2.00","crossBorderCostCny":"6.00","fixedTargetCostThb":"10.00","platformFeeRate":"0.05","paymentFeeRate":"0.03","targetProfitRate":"0.30","ending":"9"}'::jsonb;
+ALTER TABLE workspace_settings ADD COLUMN IF NOT EXISTS provider_options JSONB NOT NULL DEFAULT
+  '{"listingProvider":"rules","listingModel":"rules-v1","canvasWorkflow":"TK工作流"}'::jsonb;
+ALTER TABLE workspace_settings ADD COLUMN IF NOT EXISTS retry_policy JSONB NOT NULL DEFAULT
+  '{"maxAttempts":3,"initialDelaySeconds":30}'::jsonb;
+ALTER TABLE workspace_settings ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ NOT NULL DEFAULT now();

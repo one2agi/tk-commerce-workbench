@@ -12,9 +12,9 @@ import { createExtensionTokenVerifier, type ExtensionTokenVerifier } from "./aut
 import { AutomationService } from "./services/automation-service";
 import { IngestService } from "./services/ingest-service";
 import { ProductService, type QueryPort } from "./services/product-service";
-import { SettingsService } from "./services/settings-service";
+import { PgSettingsStore, SettingsService } from "./services/settings-service";
 import { TaskService, type TaskAction, type TaskActionUnitOfWork } from "./services/task-service";
-import { TemplateService } from "./services/template-service";
+import { PgTemplateStore, TemplateService } from "./services/template-service";
 
 export interface ServerServices {
   verifyExtensionToken: ExtensionTokenVerifier;
@@ -166,15 +166,32 @@ export function createServerServices(input: {
     automation: new AutomationService(new RevisionVersions(input.pool), automationRuns),
     products: new ProductService(database),
     tasks: new TaskService(database, new PgTaskActions(input.pool)),
-    templates: new TemplateService(database),
-    settings: new SettingsService({
-      defaultLocale: "th-TH",
-      defaultCurrency: "THB",
-      externalAdapterMode: input.config.externalAdapterMode,
-      secretStatus,
-      workerConcurrency: input.config.workerConcurrency,
-      maxCanvasRunsPerDay: input.config.maxCanvasRunsPerDay,
-      assetRoot: input.config.assetRoot
+    templates: new TemplateService(new PgTemplateStore(input.pool)),
+    settings: new SettingsService(new PgSettingsStore(input.pool), {
+      defaults: {
+        defaultLocale: "th-TH",
+        defaultCurrency: "THB",
+        externalAdapterMode: input.config.externalAdapterMode,
+        workerConcurrency: input.config.workerConcurrency,
+        maxCanvasRunsPerDay: input.config.maxCanvasRunsPerDay,
+        assetRoot: input.config.assetRoot,
+        pricingDefaults: {
+          domesticShippingCny: "2.00",
+          crossBorderCostCny: "6.00",
+          fixedTargetCostThb: "10.00",
+          platformFeeRate: "0.05",
+          paymentFeeRate: "0.03",
+          targetProfitRate: "0.30",
+          ending: "9"
+        },
+        providerOptions: {
+          listingProvider: "rules",
+          listingModel: "rules-v1",
+          canvasWorkflow: "TK工作流"
+        },
+        retryPolicy: { maxAttempts: 3, initialDelaySeconds: 30 }
+      },
+      secretStatus
     }),
     approvals: new ApprovalRepository(input.pool)
   };
