@@ -29,7 +29,7 @@ bash scripts/verify-fresh-install.sh
 
 | # | 验收结果 | 精确命令或测试 |
 |---|---|---|
-| 1 | PASS | `bash scripts/verify-fresh-install.sh` |
+| 1 | PASS | `bash scripts/verify-fresh-install.sh`（临时 PostgreSQL 健康并完成迁移；Web 生产包返回 HTTP 200；Worker 建立轮询连接、持续运行并可由 SIGTERM 安全退出；Chromium 实际侧载扩展且启动 MV3 service worker） |
 | 2 | PASS | `pnpm --filter @tk/extension exec vitest run src/selected-ingest-flow.test.ts && pnpm exec playwright test e2e/collection-to-product-pool.spec.ts` |
 | 3 | PASS | `pnpm exec playwright test e2e/collection-to-product-pool.spec.ts` |
 | 4 | PASS | `pnpm exec playwright test e2e/collection-to-product-pool.spec.ts -g "sample 1688 URL converges duplicate collection"` |
