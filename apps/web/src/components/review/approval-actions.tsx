@@ -144,7 +144,7 @@ export function ApprovalActions(props: Readonly<{
 
   return (
     <section aria-label="审核操作" className="tk-panel tk-review__actions">
-      <header><h2>审核与同步</h2><span>{approvalInvalidated ? "审批状态：已失效，需重新确认" : `审批状态：${status}`}</span></header>
+      <header><h2>审核与同步</h2><span role="status" aria-live="polite">{approvalInvalidated ? "审批状态：已失效，需重新确认" : `审批状态：${status}`}</span></header>
       <div className="tk-form-row">
         <label>目标语言
           <input

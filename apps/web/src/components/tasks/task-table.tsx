@@ -23,7 +23,7 @@ export function TaskTable({ items }: { items: TaskCenterItemV1[] }) {
       <td>{item.attempt} / {item.maxAttempts}</td>
       <td>{item.nextAttemptAt ?? "—"}</td>
       <td>{item.pauseReason ?? item.error?.safeMessage ?? "—"}</td>
-      <td><TaskRecoveryActions taskId={String(item.jobId)} status={item.status} hasRemoteTask={item.error?.kind === "reconcile_required"} /></td>
+      <td><TaskRecoveryActions taskId={String(item.jobId)} status={item.status} errorKind={item.error?.kind ?? null} /></td>
     </tr>)}</tbody>
   </table></div>;
 }

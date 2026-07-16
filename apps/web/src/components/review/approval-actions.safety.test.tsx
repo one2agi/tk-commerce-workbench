@@ -65,4 +65,38 @@ describe("approval action submission safety", () => {
     resolveConfirm({});
     await waitFor(() => expect(button).toBeEnabled());
   }, 60_000);
+
+  it.each([
+    ["async rejection", () => Promise.reject(new Error("offline"))],
+    ["synchronous throw", () => { throw new Error("broken action"); }]
+  ])("unlocks confirmation and exposes an error after %s", async (_label, fail) => {
+    const [{ render, screen, waitFor }, { default: userEvent }] = await Promise.all([
+      import("@testing-library/react"),
+      import("@testing-library/user-event")
+    ]);
+    const actions: ReviewActions = {
+      updateDraft: vi.fn(),
+      rerun: vi.fn(),
+      confirm: vi.fn(fail)
+    };
+    const user = userEvent.setup({ document: globalThis.document });
+    render(<ApprovalActions
+      productId="product-1"
+      revisionId="revision-1"
+      draftVersion={1}
+      listingRunId="listing-1"
+      pricingRunId="pricing-1"
+      templateVersion={1}
+      orderedFinalAssetIds={["asset-1"]}
+      targetLocale="th-TH"
+      translationStyle="marketplace"
+      actions={actions}
+    />);
+    const button = screen.getByRole("button", { name: "确认并推送妙手" });
+
+    await user.click(button);
+
+    await waitFor(() => expect(button).toBeEnabled());
+    expect(screen.getByRole("status")).toHaveTextContent("确认失败，请刷新版本后重试");
+  }, 60_000);
 });

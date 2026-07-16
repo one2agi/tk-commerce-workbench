@@ -1,6 +1,6 @@
 "use client";
 
-import type { KeyboardEvent, ReactElement } from "react";
+import { useLayoutEffect, useRef, type ReactElement } from "react";
 import type { ProductPoolItemV1 } from "@tk/contracts/read-models";
 
 type Props = Readonly<{
@@ -20,12 +20,29 @@ export function ProductDrawer({
   onClose,
   onStart
 }: Props): ReactElement {
-  function handleKeyDown(event: KeyboardEvent<HTMLElement>): void {
-    if (event.key === "Escape") {
-      event.preventDefault();
-      onClose();
-    }
-  }
+  const closeButtonRef = useRef<HTMLButtonElement>(null);
+  const onCloseRef = useRef(onClose);
+  onCloseRef.current = onClose;
+  const activeProductId = open && item ? String(item.productId) : null;
+
+  useLayoutEffect(() => {
+    if (!activeProductId) return;
+    const trigger = document.activeElement instanceof HTMLElement
+      ? document.activeElement
+      : null;
+    const handleKeyDown = (event: globalThis.KeyboardEvent): void => {
+      if (event.key === "Escape") {
+        event.preventDefault();
+        onCloseRef.current();
+      }
+    };
+    document.addEventListener("keydown", handleKeyDown);
+    closeButtonRef.current?.focus();
+    return () => {
+      document.removeEventListener("keydown", handleKeyDown);
+      if (trigger?.isConnected) trigger.focus();
+    };
+  }, [activeProductId]);
 
   if (!open || !item) {
     return (
@@ -44,11 +61,10 @@ export function ProductDrawer({
       className="tk-product-drawer"
       role="dialog"
       aria-modal="false"
-      onKeyDown={handleKeyDown}
     >
       <header>
         <h2>{item.canonicalSourceTitle ?? productId}</h2>
-        <button type="button" aria-label="关闭详情" autoFocus onClick={onClose}>
+        <button ref={closeButtonRef} type="button" aria-label="关闭详情" onClick={onClose}>
           关闭详情
         </button>
       </header>
