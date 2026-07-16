@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import type { ConfirmMiaoshouEditV1, RerunDownstreamV1, UpdateProductOverridesV1 } from "@tk/contracts";
+import { BASIC_BCP47_PATTERN_SOURCE, isBasicBcp47 } from "../../lib/locale";
 
 type ActionResult = Record<string, unknown> & { draftVersion?: number; revisionId?: string };
 type VersionedDraftUpdate = UpdateProductOverridesV1 & Readonly<{ expectedDraftVersion: number }>;
@@ -36,6 +37,22 @@ async function request(url: string, method: string, body: unknown): Promise<Acti
   return result;
 }
 
+export function buildDraftUpdateCommand(input: Readonly<{
+  productId: string;
+  draftVersion: number;
+  targetLocale: string;
+  translationStyle: string;
+}>): VersionedDraftUpdate {
+  if (!isBasicBcp47(input.targetLocale)) throw new Error("invalid_target_locale");
+  return {
+    version: 1,
+    productId: input.productId,
+    expectedDraftVersion: input.draftVersion,
+    targetLocale: input.targetLocale,
+    translationStyle: input.translationStyle
+  };
+}
+
 export function ApprovalActions(props: Readonly<{
   productId: string;
   revisionId: string;
@@ -61,15 +78,21 @@ export function ApprovalActions(props: Readonly<{
   };
 
   async function saveDraft() {
-    setStatus("正在保存草稿…");
+    let command: VersionedDraftUpdate;
     try {
-      const result = await actions.updateDraft({
-        version: 1,
+      command = buildDraftUpdateCommand({
         productId: props.productId,
-        expectedDraftVersion: draftVersion,
+        draftVersion,
         targetLocale: locale,
         translationStyle: style
       });
+    } catch {
+      setStatus("语言代码格式无效");
+      return;
+    }
+    setStatus("正在保存草稿…");
+    try {
+      const result = await actions.updateDraft(command);
       if (typeof result.draftVersion === "number") setDraftVersion(result.draftVersion);
       if (typeof result.revisionId === "string") setRevisionId(result.revisionId);
       setApprovalInvalidated(true);
@@ -116,12 +139,21 @@ export function ApprovalActions(props: Readonly<{
       <header><h2>审核与同步</h2><span>{approvalInvalidated ? "审批状态：已失效，需重新确认" : `审批状态：${status}`}</span></header>
       <div className="tk-form-row">
         <label>目标语言
-          <select value={locale} onChange={(event) => setLocale(event.target.value)}>
+          <input
+            value={locale}
+            onChange={(event) => setLocale(event.target.value)}
+            list="recommended-locales"
+            pattern={BASIC_BCP47_PATTERN_SOURCE}
+            placeholder="例如 ms-MY"
+            aria-describedby="locale-format-help"
+          />
+          <datalist id="recommended-locales">
             <option value="th-TH">泰语（泰国）</option>
             <option value="en-US">英语（美国）</option>
             <option value="vi-VN">越南语</option>
             <option value="id-ID">印度尼西亚语</option>
-          </select>
+          </datalist>
+          <small id="locale-format-help">支持任意合法 BCP-47 语言代码</small>
         </label>
         <label>翻译风格
           <select value={style} onChange={(event) => setStyle(event.target.value)}>

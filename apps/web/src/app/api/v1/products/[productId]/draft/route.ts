@@ -5,13 +5,17 @@ import { UpdateProductOverridesV1, type UpdateProductOverridesV1 as UpdateComman
 import { rejectNonLoopback, rejectUnsafeBrowserMutation } from "../../../../../../server/auth/loopback";
 import { loadRuntimeConfig } from "../../../../../../server/composition";
 import { conflictResponse } from "../../../../../../server/http/safe-conflict";
+import { BASIC_BCP47_PATTERN } from "../../../../../../lib/locale";
 import {
   createApprovalInvalidationPort,
   type ApprovalInvalidationPort
 } from "../../../../../../server/services/approval-invalidation";
 
 type DraftUpdateRequest = UpdateCommand & Readonly<{ expectedDraftVersion: number }>;
-const DraftUpdateRequest = UpdateProductOverridesV1.extend({ expectedDraftVersion: z.number().int().positive() });
+const DraftUpdateRequest = UpdateProductOverridesV1.extend({
+  expectedDraftVersion: z.number().int().positive(),
+  targetLocale: z.string().regex(BASIC_BCP47_PATTERN).optional()
+});
 
 type Context = { params: Promise<{ productId: string }> };
 export interface DraftPort {

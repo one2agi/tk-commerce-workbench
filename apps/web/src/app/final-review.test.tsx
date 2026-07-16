@@ -7,6 +7,7 @@ import { assetId, productId, productRevisionId, templateId } from "@tk/contracts
 import type { ProductWorkspaceV1 } from "@tk/contracts/read-models";
 
 import { FinalReview } from "../components/review/final-review";
+import { buildDraftUpdateCommand } from "../components/review/approval-actions";
 import { renderSettingsPage } from "./settings/page";
 import { renderTasksPage } from "./tasks/page";
 import { renderTemplatesPage } from "./templates/page";
@@ -110,17 +111,33 @@ describe("final review flow", () => {
     expect(html).not.toContain("SKU 2 个");
   });
 
-  it("uses approval preview locale when the target listing is not available yet", () => {
+  it("uses a custom approval preview locale when the target listing is not available yet", () => {
     const html = renderToStaticMarkup(<FinalReview
       workspace={{ ...reviewWorkspace, target: null }}
       approvalPreview={{
         productId: productId("product-13"), draftVersion: 4,
         listingRunId: "listing-13", pricingRunId: "pricing-13", templateVersion: 3,
-        orderedFinalAssetIds: [assetId("asset-2")], locale: "id-ID", currency: "THB",
+        orderedFinalAssetIds: [assetId("asset-2")], locale: "ms-MY", currency: "THB",
         finalPriceWire: null, warningCodes: [], miaoshouTargetDetailId: null
       }}
     />);
-    expect(html).toContain("value=\"id-ID\" selected=\"\"");
+    expect(html).toContain("value=\"ms-MY\"");
+    expect(html).toContain("list=\"recommended-locales\"");
+  });
+
+  it("submits a saved custom BCP-47 locale unchanged", () => {
+    expect(buildDraftUpdateCommand({
+      productId: "product-13",
+      draftVersion: 4,
+      targetLocale: "ms-MY",
+      translationStyle: "marketplace"
+    })).toMatchObject({ targetLocale: "ms-MY", expectedDraftVersion: 4 });
+    expect(() => buildDraftUpdateCommand({
+      productId: "product-13",
+      draftVersion: 4,
+      targetLocale: "not_a_locale",
+      translationStyle: "marketplace"
+    })).toThrow("invalid_target_locale");
   });
 });
 
@@ -306,6 +323,17 @@ describe("version-aware review routes", () => {
     });
   });
 
+  it("keeps stock unknown when sourceStock is missing and the SKU list is empty", async () => {
+    const query = vi.fn().mockResolvedValueOnce({ rows: [{
+      source_payload: { sourceStock: null, skus: [] },
+      final_asset_order: [], canonical_success_detail_id: null
+    }] });
+    await expect(new ProductService({ query }).facts("product-13")).resolves.toMatchObject({
+      skuCount: 0,
+      stock: null
+    });
+  });
+
   it("patches only locale/style overrides and reports approval invalidation", async () => {
     const update = vi.fn().mockResolvedValue({ draftVersion: 5, approvalInvalidated: true });
     const response = await createDraftPatchHandler({ drafts: { update } })(
@@ -327,6 +355,17 @@ describe("version-aware review routes", () => {
       translationStyle: "concise"
     });
     expect(await response.json()).toMatchObject({ approvalInvalidated: true, draftVersion: 5 });
+  });
+
+  it("rejects a non-BCP-47 locale before invoking the draft service", async () => {
+    const update = vi.fn();
+    const response = await createDraftPatchHandler({ drafts: { update } })(
+      sameOriginRequest("http://127.0.0.1/api/v1/products/product-13/draft", "PATCH", {
+        version: 1, expectedDraftVersion: 4, targetLocale: "not_a_locale"
+      }), { params: Promise.resolve({ productId: "product-13" }) }
+    );
+    expect(response.status).toBe(400);
+    expect(update).not.toHaveBeenCalled();
   });
 
   it("returns safe version conflict metadata for a stale draft editor", async () => {

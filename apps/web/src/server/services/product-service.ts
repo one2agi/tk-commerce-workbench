@@ -338,7 +338,7 @@ export class ProductService {
     const skuStocks = skus?.map((sku) => sku && typeof sku === "object"
       ? integerEvidence((sku as Record<string, unknown>).stock)
       : null) ?? [];
-    const stock = integerEvidence(source.sourceStock) ?? (skus && skuStocks.every((value) => value !== null)
+    const stock = integerEvidence(source.sourceStock) ?? (skus && skus.length > 0 && skuStocks.every((value) => value !== null)
       ? skuStocks.reduce((total, value) => total + BigInt(value!), 0n).toString()
       : null);
     const order = strings(row?.final_asset_order);
