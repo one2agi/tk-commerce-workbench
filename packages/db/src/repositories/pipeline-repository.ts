@@ -9,6 +9,14 @@ export interface PipelineFence {
   leaseToken: string;
 }
 
+export class TemplateReferenceUnavailableError extends Error {
+  readonly code = "template_reference_unavailable";
+
+  constructor() {
+    super("One or more immutable template reference assets are not ready locally");
+  }
+}
+
 function newId(prefix: string): string {
   return `${prefix}_${Date.now().toString(36)}${Math.random().toString(36).slice(2, 10)}`;
 }
@@ -399,11 +407,15 @@ export class PipelineRepository {
       [referenceIds]
     );
     const readyReferenceIds = new Set(referenceRows.rows.map((row) => row.id));
+    if (readyReferenceIds.size !== referenceIds.length ||
+        referenceIds.some((id) => !readyReferenceIds.has(id))) {
+      throw new TemplateReferenceUnavailableError();
+    }
     return {
       workflowId: String(draft.workflowId ?? "TK工作流"),
       templateVersion,
       productImages: assets.rows.map((row) => ({ assetId: row.id, url: row.local_path, role: row.chosen_role, score: row.visual_score, perceptualHash: row.perceptual_hash })),
-      referenceAssetIds: referenceIds.filter((id) => readyReferenceIds.has(id)),
+      referenceAssetIds: referenceIds,
       localAssetIds: assetIds,
       sourceLocale: String(draft.sourceLocale ?? "zh-CN"),
       targetLocale: template.rows[0].target_locale,

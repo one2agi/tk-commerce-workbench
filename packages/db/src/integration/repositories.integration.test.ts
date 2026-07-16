@@ -141,6 +141,39 @@ describe("integration: bootstrap", () => {
     expect(inputs.defaultTemplateId).toBe("family-a");
   });
 
+  test("loadPlan fails closed when any immutable template reference is not ready locally", async () => {
+    const operatorId = await catalog.upsertLocalOperator({ handle: "template-refs", displayName: "Template Refs" });
+    const productId = await catalog.insertProduct({
+      operatorId, sourceUrl: "https://detail.1688.com/offer/refs.html", locale: "th-TH", currency: "THB"
+    });
+    const revisionId = await catalog.insertRevision({
+      productId, draftVersion: 1, sourceTitle: "Refs",
+      workingDraft: {
+        templateMatch: { templateId: "template-refs", templateVersion: 1 },
+        imageSelection: { assetIds: [] }
+      }
+    });
+    await handle.pool.query(
+      `INSERT INTO templates
+        (id, template_key, name, reference_asset_ids, target_locale, enabled, version)
+       VALUES ('template-refs-v1', 'template-refs', 'Refs',
+               '["ref-ready","ref-missing","ref-rejected","ref-no-local"]', 'th-TH', true, 1)`
+    );
+    await handle.pool.query(
+      `INSERT INTO assets
+        (id, product_id, revision_id, remote_url, kind, state, local_path, rejection_reason)
+       VALUES
+        ('ref-ready', $1, $2, 'local:ready', 'reference', 'ready', '/assets/ready.png', NULL),
+        ('ref-rejected', $1, $2, 'local:rejected', 'reference', 'rejected', '/assets/rejected.png', 'watermark'),
+        ('ref-no-local', $1, $2, 'local:no-local', 'reference', 'ready', NULL, NULL)`,
+      [productId, revisionId]
+    );
+
+    await expect(pipeline.loadPlan(revisionId)).rejects.toMatchObject({
+      code: "template_reference_unavailable"
+    });
+  });
+
   test("upgrades duplicate product identities and legacy detail_id without data loss or canonical guessing", async () => {
     const operatorId = await catalog.upsertLocalOperator({
       handle: "legacy-operator",

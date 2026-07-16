@@ -194,6 +194,57 @@ describe("Canvas handler", () => {
     });
   });
 
+  it("stages only capacity-selected references and never exceeds the workflow limit", async () => {
+    const ports = createFakePorts();
+    ports.canvas.capacityResult = { ...ports.canvas.capacityResult, inputCapacity: 2 };
+    const repository = {
+      loadPlan: vi.fn(async () => ({
+        workflowId: "TKWorkflow", templateVersion: 2,
+        productImages: [
+          { assetId: "product-a", url: "/a.png", role: "primary" as const, score: 1, perceptualHash: "a" },
+          { assetId: "product-b", url: "/b.png", role: "angle" as const, score: 0.9, perceptualHash: "b" }
+        ],
+        referenceAssetIds: ["ref-1", "ref-2", "ref-3"], promptFragment: "", localAssetIds: ["product-a", "product-b"],
+        sourceLocale: "zh-CN", targetLocale: "th-TH", style: "clean", expectedOutputCount: 5
+      })),
+      saveOutputs: vi.fn(async () => true)
+    };
+    await invoke(createCanvasHandler({
+      canvas: ports.canvas, staging: ports.assetStaging, store: store(), repository,
+      quota: { reserve: vi.fn(async () => true) }, audit: { append: vi.fn() },
+      now: () => new Date("2026-07-16T00:00:00Z"), maxRunsPerDay: 10
+    }), job("canvas_generate", { revisionId: "rev-capacity" }));
+
+    expect(ports.assetStaging.calls[0]?.input).toEqual({
+      localAssetIds: ["product-a", "product-b"], purpose: "canvas"
+    });
+    const submission = ports.canvas.calls.find((call) => call.method === "submit")?.input as {
+      imageUrls: string[]; referenceImageUrls: string[];
+    };
+    expect(submission.imageUrls).toHaveLength(2);
+    expect(submission.referenceImageUrls).toEqual([]);
+    expect(submission.imageUrls.length + submission.referenceImageUrls.length).toBeLessThanOrEqual(2);
+  });
+
+  it("maps incomplete immutable template references to needs_input before quota or Canvas", async () => {
+    const ports = createFakePorts();
+    const quota = { reserve: vi.fn(async () => true) };
+    const repository = {
+      loadPlan: vi.fn(async () => { throw Object.assign(new Error("references unavailable"), { code: "template_reference_unavailable" }); }),
+      saveOutputs: vi.fn(async () => true)
+    };
+    const outcome = invoke(createCanvasHandler({
+      canvas: ports.canvas, staging: ports.assetStaging, store: store(), repository,
+      quota, audit: { append: vi.fn() }, now: () => new Date(), maxRunsPerDay: 10
+    }), job("canvas_generate", { revisionId: "rev-missing-ref" }));
+    await expect(outcome).rejects.toBeInstanceOf(NeedsInputError);
+    await expect(outcome).rejects.toMatchObject({
+      code: "template_reference_unavailable"
+    });
+    expect(quota.reserve).not.toHaveBeenCalled();
+    expect(ports.canvas.calls).toHaveLength(0);
+  });
+
   it("fetches a persisted remote task on reconciliation without submitting again", async () => {
     const ports = createFakePorts();
     ports.canvas.outputsResult = { outputs: ports.canvas.outputsResult.outputs.slice(0, 2) };

@@ -28,6 +28,20 @@ export function createCanvasHandler(input: {
   now: () => Date;
   maxRunsPerDay: number;
 }): WorkerHandler {
+  const loadPlan = async (revisionId: string) => {
+    try {
+      return await input.repository.loadPlan(revisionId);
+    } catch (error) {
+      if (typeof error === "object" && error !== null &&
+          (error as { code?: unknown }).code === "template_reference_unavailable") {
+        throw new NeedsInputError(
+          "template_reference_unavailable",
+          "One or more template reference assets are not ready locally"
+        );
+      }
+      throw error;
+    }
+  };
   const archiveOutputs = async (
     outputs: Array<{ url: string; width: number; height: number; sha256: string }>,
     execution: Parameters<WorkerHandler>[1]
@@ -52,7 +66,7 @@ export function createCanvasHandler(input: {
   return async (job, execution) => {
     const revisionId = String(job.payload.revisionId ?? "");
     if (job.remoteTaskId) {
-      const plan = await input.repository.loadPlan(revisionId);
+      const plan = await loadPlan(revisionId);
       await input.audit.append({ action: "canvas.fetch.call", targetKind: "product_revision", targetId: revisionId, payload: { remoteTaskId: job.remoteTaskId }, redacted: true });
       execution.assertLease();
       let fetched;
@@ -77,7 +91,7 @@ export function createCanvasHandler(input: {
       return { next: [{ kind: "final_preview", businessKey: `${revisionId}:preview`, payload: { version: 1, revisionId } }] };
     }
 
-    const plan = await input.repository.loadPlan(revisionId);
+    const plan = await loadPlan(revisionId);
     await input.audit.append({ action: "canvas.capacity.call", targetKind: "product_revision", targetId: revisionId, payload: { workflowId: plan.workflowId }, redacted: true });
     execution.assertLease();
     let capacity;
@@ -104,7 +118,8 @@ export function createCanvasHandler(input: {
     }
 
     const selectedIds = selected.productImages.map((asset) => asset.assetId);
-    const allStagedIds = [...selectedIds, ...referenceIds];
+    const selectedReferenceIds = selected.referenceUrls;
+    const allStagedIds = [...selectedIds, ...selectedReferenceIds];
     let staged: Awaited<ReturnType<AssetStagingPort["stage"]>> = [];
     let submitted: Awaited<ReturnType<CanvasPort["submit"]>> | null = null;
     try {
