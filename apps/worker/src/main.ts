@@ -97,10 +97,10 @@ export function buildHandlerRegistry(input: HandlerRegistryInput): Readonly<Reco
     pricing_calculate: createPricingHandler({ repository: input.repositories.pricing }),
     template_match: createTemplateMatchHandler({ repository: input.repositories.templates }),
     image_select: createImageSelectHandler({ repository: input.repositories.images }),
-    canvas_generate: createCanvasHandler({ canvas, staging, store: input.store, repository: input.repositories.canvas, quota: input.quota, audit: input.audit, now: input.now, maxRunsPerDay: input.maxCanvasRunsPerDay }),
+    canvas_generate: createCanvasHandler({ canvas, staging, store: input.store, repository: input.repositories.canvas, quota: input.quota, audit: input.audit, now: input.now, cleanupCodec: input.cleanupCodec, maxRunsPerDay: input.maxCanvasRunsPerDay }),
     final_preview: createFinalPreviewHandler({ repository: input.repositories.finalPreview }),
     exchange_rate_refresh: createExchangeRateRefreshHandler({ port: exchangeRate, repository: input.repositories.exchangeRate, audit: input.audit, now: input.now }),
-    staging_cleanup: createStagingCleanupHandler({ staging, audit: input.audit, codec: input.cleanupCodec }),
+    staging_cleanup: createStagingCleanupHandler({ staging, audit: input.audit, codec: input.cleanupCodec, now: input.now }),
     miaoshou_edit: createMiaoshouEditHandler({
       edit: miaoshouEdit,
       staging,

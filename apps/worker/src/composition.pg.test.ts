@@ -100,7 +100,7 @@ describe("real PostgreSQL worker composition", () => {
       ports: { miaoshou: ports.miaoshouSource, miaoshouEdit: ports.miaoshouEdit, llm: ports.llm, exchangeRate: ports.exchangeRate, canvas: ports.canvas, staging: ports.assetStaging },
       repositories: { ...pipelineRepositories(pipeline), miaoshouEdit: {} as never },
       reachability: { assertReachable: async () => undefined },
-      cleanupCodec: { protect: () => "protected", unprotect: () => [] },
+      cleanupCodec: { protect: () => "protected", unprotect: () => ({ remoteUrls: [], expiresAt: "2026-07-16T01:00:00Z" }) },
       store: localStore,
       analyzer: { analyze: vi.fn(async ({ remoteUrl }: { remoteUrl: string }) => ({
         width: remoteUrl.includes("rejected") ? 320 : 1200,
@@ -285,7 +285,19 @@ describe("real PostgreSQL worker composition", () => {
           return { result: "success", data: { ossMd5: "md5", editCommonCollectBoxDetail: remoteDetail } } as never;
         }
         applyCount += 1;
-        remoteDetail = body.editCommonCollectBoxDetail as Record<string, unknown>;
+        const sent = body.editCommonCollectBoxDetail as Record<string, unknown>;
+        const sentSkus = sent.skuMap as Record<string, Record<string, unknown>>;
+        // Match the verified GET fixture: top-level editable fields are echoed,
+        // while every SKU echoes price/stock only.
+        remoteDetail = {
+          commonCollectBoxDetailId: "canonical-edit",
+          sourceList: [{ sourceItemId: "source-edit" }],
+          ...Object.fromEntries([
+            "title", "itemNum", "notesText", "notes", "price", "stock", "weight",
+            "packageLength", "packageWidth", "packageHeight", "imgUrls", "sourceAttrs"
+          ].filter((key) => sent[key] !== undefined).map((key) => [key, sent[key]])),
+          skuMap: Object.fromEntries(Object.entries(sentSkus ?? {}).map(([key, sku]) => [key, { price: sku.price, stock: sku.stock }]))
+        };
         return { result: "success" } as never;
       })
     };
@@ -324,7 +336,7 @@ describe("real PostgreSQL worker composition", () => {
       staging: ports.assetStaging,
       repository,
       reachability: { assertReachable: async () => undefined },
-      cleanupCodec: { protect: () => "protected", unprotect: () => [] },
+      cleanupCodec: { protect: () => "protected", unprotect: () => ({ remoteUrls: [], expiresAt: "2026-07-16T01:00:00Z" }) },
       audit: { append: async () => undefined }
     });
     const leasedJobs = adaptLeasedJobRepository(jobs);

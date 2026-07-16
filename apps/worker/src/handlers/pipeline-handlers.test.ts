@@ -26,6 +26,7 @@ const execution: WorkerExecutionContext = {
   scheduleCompensation: vi.fn(async () => undefined)
 };
 const invoke = (handler: WorkerHandler, claimed: ClaimedWorkerJob) => handler(claimed, execution);
+const cleanupCodec = { protect: vi.fn(() => "protected"), unprotect: vi.fn(() => ({ remoteUrls: [], expiresAt: "2026-07-16T01:00:00Z" })) };
 
 describe("pricing handler", () => {
   it.each([
@@ -137,7 +138,7 @@ describe("Canvas handler", () => {
     };
     const quota = { reserve: vi.fn(async () => false) };
     const audit = { append: vi.fn() };
-    const handler = createCanvasHandler({ canvas: ports.canvas, staging: ports.assetStaging, store: store(), repository, quota, audit, now: () => new Date("2026-07-16T00:00:00Z"), maxRunsPerDay: 1 });
+    const handler = createCanvasHandler({ canvas: ports.canvas, staging: ports.assetStaging, store: store(), repository, quota, audit, now: () => new Date("2026-07-16T00:00:00Z"), cleanupCodec, maxRunsPerDay: 1 });
     await expect(invoke(handler, job("canvas_generate", { revisionId: "rev-1" }))).rejects.toBeInstanceOf(NeedsInputError);
     expect(quota.reserve).toHaveBeenCalledOnce();
     expect(ports.canvas.calls.filter((call) => call.method === "submit")).toHaveLength(0);
@@ -156,7 +157,7 @@ describe("Canvas handler", () => {
       saveOutputs: vi.fn(async (_value: Record<string, unknown>) => true)
     };
     const audit = { append: vi.fn() };
-    const handler = createCanvasHandler({ canvas: ports.canvas, staging: ports.assetStaging, store: store(), repository, quota: { reserve: vi.fn() }, audit, now: () => new Date("2026-07-16T00:00:00Z"), maxRunsPerDay: 10 });
+    const handler = createCanvasHandler({ canvas: ports.canvas, staging: ports.assetStaging, store: store(), repository, quota: { reserve: vi.fn() }, audit, now: () => new Date("2026-07-16T00:00:00Z"), cleanupCodec, maxRunsPerDay: 10 });
     await expect(invoke(handler, job("canvas_generate", { revisionId: "rev-1" }))).rejects.toThrow("authorization header leaked by provider");
     expect(audit.append.mock.calls.map(([event]) => event.action)).toEqual(["canvas.capacity.call", "canvas.capacity.result"]);
     expect(audit.append.mock.calls.at(-1)?.[0]).toMatchObject({ payload: { state: "failed", code: "external_request_failed" } });
@@ -172,7 +173,7 @@ describe("Canvas handler", () => {
     };
     const audit = { append: vi.fn() };
     const outputStore = store();
-    const handler = createCanvasHandler({ canvas: ports.canvas, staging: ports.assetStaging, store: outputStore, repository, quota: { reserve: vi.fn() }, audit, now: () => new Date("2026-07-16T00:00:00Z"), maxRunsPerDay: 10 });
+    const handler = createCanvasHandler({ canvas: ports.canvas, staging: ports.assetStaging, store: outputStore, repository, quota: { reserve: vi.fn() }, audit, now: () => new Date("2026-07-16T00:00:00Z"), cleanupCodec, maxRunsPerDay: 10 });
     const result = await invoke(handler, job("canvas_generate", { revisionId: "rev-1" }, "remote-existing"));
     expect(ports.canvas.calls.map((call) => call.method)).toEqual(["fetchOutputs"]);
     expect(outputStore.archive).toHaveBeenCalledTimes(2);
@@ -198,7 +199,7 @@ describe("Canvas handler", () => {
       loadPlan: vi.fn(async () => ({ workflowId: "TKWorkflow", templateVersion: 1, productImages: [{ assetId: "a", url: "local:a", role: "primary" as const, score: 1, perceptualHash: "a" }], referenceUrls: [], localAssetIds: ["a"], sourceLocale: "zh-CN", targetLocale: "th-TH", style: "clean", expectedOutputCount: 5 })),
       saveOutputs: vi.fn(async (_value: Record<string, unknown>) => true)
     };
-    const result = await invoke(createCanvasHandler({ canvas: ports.canvas, staging: ports.assetStaging, store: outputStore, repository, quota: { reserve: vi.fn(async () => true) }, audit: { append: vi.fn() }, now: () => new Date("2026-07-16T00:00:00Z"), maxRunsPerDay: 10 }), job("canvas_generate", { revisionId: "rev-1" }));
+    const result = await invoke(createCanvasHandler({ canvas: ports.canvas, staging: ports.assetStaging, store: outputStore, repository, quota: { reserve: vi.fn(async () => true) }, audit: { append: vi.fn() }, now: () => new Date("2026-07-16T00:00:00Z"), cleanupCodec, maxRunsPerDay: 10 }), job("canvas_generate", { revisionId: "rev-1" }));
 
     expect(outputStore.archive).toHaveBeenCalledTimes(5);
     expect(repository.saveOutputs).toHaveBeenCalledWith(expect.objectContaining({
@@ -216,7 +217,7 @@ describe("Canvas handler", () => {
       saveOutputs: vi.fn(async () => true)
     };
     const rejectingStore = { archive: vi.fn(async () => { throw new Error("rejected image"); }) };
-    const handler = createCanvasHandler({ canvas: ports.canvas, staging: ports.assetStaging, store: rejectingStore, repository, quota: { reserve: vi.fn(async () => true) }, audit: { append: vi.fn() }, now: () => new Date("2026-07-16T00:00:00Z"), maxRunsPerDay: 10 });
+    const handler = createCanvasHandler({ canvas: ports.canvas, staging: ports.assetStaging, store: rejectingStore, repository, quota: { reserve: vi.fn(async () => true) }, audit: { append: vi.fn() }, now: () => new Date("2026-07-16T00:00:00Z"), cleanupCodec, maxRunsPerDay: 10 });
 
     await expect(invoke(handler, job("canvas_generate", { revisionId: "rev-1" }, "remote-existing"))).rejects.toMatchObject({ code: "canvas_zero_valid_outputs" });
     expect(repository.saveOutputs).toHaveBeenCalledWith(expect.objectContaining({ state: "failed", assets: [] }), execution.fence);
@@ -231,7 +232,7 @@ describe("Canvas handler", () => {
       saveOutputs: vi.fn(async () => true)
     };
     const audit = { append: vi.fn() };
-    const handler = createCanvasHandler({ canvas: ports.canvas, staging: ports.assetStaging, store: store(), repository, quota: { reserve: vi.fn(async () => true) }, audit, now: () => new Date("2026-07-16T00:00:00Z"), maxRunsPerDay: 10 });
+    const handler = createCanvasHandler({ canvas: ports.canvas, staging: ports.assetStaging, store: store(), repository, quota: { reserve: vi.fn(async () => true) }, audit, now: () => new Date("2026-07-16T00:00:00Z"), cleanupCodec, maxRunsPerDay: 10 });
 
     await expect(invoke(handler, job("canvas_generate", { revisionId: "rev-1" }))).rejects.toMatchObject({ code: "reconcile_required" });
     expect(ports.assetStaging.calls.map((call) => call.method)).toEqual(["stage", "release"]);

@@ -11,7 +11,7 @@ import {
 import { describe, expect, it, vi } from "vitest";
 import { createMiaoshouEditAdapter } from "./edit-adapter.js";
 import { mapApprovalSnapshotToMiaoshouEdit } from "./edit-mapper.js";
-import { fingerprintMiaoshouEditableDetail } from "./reconcile-edit.js";
+import { fingerprintMiaoshouEditableDetail, sha256Text, type MiaoshouEditExpectation } from "./reconcile-edit.js";
 import type { MiaoshouHttp } from "./client.js";
 
 const fixture = async (name: string) => JSON.parse(await readFile(new URL(`../../../../tests/fixtures/external/miaoshou/${name}`, import.meta.url), "utf8"));
@@ -99,6 +99,59 @@ describe("Miaoshou common collect-box edit mapper", () => {
 });
 
 describe("Miaoshou common collect-box edit adapter", () => {
+  it("reconciles applied against the exact observable projection of the real GET fixture", async () => {
+    const real = await fixture("detail-3799770548.json");
+    const detail = real.data.editCommonCollectBoxDetail as Record<string, any>;
+    const expected: MiaoshouEditExpectation = {
+      version: 1,
+      title: detail.title,
+      itemNum: detail.itemNum,
+      notesText: detail.notesText,
+      notes: detail.notes,
+      price: detail.price,
+      stock: detail.stock,
+      weight: detail.weight,
+      packageLength: detail.packageLength,
+      packageWidth: detail.packageWidth,
+      packageHeight: detail.packageHeight,
+      imgUrlSha256: detail.imgUrls.map(sha256Text),
+      sourceAttrs: detail.sourceAttrs,
+      // The real GET fixture exposes only price/stock per SKU. These sent fields
+      // are deliberately different/unobservable and must not cause false failure.
+      skuMap: Object.fromEntries(Object.entries(detail.skuMap).map(([key, value]) => [key, {
+        itemNum: `sent-${key}`,
+        price: (value as any).price,
+        stock: (value as any).stock,
+        weight: 9.99,
+        imgUrlSha256: "f".repeat(64)
+      }]))
+    };
+    const adapter = createMiaoshouEditAdapter({
+      http: { post: vi.fn(async () => real) } as MiaoshouHttp,
+      expectationResolver: { resolve: vi.fn().mockResolvedValue(expected) }
+    });
+
+    await expect(adapter.reconcileByCanonicalDetailId({ canonicalSuccessDetailId: "3799770548", sourceItemId: sourceItemId("892408514788") }))
+      .resolves.toEqual({ remoteDetailId: "3799770548", state: "applied" });
+  });
+
+  it("returns no_change when a real-fixture observable SKU field differs", async () => {
+    const real = await fixture("detail-3799770548.json");
+    const detail = real.data.editCommonCollectBoxDetail as Record<string, any>;
+    const [firstKey] = Object.keys(detail.skuMap);
+    const expected: MiaoshouEditExpectation = {
+      version: 1, title: detail.title, itemNum: detail.itemNum, notesText: detail.notesText, notes: detail.notes,
+      price: detail.price, stock: detail.stock, weight: detail.weight,
+      packageLength: detail.packageLength, packageWidth: detail.packageWidth, packageHeight: detail.packageHeight,
+      imgUrlSha256: detail.imgUrls.map(sha256Text), sourceAttrs: detail.sourceAttrs,
+      skuMap: Object.fromEntries(Object.entries(detail.skuMap).map(([key, value]) => [key, {
+        itemNum: "unobservable", price: (value as any).price + (key === firstKey ? 1 : 0), stock: (value as any).stock, weight: 1
+      }]))
+    };
+    const adapter = createMiaoshouEditAdapter({ http: { post: vi.fn(async () => real) } as MiaoshouHttp, expectationResolver: { resolve: vi.fn().mockResolvedValue(expected) } });
+    await expect(adapter.reconcileByCanonicalDetailId({ canonicalSuccessDetailId: "3799770548", sourceItemId: sourceItemId("892408514788") }))
+      .resolves.toMatchObject({ state: "no_change" });
+  });
   it("edits only the canonical detail and preserves full remote records", async () => {
     const success = await fixture("edit-success.json");
     const current = {

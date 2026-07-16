@@ -166,10 +166,10 @@ export function createMiaoshouEditHandler(input: {
           await input.staging.release({ remoteUrls });
           released = true;
           await input.audit.append({
-            action: "miaoshou.edit.staging.release",
+            action: "miaoshou.edit.staging.release_best_effort",
             targetKind: "approval_snapshot",
             targetId: approvalSnapshotId,
-            payload: { state: "succeeded", imageCount: remoteUrls.length },
+            payload: { state: "local_tracking_cleared", remoteDeleteVerified: false, imageCount: remoteUrls.length },
             redacted: true
           });
         } catch {
@@ -180,14 +180,17 @@ export function createMiaoshouEditHandler(input: {
               payload: {
                 version: 1,
                 revisionId: String(snapshot.revisionId),
-                protectedRemoteUrls: input.cleanupCodec.protect(remoteUrls)
+                  protectedRemoteUrls: input.cleanupCodec.protect({
+                    remoteUrls,
+                    expiresAt: staged.map((asset) => asset.expiresAt).sort()[0]!
+                  })
               },
               delayMs: 60_000
             });
           }
           try {
             await input.audit.append({
-              action: "miaoshou.edit.staging.release",
+              action: "miaoshou.edit.staging.release_best_effort",
               targetKind: "approval_snapshot",
               targetId: approvalSnapshotId,
               payload: { state: "failed", code: "cleanup_deferred" },

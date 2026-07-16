@@ -75,7 +75,7 @@ function dependencies(result: Awaited<ReturnType<MiaoshouEditPort["applyEdit"]>>
   };
   const audit = { append: vi.fn().mockResolvedValue(undefined) };
   const reachability = { assertReachable: vi.fn().mockResolvedValue(undefined) };
-  const cleanupCodec = { protect: vi.fn(() => "protected-envelope"), unprotect: vi.fn(() => []) };
+  const cleanupCodec = { protect: vi.fn(() => "protected-envelope"), unprotect: vi.fn(() => ({ remoteUrls: [], expiresAt: "2026-07-16T01:00:00Z" })) };
   return { edit, staging, repository, audit, reachability, cleanupCodec };
 }
 
