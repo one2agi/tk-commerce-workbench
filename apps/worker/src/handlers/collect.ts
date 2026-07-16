@@ -45,7 +45,10 @@ export function createCollectHandler(input: {
       } catch {
         // The original external failure remains the business-visible outcome.
       }
-      throw new NeedsInputError("miaoshou_collect_failed", "Miaoshou collection failed; review connection settings before retry");
+      throw new NeedsInputError(
+        "reconcile_required",
+        "Miaoshou collection result is unknown; review the collect box before trying again"
+      );
     }
     execution.assertLease();
     const created = await input.repository.saveCollected({ batchId, sourceUrl, result }, execution.fence);

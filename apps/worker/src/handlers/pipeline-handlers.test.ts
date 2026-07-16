@@ -334,7 +334,7 @@ describe("Miaoshou collection handler", () => {
     expect(audit.append).not.toHaveBeenCalled();
   });
 
-  it("audits the call before dispatch and records a safe failure result", async () => {
+  it("fails closed after an ambiguous collection timeout so the external write cannot be retried", async () => {
     const order: string[] = [];
     const port = {
       fetchItem: vi.fn(async () => { order.push("external"); throw new Error("secret raw response body"); }),
@@ -342,7 +342,7 @@ describe("Miaoshou collection handler", () => {
     };
     const audit = { append: vi.fn(async (event: Record<string, unknown>) => { order.push(String(event.action)); }) };
     const handler = createCollectHandler({ port, repository: { saveCollected: vi.fn() }, audit });
-    await expect(invoke(handler, job("miaoshou_collect", { version: 1, sourceUrl: "https://detail.1688.com/offer/1.html", batchId: "batch-1", idempotencyKey: "key-1" }))).rejects.toMatchObject({ code: "miaoshou_collect_failed" });
+    await expect(invoke(handler, job("miaoshou_collect", { version: 1, sourceUrl: "https://detail.1688.com/offer/1.html", batchId: "batch-1", idempotencyKey: "key-1" }))).rejects.toMatchObject({ code: "reconcile_required" });
     expect(order).toEqual(["miaoshou.collect.call", "external", "miaoshou.collect.result"]);
     expect(audit.append.mock.calls.at(-1)?.[0]).toMatchObject({ payload: { state: "failed", code: "external_request_failed" } });
     expect(JSON.stringify(audit.append.mock.calls)).not.toContain("secret raw response body");
