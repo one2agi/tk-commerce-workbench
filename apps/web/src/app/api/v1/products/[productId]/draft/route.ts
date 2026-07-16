@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import pg from "pg";
 import { z } from "zod";
 import { UpdateProductOverridesV1, type UpdateProductOverridesV1 as UpdateCommand } from "@tk/contracts";
+import { ApprovalRepository } from "@tk/db";
 import { rejectNonLoopback, rejectUnsafeBrowserMutation } from "../../../../../../server/auth/loopback";
 import { loadRuntimeConfig } from "../../../../../../server/composition";
 import { conflictResponse } from "../../../../../../server/http/safe-conflict";
@@ -132,7 +133,9 @@ export function createPgDraftPort(approvalInvalidation: ApprovalInvalidationPort
   };
 }
 
-const pgDrafts = createPgDraftPort(createApprovalInvalidationPort());
+const pgDrafts = createPgDraftPort(
+  createApprovalInvalidationPort(new ApprovalRepository(database()))
+);
 
 export async function PATCH(request: Request, context: Context): Promise<Response> {
   return createPatchHandler({ drafts: pgDrafts })(request, context);
