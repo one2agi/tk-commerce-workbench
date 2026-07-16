@@ -1,0 +1,372 @@
+:root {
+  color-scheme: light;
+  font-family:
+    Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI",
+    "Noto Sans Thai", "Noto Sans SC", sans-serif;
+  color: #18212f;
+  background: #f4f6f9;
+  font-synthesis: none;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  min-width: 0;
+  min-height: 100%;
+  margin: 0;
+}
+
+body {
+  background: #f4f6f9;
+  line-height: 1.45;
+}
+
+button,
+input,
+select,
+textarea {
+  font: inherit;
+}
+
+button,
+a {
+  -webkit-tap-highlight-color: transparent;
+}
+
+button {
+  min-height: 36px;
+  padding: 7px 14px;
+  border: 1px solid #cbd5e1;
+  border-radius: 8px;
+  color: #1e293b;
+  background: #fff;
+  cursor: pointer;
+  transition: border-color 120ms ease, background 120ms ease, color 120ms ease;
+}
+
+button:hover:not(:disabled) {
+  border-color: #7c8ba1;
+  background: #f8fafc;
+}
+
+button:disabled {
+  color: #94a3b8;
+  background: #eef2f6;
+  cursor: not-allowed;
+}
+
+:focus-visible {
+  outline: 3px solid rgb(37 99 235 / 35%);
+  outline-offset: 2px;
+}
+
+.tk-app {
+  display: grid;
+  grid-template-columns: clamp(192px, 16vw, 220px) minmax(0, 1fr);
+  min-height: 100vh;
+}
+
+.tk-sidebar {
+  position: sticky;
+  top: 0;
+  align-self: start;
+  height: 100vh;
+  padding: 24px 14px;
+  border-right: 1px solid #263449;
+  background: #111c2d;
+}
+
+.tk-sidebar::before {
+  display: block;
+  margin: 0 10px 24px;
+  color: #f8fafc;
+  font-size: 16px;
+  font-weight: 750;
+  letter-spacing: 0.02em;
+  content: "TK 商品自动化";
+}
+
+.tk-sidebar ul {
+  display: grid;
+  gap: 6px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.tk-sidebar a {
+  display: block;
+  padding: 10px 12px;
+  border-radius: 8px;
+  color: #cbd5e1;
+  font-size: 14px;
+  font-weight: 600;
+  text-decoration: none;
+}
+
+.tk-sidebar a:hover,
+.tk-sidebar a:focus-visible {
+  color: #fff;
+  background: #24334a;
+}
+
+.tk-app__main {
+  min-width: 0;
+  padding: 24px;
+}
+
+.tk-product-workbench {
+  display: grid;
+  gap: 18px;
+  min-width: 0;
+  max-width: 1600px;
+  margin: 0 auto;
+}
+
+.tk-stage-overview {
+  display: grid;
+  grid-template-columns: repeat(6, minmax(0, 1fr));
+  gap: 10px;
+  min-width: 0;
+}
+
+.tk-stage-card {
+  min-width: 0;
+  min-height: 64px;
+  padding: 10px 8px;
+  border-color: #d9e0e9;
+  box-shadow: 0 1px 2px rgb(15 23 42 / 5%);
+  color: #526174;
+  font-size: 13px;
+  font-weight: 650;
+  text-align: center;
+}
+
+.tk-stage-card.is-active {
+  border-color: #2563eb;
+  box-shadow: inset 0 0 0 1px #2563eb, 0 4px 12px rgb(37 99 235 / 12%);
+  color: #1749ad;
+  background: #eff6ff;
+}
+
+.tk-stage-card__label {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.tk-product-workbench__body {
+  display: flex;
+  align-items: flex-start;
+  gap: 16px;
+  min-width: 0;
+}
+
+.tk-product-table {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  border: 1px solid #d9e0e9;
+  border-radius: 12px;
+  background: #fff;
+  box-shadow: 0 5px 18px rgb(15 23 42 / 5%);
+}
+
+.tk-product-table__scroll {
+  max-width: 100%;
+  overflow-x: auto;
+  scrollbar-color: #aeb9c8 transparent;
+}
+
+.tk-product-table table {
+  width: 100%;
+  min-width: 660px;
+  border-spacing: 0;
+  border-collapse: separate;
+  table-layout: fixed;
+  font-size: 13px;
+}
+
+.tk-product-table th,
+.tk-product-table td {
+  padding: 11px 10px;
+  border-bottom: 1px solid #e7ebf0;
+  overflow-wrap: anywhere;
+  vertical-align: middle;
+  text-align: left;
+}
+
+.tk-product-table th {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  color: #526174;
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.025em;
+  background: #f8fafc;
+}
+
+.tk-product-table th:first-child,
+.tk-product-table td:first-child {
+  width: 58px;
+  text-align: center;
+}
+
+.tk-product-table th:nth-child(2),
+.tk-product-table td:nth-child(2) {
+  width: 132px;
+  font-variant-numeric: tabular-nums;
+}
+
+.tk-product-table th:nth-child(3),
+.tk-product-table td:nth-child(3) {
+  width: 24%;
+}
+
+.tk-product-table th:last-child,
+.tk-product-table td:last-child {
+  width: 92px;
+}
+
+.tk-product-table tbody tr:last-child td {
+  border-bottom: 0;
+}
+
+.tk-product-table tbody tr:hover,
+.tk-product-table tbody tr[aria-selected="true"] {
+  background: #f7faff;
+}
+
+.tk-product-table__checkbox {
+  display: inline-grid;
+  place-items: center;
+  min-width: 32px;
+  min-height: 32px;
+}
+
+.tk-product-table__checkbox input {
+  width: 16px;
+  height: 16px;
+  accent-color: #2563eb;
+}
+
+.tk-start-status {
+  display: block;
+  margin-top: 4px;
+  color: #2563eb;
+  font-size: 12px;
+  font-weight: 650;
+}
+
+.tk-product-drawer {
+  flex: 0 0 clamp(320px, 29vw, 380px);
+  min-width: 320px;
+  padding: 18px;
+  border: 1px solid #d9e0e9;
+  border-radius: 12px;
+  background: #fff;
+  box-shadow: 0 8px 28px rgb(15 23 42 / 8%);
+}
+
+.tk-product-drawer.is-closed {
+  display: none;
+}
+
+.tk-product-drawer > header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  padding-bottom: 14px;
+  border-bottom: 1px solid #e7ebf0;
+}
+
+.tk-product-drawer h2 {
+  min-width: 0;
+  margin: 3px 0 0;
+  color: #172033;
+  font-size: 16px;
+  line-height: 1.35;
+}
+
+.tk-product-drawer dl {
+  display: grid;
+  grid-template-columns: 92px minmax(0, 1fr);
+  gap: 10px 12px;
+  margin: 18px 0;
+  font-size: 13px;
+}
+
+.tk-product-drawer dt {
+  color: #64748b;
+  font-weight: 650;
+}
+
+.tk-product-drawer dd {
+  min-width: 0;
+  margin: 0;
+  overflow-wrap: anywhere;
+  color: #273449;
+}
+
+.tk-product-drawer > footer {
+  display: flex;
+  justify-content: flex-end;
+  padding-top: 14px;
+  border-top: 1px solid #e7ebf0;
+}
+
+.tk-product-drawer > footer button,
+.tk-product-workbench__footer > button:not(:disabled) {
+  border-color: #2563eb;
+  color: #fff;
+  background: #2563eb;
+}
+
+.tk-product-drawer > footer button:hover:not(:disabled),
+.tk-product-workbench__footer > button:hover:not(:disabled) {
+  border-color: #1d4ed8;
+  background: #1d4ed8;
+}
+
+.tk-product-workbench__footer {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  min-width: 0;
+  min-height: 58px;
+  padding: 10px 14px;
+  border: 1px solid #d9e0e9;
+  border-radius: 12px;
+  background: #fff;
+  box-shadow: 0 3px 12px rgb(15 23 42 / 4%);
+}
+
+.tk-product-workbench__footer > button {
+  flex: 0 0 auto;
+}
+
+.tk-automation-progress__empty {
+  min-width: 0;
+  color: #64748b;
+  font-size: 13px;
+}
+
+@media (max-width: 1100px) {
+  .tk-app__main {
+    padding: 18px 16px;
+  }
+
+  .tk-product-workbench__body {
+    gap: 12px;
+  }
+
+  .tk-product-drawer {
+    flex-basis: 320px;
+  }
+}
