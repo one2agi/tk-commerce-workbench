@@ -230,9 +230,13 @@ export async function runWorkerLoop(input: {
             safeMessage: "The operation was temporarily unavailable and will be retried"
           });
         } else if (error instanceof NeedsInputError) {
+          const reconciliationRequired = error.code === "reconcile_required";
           await input.jobs.markNeedsInput(job, input.workerId, input.clock.now(), {
+            ...(reconciliationRequired ? { kind: "reconcile_required" } : {}),
             code: error.code,
-            safeMessage: "Additional user input or review is required"
+            safeMessage: reconciliationRequired
+              ? "External request result must be reconciled before retry"
+              : "Additional user input or review is required"
           });
         } else if (error instanceof ExternalResultUnknownError) {
           if (job.remoteTaskId) {

@@ -18,6 +18,7 @@ import {
   type TestDbHandle
 } from "@tk/db";
 import { buildWorkerRuntime } from "./main.js";
+import { createCollectHandler } from "./handlers/collect.js";
 import { createMiaoshouEditHandler } from "./handlers/miaoshou-edit.js";
 import { adaptLeasedJobRepository, runWorkerLoop } from "./runtime/worker-loop.js";
 
@@ -403,5 +404,79 @@ describe("real PostgreSQL worker composition", () => {
       [jobId, approvalSnapshotId]
     );
     expect(recovered.rows[0]).toEqual({ status: "succeeded", state: "succeeded" });
+  });
+
+  it("persists ambiguous collection as reconciliation-only and never writes twice after restart", async () => {
+    const suffix = Date.now().toString(36);
+    const jobs = new JobRepository(handle.pool);
+    const pipeline = new PipelineRepository(handle.pool);
+    const auditRepository = new AuditRepository(handle.pool);
+    const fetchItem = vi.fn(async () => {
+      throw new Error("simulated timeout after Miaoshou may have accepted the collection");
+    });
+    const fakeMiaoshou = createFakePorts().miaoshouSource;
+    const handler = createCollectHandler({
+      port: {
+        fetchItem,
+        resolveCanonicalSuccessDetail: (input) => fakeMiaoshou.resolveCanonicalSuccessDetail(input)
+      },
+      repository: pipeline,
+      audit: {
+        append: async (event) => auditRepository.append({
+          actorType: "worker",
+          action: String(event.action),
+          targetKind: String(event.targetKind),
+          targetId: String(event.targetId),
+          payload: event.payload as Record<string, unknown> | undefined
+        })
+      }
+    });
+    const jobId = await jobs.enqueue({
+      kind: "miaoshou_collect",
+      businessKey: `collect-ambiguous-${suffix}`,
+      payload: {
+        version: 1,
+        batchId: `batch-ambiguous-${suffix}`,
+        sourceUrl: `https://detail.1688.com/offer/${suffix}.html`,
+        idempotencyKey: `collect-ambiguous-${suffix}`
+      }
+    });
+    const leasedJobs = adaptLeasedJobRepository(jobs);
+
+    await runWorkerLoop({
+      jobs: leasedJobs,
+      handlers: { miaoshou_collect: handler },
+      clock: { now: () => new Date() },
+      workerId: "collect-worker-before-restart",
+      leaseMs: 30_000,
+      maxJobs: 1
+    });
+
+    const persisted = await handle.pool.query("SELECT status, remote_task_id, error FROM jobs WHERE id = $1", [jobId]);
+    expect(persisted.rows[0]).toEqual({
+      status: "needs_input",
+      remote_task_id: null,
+      error: {
+        kind: "reconcile_required",
+        code: "reconcile_required",
+        safeMessage: "External request result must be reconciled before retry"
+      }
+    });
+    const resultAudit = await handle.pool.query(
+      "SELECT payload FROM audit_events WHERE action = 'miaoshou.collect.result' AND target_id = $1 ORDER BY created_at DESC LIMIT 1",
+      [`batch-ambiguous-${suffix}`]
+    );
+    expect(resultAudit.rows[0]?.payload).toEqual({ state: "result_unknown", code: "reconcile_required" });
+    expect(await jobs.retrySafe(jobId, new Date())).toBe(false);
+
+    await runWorkerLoop({
+      jobs: leasedJobs,
+      handlers: { miaoshou_collect: handler },
+      clock: { now: () => new Date() },
+      workerId: "collect-worker-after-restart",
+      leaseMs: 30_000,
+      maxJobs: 1
+    });
+    expect(fetchItem).toHaveBeenCalledTimes(1);
   });
 });
