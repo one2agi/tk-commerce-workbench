@@ -67,6 +67,12 @@ export function createCanvasHandler(input: {
 
   return async (job, execution) => {
     const revisionId = String(job.payload.revisionId ?? "");
+    if (!job.remoteTaskId && job.payload.reconciliationIntent !== undefined) {
+      throw new NeedsInputError(
+        "reconcile_required",
+        "Canvas submit intent already exists without a remote task id; reconcile manually and do not submit again"
+      );
+    }
     if (job.remoteTaskId) {
       const plan = await loadPlan(revisionId);
       await input.audit.append({ action: "canvas.fetch.call", targetKind: "product_revision", targetId: revisionId, payload: { remoteTaskId: job.remoteTaskId }, redacted: true });
@@ -152,6 +158,16 @@ export function createCanvasHandler(input: {
       });
       execution.assertLease();
       await input.audit.append({ action: "canvas.submit.call", targetKind: "product_revision", targetId: revisionId, payload: { workflowId: capacity.workflowId, workflowVersion: capacity.workflowVersion, imageCount: staged.length }, redacted: true });
+      const canvasIdempotencyKey = `canvas:${revisionId}:${plan.templateVersion}` as IdempotencyKey;
+      await execution.persistReconciliationIntent({
+        version: 1,
+        operation: "canvas_submit",
+        idempotencyKey: canvasIdempotencyKey,
+        revisionId,
+        workflowId: capacity.workflowId,
+        workflowVersion: capacity.workflowVersion,
+        templateVersion: plan.templateVersion
+      });
       try {
         submitted = await input.canvas.submit({
           workflowId: capacity.workflowId,
@@ -165,7 +181,7 @@ export function createCanvasHandler(input: {
               ? `${plan.style}\n--- template prompt ---\n${plan.promptFragment}`
               : plan.style
           },
-          idempotencyKey: `canvas:${revisionId}:${plan.templateVersion}` as IdempotencyKey
+          idempotencyKey: canvasIdempotencyKey
         });
       } catch {
         try {

@@ -7,6 +7,7 @@ import {
   runWorkerLoop,
   type ClaimedWorkerJob,
   type EnqueueJob,
+  type ReconciliationIntent,
   type WorkerJobRepository
 } from "./worker-loop.js";
 
@@ -43,7 +44,7 @@ class DurableMemoryJobs implements WorkerJobRepository {
       row.owner = null;
       row.leaseToken = null;
       row.leaseExpiresAt = null;
-      if (row.remoteTaskId) {
+      if (row.remoteTaskId || row.payload.reconciliationIntent !== undefined) {
         row.status = "needs_input";
         row.error = { code: "reconcile_required" };
       } else row.status = "queued";
@@ -133,6 +134,15 @@ class DurableMemoryJobs implements WorkerJobRepository {
     const row = this.owned(job, owner);
     if (!row) return false;
     row.remoteTaskId = remoteTaskId;
+    const { reconciliationIntent: _intent, ...payload } = row.payload;
+    row.payload = payload;
+    return true;
+  }
+
+  async persistReconciliationIntent(job: ClaimedWorkerJob, owner: string, _now: Date, intent: ReconciliationIntent): Promise<boolean> {
+    const row = this.owned(job, owner);
+    if (!row) return false;
+    row.payload = { ...row.payload, reconciliationIntent: intent };
     return true;
   }
 
@@ -161,6 +171,7 @@ describe("durable worker recovery", () => {
       markNeedsInput: vi.fn(async () => true),
       retry: vi.fn(async () => true),
       heartbeat: vi.fn(async () => true),
+      persistReconciliationIntent: vi.fn(async () => true),
       persistRemoteTask: vi.fn(async () => true),
       enqueueCompensation: vi.fn(async () => true)
     };
@@ -173,6 +184,8 @@ describe("durable worker recovery", () => {
     await adapted.markResultUnknown(claimed, "owner-1", now, "remote-1", { code: "unknown" });
     await adapted.retry(claimed, "owner-1", now, 1_000, { code: "retry" });
     await adapted.heartbeat(claimed, "owner-1", now, 30_000);
+    const intent = { version: 1 as const, operation: "canvas_submit", idempotencyKey: "canvas:rev:1" };
+    await adapted.persistReconciliationIntent(claimed, "owner-1", now, intent);
     await adapted.persistRemoteTask(claimed, "owner-1", now, "remote-2");
     await adapted.enqueueCompensation(claimed, "owner-1", now, { kind: "staging_cleanup", businessKey: "cleanup-1", payload: {} });
     expect(repository.completeAndEnqueue).toHaveBeenCalledWith("job-1", "owner-1", "lease-1", now, []);
@@ -181,6 +194,7 @@ describe("durable worker recovery", () => {
     expect(repository.markResultUnknown).toHaveBeenCalledWith("job-1", "owner-1", "lease-1", now, "remote-1", { code: "unknown" });
     expect(repository.retry).toHaveBeenCalledWith("job-1", "owner-1", "lease-1", now, 1_000, { code: "retry" });
     expect(repository.heartbeat).toHaveBeenCalledWith("job-1", "owner-1", "lease-1", now, 30_000);
+    expect(repository.persistReconciliationIntent).toHaveBeenCalledWith("job-1", "owner-1", "lease-1", now, intent);
     expect(repository.persistRemoteTask).toHaveBeenCalledWith("job-1", "owner-1", "lease-1", now, "remote-2");
     expect(repository.enqueueCompensation).toHaveBeenCalledWith("job-1", "owner-1", "lease-1", now, { kind: "staging_cleanup", businessKey: "cleanup-1", payload: {} });
   });

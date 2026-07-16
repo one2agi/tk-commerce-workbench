@@ -22,6 +22,7 @@ const execution: WorkerExecutionContext = {
   fence: { jobId: "job-test", owner: "worker-test", leaseToken: "lease-1" },
   signal: new AbortController().signal,
   assertLease: vi.fn(),
+  persistReconciliationIntent: vi.fn(async () => undefined),
   persistRemoteTask: vi.fn(async () => undefined),
   scheduleCompensation: vi.fn(async () => undefined)
 };
@@ -165,6 +166,7 @@ describe("Canvas handler", () => {
   });
 
   it("stages template references separately and forwards locale, style and prompt evidence", async () => {
+    vi.mocked(execution.persistReconciliationIntent).mockClear();
     const ports = createFakePorts();
     const repository = {
       loadPlan: vi.fn(async () => ({
@@ -193,6 +195,43 @@ describe("Canvas handler", () => {
       },
       idempotencyKey: "canvas:rev-template:2"
     });
+    expect(execution.persistReconciliationIntent).toHaveBeenCalledWith({
+      version: 1,
+      operation: "canvas_submit",
+      idempotencyKey: "canvas:rev-template:2",
+      revisionId: "rev-template",
+      workflowId: "TKWorkflow",
+      workflowVersion: 1,
+      templateVersion: 2
+    });
+  });
+
+  it("fails closed before any Canvas work when a submit intent exists without a remote task id", async () => {
+    const ports = createFakePorts();
+    const repository = { loadPlan: vi.fn(), saveOutputs: vi.fn() };
+    const handler = createCanvasHandler({
+      canvas: ports.canvas,
+      staging: ports.assetStaging,
+      store: store(),
+      repository,
+      quota: { reserve: vi.fn() },
+      audit: { append: vi.fn() },
+      now: () => new Date("2026-07-16T00:00:00Z"),
+      cleanupCodec,
+      maxRunsPerDay: 10
+    });
+
+    await expect(invoke(handler, job("canvas_generate", {
+      revisionId: "rev-intent",
+      reconciliationIntent: {
+        version: 1,
+        operation: "canvas_submit",
+        idempotencyKey: "canvas:rev-intent:1"
+      }
+    }))).rejects.toMatchObject({ code: "reconcile_required" });
+    expect(repository.loadPlan).not.toHaveBeenCalled();
+    expect(ports.canvas.calls).toHaveLength(0);
+    expect(ports.assetStaging.calls).toHaveLength(0);
   });
 
   it("stages only capacity-selected references and never exceeds the workflow limit", async () => {

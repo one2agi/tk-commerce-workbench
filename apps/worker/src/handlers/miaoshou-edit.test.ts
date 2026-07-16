@@ -48,6 +48,7 @@ function execution(): WorkerExecutionContext {
     fence: { jobId: "job-1", owner: "worker-1", leaseToken: "lease-1" },
     signal: new AbortController().signal,
     assertLease: vi.fn(),
+    persistReconciliationIntent: vi.fn(),
     persistRemoteTask: vi.fn(),
     scheduleCompensation: vi.fn()
   };

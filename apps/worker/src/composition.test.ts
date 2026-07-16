@@ -7,6 +7,7 @@ const execution: WorkerExecutionContext = {
   fence: { jobId: "job-1", owner: "worker-1", leaseToken: "lease-1" },
   signal: new AbortController().signal,
   assertLease: vi.fn(),
+  persistReconciliationIntent: vi.fn(async () => undefined),
   persistRemoteTask: vi.fn(async () => undefined),
   scheduleCompensation: vi.fn(async () => undefined)
 };
