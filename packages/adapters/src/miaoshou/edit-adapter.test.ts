@@ -9,7 +9,7 @@ import {
   type ApprovalSnapshotV1
 } from "@tk/contracts";
 import { describe, expect, it, vi } from "vitest";
-import { createMiaoshouEditAdapter } from "./edit-adapter.js";
+import { createLiveMiaoshouEditAdapter, createMiaoshouEditAdapter } from "./edit-adapter.js";
 import { mapApprovalSnapshotToMiaoshouEdit } from "./edit-mapper.js";
 import { fingerprintMiaoshouEditableDetail, sha256Text, type MiaoshouEditExpectation } from "./reconcile-edit.js";
 import type { MiaoshouHttp } from "./client.js";
@@ -99,6 +99,33 @@ describe("Miaoshou common collect-box edit mapper", () => {
 });
 
 describe("Miaoshou common collect-box edit adapter", () => {
+  it.each([408, 425])("treats real HTTP %i edit response as needs_reconcile without issuing a second write", async (status) => {
+    const current = { result: "success", code: "200", data: { ossMd5: "md5", editCommonCollectBoxDetail: { commonCollectBoxDetailId: 3799770548, sourceList: [{ sourceItemId: "892408514788" }] } } };
+    const requests: Array<{ url: string; method: string }> = [];
+    const fetchImpl = vi.fn(async (url: string | URL | Request, init?: RequestInit) => {
+      requests.push({ url: String(url), method: init?.method ?? "GET" });
+      return String(url).includes("get_common_collect_box_detail")
+        ? new Response(JSON.stringify(current), { status: 200 })
+        : new Response(null, { status });
+    });
+    const adapter = createLiveMiaoshouEditAdapter({
+      baseUrl: "https://api.miaoshou.test",
+      appKey: "test-key",
+      appSecret: "test-secret"
+    }, fetchImpl as unknown as typeof fetch);
+    const input = { approvalSnapshot: approval(), orderedRemoteAssetUrls: remoteUrls, idempotencyKey: idempotencyKey(`edit:http-${status}`) };
+
+    await expect(adapter.applyEdit(input)).resolves.toMatchObject({
+      kind: "needs_reconcile",
+      failure: { kind: "reconcile_required", code: "miaoshou.edit_result_unknown" }
+    });
+    await expect(adapter.applyEdit(input)).resolves.toMatchObject({
+      kind: "needs_reconcile",
+      failure: { code: "miaoshou.edit_reconciliation_pending" }
+    });
+    expect(requests.filter((request) => request.url.includes("edit_common_collect_box_detail"))).toHaveLength(1);
+  });
+
   it("reconciles applied against the exact observable projection of the real GET fixture", async () => {
     const real = await fixture("detail-3799770548.json");
     const detail = real.data.editCommonCollectBoxDetail as Record<string, any>;
