@@ -4,18 +4,24 @@ import { readFile } from "node:fs/promises";
 
 import {
   MIAOSHOU_DEFAULT_BASE_URL,
+  createMiaoshouEditAdapter,
+  createMiaoshouHttp,
+  createSafeImageDownloader,
   createAdapterBundle as createDefaultAdapterBundle,
   createLiveMiaoshouSourceAdapter,
   type AdapterBundle,
   type AdapterFactoryConfig,
   type LiveCommandContext,
-  type MiaoshouConfig
+  type MiaoshouConfig,
+  type MiaoshouEditableDetail,
+  type MiaoshouEditExpectationResolver
 } from "@tk/adapters";
 import { loadConfig } from "@tk/config";
 import { createFakePorts } from "@tk/contracts/testing";
-import type { MiaoshouSourcePort } from "@tk/contracts";
+import type { MiaoshouEditPort, MiaoshouSourcePort } from "@tk/contracts";
 import {
   AuditRepository,
+  ApprovalRepository,
   CanvasQuotaRepository,
   ContentAddressedStore,
   JobRepository,
@@ -40,6 +46,7 @@ export interface WorkerEntryDependencies {
   createPool?: (connectionString: string) => ClosableDbPool;
   createAdapterBundle?: (config: AdapterFactoryConfig, context?: LiveCommandContext) => AdapterBundle;
   createMiaoshou?: (config: MiaoshouConfig) => MiaoshouSourcePort;
+  createMiaoshouEdit?: (config: MiaoshouConfig, resolver: MiaoshouEditExpectationResolver) => MiaoshouEditPort;
   resolveHost?: (hostname: string) => Promise<string[]>;
 }
 
@@ -48,6 +55,7 @@ export interface CreateWorkerApplicationInput {
   processKind?: WorkerProcessKind;
   commandContext?: LiveCommandContext;
   miaoshou?: MiaoshouSourcePort;
+  miaoshouEdit?: MiaoshouEditPort;
   dependencies?: WorkerEntryDependencies;
 }
 
@@ -167,15 +175,46 @@ export function createWorkerApplication(input: CreateWorkerApplicationInput = {}
   });
   const pipeline = new PipelineRepository(pool, config.localOperatorId);
   const jobs = new JobRepository(pool);
+  const approvals = new ApprovalRepository(pool);
+  const expectationResolver: MiaoshouEditExpectationResolver = {
+    resolve: async ({ canonicalSuccessDetailId, sourceItemId }) =>
+      await jobs.loadMiaoshouReconciliationExpectation(canonicalSuccessDetailId, sourceItemId) as MiaoshouEditableDetail | undefined
+  };
+  let miaoshouEdit = input.miaoshouEdit;
+  if (!miaoshouEdit) {
+    miaoshouEdit = adapters.mode === "mock"
+      ? createFakePorts().miaoshouEdit
+      : (dependencies.createMiaoshouEdit ?? ((liveConfig, resolver) => createMiaoshouEditAdapter({
+        http: createMiaoshouHttp(liveConfig), expectationResolver: resolver
+      })))(miaoshouConfig(env), expectationResolver);
+  }
+  const safeStagedDownload = createSafeImageDownloader({
+    resolveHost: async (hostname) => (await resolveHost(hostname)).map((address) => ({
+      address,
+      family: address.includes(":") ? 6 as const : 4 as const
+    })),
+    maxBytes: 12 * 1024 * 1024
+  });
+  const miaoshouEditRepository = {
+    loadSnapshot: (id: string) => approvals.loadSnapshot(id),
+    saveSucceeded: (...args: Parameters<ApprovalRepository["saveSucceeded"]>) => approvals.saveSucceeded(...args),
+    saveValidationFailure: (...args: Parameters<ApprovalRepository["saveValidationFailure"]>) => approvals.saveValidationFailure(...args),
+    saveResultUnknown: (...args: Parameters<ApprovalRepository["saveResultUnknown"]>) => approvals.saveResultUnknown(...args),
+    saveReconciled: (...args: Parameters<ApprovalRepository["saveReconciled"]>) => approvals.saveReconciled(...args),
+    persistReconciliationContext: (context: Parameters<JobRepository["persistMiaoshouReconciliationContext"]>[4], fence: { jobId: string; owner: string; leaseToken: string }) =>
+      jobs.persistMiaoshouReconciliationContext(fence.jobId, fence.owner, fence.leaseToken, new Date(), context)
+  };
   const runtime = buildWorkerRuntime({
     ports: {
       miaoshou,
+      miaoshouEdit,
       llm: adapters.llm,
       exchangeRate: adapters.exchangeRate,
       canvas: adapters.canvas,
       staging: adapters.assetStaging
     },
-    repositories: pipelineRepositories(pipeline),
+    repositories: { ...pipelineRepositories(pipeline), miaoshouEdit: miaoshouEditRepository },
+    reachability: { assertReachable: async (urls) => { await Promise.all(urls.map((url) => safeStagedDownload(url))); } },
     store,
     analyzer: createLocalImageAnalyzer(),
     quota: new CanvasQuotaRepository(pool),

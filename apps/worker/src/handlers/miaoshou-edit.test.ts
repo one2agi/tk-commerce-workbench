@@ -70,7 +70,8 @@ function dependencies(result: Awaited<ReturnType<MiaoshouEditPort["applyEdit"]>>
     saveSucceeded: vi.fn().mockResolvedValue(true),
     saveValidationFailure: vi.fn().mockResolvedValue(true),
     saveResultUnknown: vi.fn().mockResolvedValue(true),
-    saveReconciled: vi.fn().mockResolvedValue(true)
+    saveReconciled: vi.fn().mockResolvedValue(true),
+    persistReconciliationContext: vi.fn().mockResolvedValue(true)
   };
   const audit = { append: vi.fn().mockResolvedValue(undefined) };
   const reachability = { assertReachable: vi.fn().mockResolvedValue(undefined) };
@@ -86,6 +87,21 @@ describe("createMiaoshouEditHandler", () => {
     await expect(handler(job(), run)).resolves.toEqual({ next: [] });
 
     expect(run.persistRemoteTask).toHaveBeenCalledWith("canonical:detail-3799770548");
+    expect(deps.repository.persistReconciliationContext).toHaveBeenCalledWith(
+      expect.objectContaining({
+        version: 1,
+        approvalSnapshotId: "approval-1",
+        canonicalSuccessDetailId: "detail-3799770548",
+        sourceItemId: "892408514788",
+        orderedRemoteAssetUrls: ["https://stage.test/asset-b", "https://stage.test/asset-a"],
+        expectedDetail: expect.objectContaining({ title: "title", imgUrls: ["https://stage.test/asset-b", "https://stage.test/asset-a"] })
+      }),
+      expect.any(Object)
+    );
+    const persistedMarker = vi.mocked(run.persistRemoteTask);
+    expect(deps.repository.persistReconciliationContext.mock.invocationCallOrder[0])
+      .toBeLessThan(persistedMarker.mock.invocationCallOrder[0]!);
+    expect(persistedMarker.mock.invocationCallOrder[0]).toBeLessThan(deps.edit.applyEdit.mock.invocationCallOrder[0]!);
     expect(deps.staging.stage).toHaveBeenCalledWith({ localAssetIds: ["asset-b", "asset-a"], purpose: "miaoshou_edit" });
     expect(deps.reachability.assertReachable).toHaveBeenCalledWith(["https://stage.test/asset-b", "https://stage.test/asset-a"]);
     expect(deps.edit.applyEdit).toHaveBeenCalledWith(expect.objectContaining({

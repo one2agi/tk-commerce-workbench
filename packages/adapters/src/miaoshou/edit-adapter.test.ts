@@ -241,4 +241,39 @@ describe("Miaoshou common collect-box edit adapter", () => {
     expect(post).toHaveBeenCalledTimes(1);
     expect(post.mock.calls.some(([path]) => String(path).includes("edit_common_collect_box_detail"))).toBe(false);
   });
+
+  it("rebuilds the exact expectation through a repository resolver after process restart", async () => {
+    const mapped = mapApprovalSnapshotToMiaoshouEdit(approval(), remoteUrls);
+    const mappedSku = mapped.skuMap[";แดง;S;"]!;
+    const remote = { result: "success", code: "200", data: { editCommonCollectBoxDetail: {
+      commonCollectBoxDetailId: 3799770548,
+      sourceList: [{ sourceItemId: "892408514788" }],
+      ...mapped,
+      skuMap: { ";แดง;S;": { price: mappedSku.price, stock: mappedSku.stock } }
+    } } };
+    const resolve = vi.fn().mockResolvedValue(mapped);
+    const post = vi.fn(async (_path: string) => remote);
+    const restarted = createMiaoshouEditAdapter({ http: { post } as MiaoshouHttp, expectationResolver: { resolve } });
+
+    await expect(restarted.reconcileByCanonicalDetailId({ canonicalSuccessDetailId: "3799770548", sourceItemId: sourceItemId("892408514788") }))
+      .resolves.toEqual({ remoteDetailId: "3799770548", state: "applied" });
+    expect(resolve).toHaveBeenCalledWith({ canonicalSuccessDetailId: "3799770548", sourceItemId: "892408514788" });
+    expect(post.mock.calls.some(([path]) => String(path).includes("edit_common_collect_box_detail"))).toBe(false);
+  });
+
+  it("fails closed when the repository resolver cannot select one unambiguous expectation", async () => {
+    const remote = { result: "success", code: "200", data: { editCommonCollectBoxDetail: {
+      commonCollectBoxDetailId: 3799770548,
+      sourceList: [{ sourceItemId: "892408514788" }]
+    } } };
+    const post = vi.fn(async (_path: string) => remote);
+    const restarted = createMiaoshouEditAdapter({
+      http: { post } as MiaoshouHttp,
+      expectationResolver: { resolve: vi.fn().mockResolvedValue(undefined) }
+    });
+
+    await expect(restarted.reconcileByCanonicalDetailId({ canonicalSuccessDetailId: "3799770548", sourceItemId: sourceItemId("892408514788") }))
+      .resolves.toEqual({ remoteDetailId: "3799770548", state: "no_change" });
+    expect(post).toHaveBeenCalledTimes(1);
+  });
 });

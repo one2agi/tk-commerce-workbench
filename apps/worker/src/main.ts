@@ -1,4 +1,4 @@
-import type { AssetStagingPort, CanvasPort, ExchangeRatePort, LlmPort, MiaoshouSourcePort } from "@tk/contracts";
+import type { AssetStagingPort, CanvasPort, ExchangeRatePort, LlmPort, MiaoshouEditPort, MiaoshouSourcePort } from "@tk/contracts";
 import { createArchiveAssetsHandler } from "./handlers/archive-assets.js";
 import { createPricingHandler } from "./handlers/calculate-pricing.js";
 import { createCollectHandler } from "./handlers/collect.js";
@@ -9,6 +9,7 @@ import { createTemplateMatchHandler } from "./handlers/match-template.js";
 import { createExchangeRateRefreshHandler } from "./handlers/refresh-exchange-rate.js";
 import { createImageSelectHandler } from "./handlers/select-images.js";
 import { createStagingCleanupHandler } from "./handlers/staging-cleanup.js";
+import { createMiaoshouEditHandler } from "./handlers/miaoshou-edit.js";
 import { AdapterLimiterSet, type AdapterLimit } from "./runtime/adapter-limiter.js";
 import { runWorkerLoop, type WorkerHandler, type WorkerJobRepository } from "./runtime/worker-loop.js";
 
@@ -37,6 +38,7 @@ export function createAtomicStagingPort(port: AssetStagingPort, run: LimitedRun)
 export interface HandlerRegistryInput {
   ports: {
     miaoshou: MiaoshouSourcePort;
+    miaoshouEdit: MiaoshouEditPort;
     llm: LlmPort;
     exchangeRate: ExchangeRatePort;
     canvas: CanvasPort;
@@ -52,7 +54,9 @@ export interface HandlerRegistryInput {
     images: Parameters<typeof createImageSelectHandler>[0]["repository"];
     canvas: Parameters<typeof createCanvasHandler>[0]["repository"];
     finalPreview: Parameters<typeof createFinalPreviewHandler>[0]["repository"];
+    miaoshouEdit: Parameters<typeof createMiaoshouEditHandler>[0]["repository"];
   };
+  reachability: Parameters<typeof createMiaoshouEditHandler>[0]["reachability"];
   store: Parameters<typeof createArchiveAssetsHandler>[0]["store"];
   analyzer: Parameters<typeof createArchiveAssetsHandler>[0]["analyzer"];
   quota: Parameters<typeof createCanvasHandler>[0]["quota"];
@@ -80,6 +84,10 @@ export function buildHandlerRegistry(input: HandlerRegistryInput): Readonly<Reco
     fetchOutputs: (value) => limiters.run("canvas", () => input.ports.canvas.fetchOutputs(value))
   };
   const staging = createAtomicStagingPort(input.ports.staging, (operation) => limiters.run("staging", operation));
+  const miaoshouEdit: MiaoshouEditPort = {
+    applyEdit: (value) => limiters.run("miaoshou", () => input.ports.miaoshouEdit.applyEdit(value)),
+    reconcileByCanonicalDetailId: (value) => limiters.run("miaoshou", () => input.ports.miaoshouEdit.reconcileByCanonicalDetailId(value))
+  };
   return Object.freeze({
     miaoshou_collect: createCollectHandler({ port: miaoshou, repository: input.repositories.collect, audit: input.audit }),
     asset_archive: createArchiveAssetsHandler({ store: input.store, analyzer: input.analyzer, repository: input.repositories.archive, audit: input.audit }),
@@ -90,7 +98,14 @@ export function buildHandlerRegistry(input: HandlerRegistryInput): Readonly<Reco
     canvas_generate: createCanvasHandler({ canvas, staging, store: input.store, repository: input.repositories.canvas, quota: input.quota, audit: input.audit, now: input.now, maxRunsPerDay: input.maxCanvasRunsPerDay }),
     final_preview: createFinalPreviewHandler({ repository: input.repositories.finalPreview }),
     exchange_rate_refresh: createExchangeRateRefreshHandler({ port: exchangeRate, repository: input.repositories.exchangeRate, audit: input.audit, now: input.now }),
-    staging_cleanup: createStagingCleanupHandler({ staging, audit: input.audit })
+    staging_cleanup: createStagingCleanupHandler({ staging, audit: input.audit }),
+    miaoshou_edit: createMiaoshouEditHandler({
+      edit: miaoshouEdit,
+      staging,
+      repository: input.repositories.miaoshouEdit,
+      reachability: input.reachability,
+      audit: input.audit
+    })
   });
 }
 

@@ -3,6 +3,7 @@ import { mkdtemp, rm, stat } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createFakePorts } from "@tk/contracts/testing";
+import { createMiaoshouEditAdapter, type MiaoshouEditableDetail, type MiaoshouHttp } from "@tk/adapters";
 import {
   AuditRepository,
   ApprovalRepository,
@@ -96,8 +97,9 @@ describe("real PostgreSQL worker composition", () => {
       payload: event.payload as Record<string, unknown> | undefined
     }) };
     const makeRuntime = () => buildWorkerRuntime({
-      ports: { miaoshou: ports.miaoshouSource, llm: ports.llm, exchangeRate: ports.exchangeRate, canvas: ports.canvas, staging: ports.assetStaging },
-      repositories: pipelineRepositories(pipeline),
+      ports: { miaoshou: ports.miaoshouSource, miaoshouEdit: ports.miaoshouEdit, llm: ports.llm, exchangeRate: ports.exchangeRate, canvas: ports.canvas, staging: ports.assetStaging },
+      repositories: { ...pipelineRepositories(pipeline), miaoshouEdit: {} as never },
+      reachability: { assertReachable: async () => undefined },
       store: localStore,
       analyzer: { analyze: vi.fn(async ({ remoteUrl }: { remoteUrl: string }) => ({
         width: remoteUrl.includes("rejected") ? 320 : 1200,
@@ -270,7 +272,22 @@ describe("real PostgreSQL worker composition", () => {
       payload: { version: 1, approvalSnapshotId, productId, canonicalSuccessDetailId: "canonical-edit" }
     });
     const ports = createFakePorts();
-    ports.miaoshouEdit.responses.push({ kind: "succeeded", remoteDetailId: "canonical-edit" });
+    let applyCount = 0;
+    let remoteDetail: Record<string, unknown> = {
+      commonCollectBoxDetailId: "canonical-edit",
+      sourceList: [{ sourceItemId: "source-edit" }],
+      title: "before"
+    };
+    const http: MiaoshouHttp = {
+      post: vi.fn(async (path: string, body: Record<string, unknown>) => {
+        if (path.includes("get_common_collect_box_detail")) {
+          return { result: "success", data: { ossMd5: "md5", editCommonCollectBoxDetail: remoteDetail } } as never;
+        }
+        applyCount += 1;
+        remoteDetail = body.editCommonCollectBoxDetail as Record<string, unknown>;
+        return { result: "success" } as never;
+      })
+    };
     let crashAfterRemoteAcceptance = true;
     const repository = {
       loadSnapshot: (id: string) => approvals.loadSnapshot(id),
@@ -283,10 +300,19 @@ describe("real PostgreSQL worker composition", () => {
       },
       saveValidationFailure: (...args: Parameters<ApprovalRepository["saveValidationFailure"]>) => approvals.saveValidationFailure(...args),
       saveResultUnknown: (...args: Parameters<ApprovalRepository["saveResultUnknown"]>) => approvals.saveResultUnknown(...args),
-      saveReconciled: (...args: Parameters<ApprovalRepository["saveReconciled"]>) => approvals.saveReconciled(...args)
+      saveReconciled: (...args: Parameters<ApprovalRepository["saveReconciled"]>) => approvals.saveReconciled(...args),
+      persistReconciliationContext: (context: Parameters<JobRepository["persistMiaoshouReconciliationContext"]>[4], fence: { jobId: string; owner: string; leaseToken: string }) =>
+        jobs.persistMiaoshouReconciliationContext(fence.jobId, fence.owner, fence.leaseToken, new Date(), context)
     };
-    const handler = createMiaoshouEditHandler({
-      edit: ports.miaoshouEdit,
+    const makeEdit = () => createMiaoshouEditAdapter({
+      http,
+      expectationResolver: {
+        resolve: async ({ canonicalSuccessDetailId, sourceItemId }) =>
+          await jobs.loadMiaoshouReconciliationExpectation(canonicalSuccessDetailId, sourceItemId) as MiaoshouEditableDetail | undefined
+      }
+    });
+    const makeHandler = () => createMiaoshouEditHandler({
+      edit: makeEdit(),
       staging: ports.assetStaging,
       repository,
       reachability: { assertReachable: async () => undefined },
@@ -296,7 +322,7 @@ describe("real PostgreSQL worker composition", () => {
 
     await runWorkerLoop({
       jobs: leasedJobs,
-      handlers: { miaoshou_edit: handler },
+      handlers: { miaoshou_edit: makeHandler() },
       clock: { now: () => new Date() },
       workerId: "edit-worker-before-crash",
       leaseMs: 30_000,
@@ -311,14 +337,14 @@ describe("real PostgreSQL worker composition", () => {
 
     await runWorkerLoop({
       jobs: leasedJobs,
-      handlers: { miaoshou_edit: handler },
+      handlers: { miaoshou_edit: makeHandler() },
       clock: { now: () => new Date() },
       workerId: "edit-worker-after-restart",
       leaseMs: 30_000,
       maxJobs: 1
     });
-    expect(ports.miaoshouEdit.calls.filter((call) => call.method === "applyEdit")).toHaveLength(1);
-    expect(ports.miaoshouEdit.calls.filter((call) => call.method === "reconcileByCanonicalDetailId")).toHaveLength(1);
+    expect(applyCount).toBe(1);
+    expect((http.post as ReturnType<typeof vi.fn>).mock.calls.filter(([path]) => String(path).includes("get_common_collect_box_detail"))).toHaveLength(2);
     const recovered = await handle.pool.query(
       `SELECT job.status, sync.state
        FROM jobs job JOIN miaoshou_syncs sync ON sync.approval_snapshot_id = $2

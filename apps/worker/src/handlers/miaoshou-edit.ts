@@ -5,6 +5,7 @@ import type {
   MiaoshouEditFieldError,
   MiaoshouEditPort
 } from "@tk/contracts";
+import { mapApprovalSnapshotToMiaoshouEdit, type MiaoshouEditableDetail } from "@tk/adapters";
 
 import {
   ExternalResultUnknownError,
@@ -33,6 +34,14 @@ interface MiaoshouEditRepository {
     result: { remoteDetailId: string; state: "applied" | "no_change" | "missing" },
     fence: LeaseFence
   ): Promise<boolean>;
+  persistReconciliationContext(context: {
+    version: 1;
+    approvalSnapshotId: string;
+    canonicalSuccessDetailId: string;
+    sourceItemId: string;
+    orderedRemoteAssetUrls: readonly string[];
+    expectedDetail: MiaoshouEditableDetail;
+  }, fence: LeaseFence): Promise<boolean>;
 }
 
 export function createMiaoshouEditHandler(input: {
@@ -95,6 +104,15 @@ export function createMiaoshouEditHandler(input: {
       const orderedRemoteAssetUrls = staged.map((asset) => asset.remoteUrl);
       await input.reachability.assertReachable(orderedRemoteAssetUrls);
       execution.assertLease();
+      const expectedDetail = mapApprovalSnapshotToMiaoshouEdit(snapshot, orderedRemoteAssetUrls);
+      requireFencedWrite(await input.repository.persistReconciliationContext({
+        version: 1,
+        approvalSnapshotId,
+        canonicalSuccessDetailId: String(snapshot.canonicalSuccessDetailId),
+        sourceItemId: String(snapshot.sourceItemId),
+        orderedRemoteAssetUrls,
+        expectedDetail
+      }, execution.fence));
       await input.audit.append({
         action: "miaoshou.edit.call",
         targetKind: "approval_snapshot",

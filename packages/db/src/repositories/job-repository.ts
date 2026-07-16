@@ -32,6 +32,15 @@ export interface ClaimedJob {
   remoteTaskId: string | null;
 }
 
+export interface MiaoshouReconciliationContext {
+  readonly version: 1;
+  readonly approvalSnapshotId: string;
+  readonly canonicalSuccessDetailId: string;
+  readonly sourceItemId: string;
+  readonly orderedRemoteAssetUrls: readonly string[];
+  readonly expectedDetail: Readonly<Record<string, unknown>>;
+}
+
 export class JobRepository {
   constructor(
     private readonly pool: DbPool,
@@ -283,6 +292,48 @@ export class JobRepository {
       [jobId, owner, leaseToken, now, remoteTaskId]
     );
     return result.rowCount === 1;
+  }
+
+  async persistMiaoshouReconciliationContext(
+    jobId: string,
+    owner: string,
+    leaseToken: string,
+    now: Date,
+    context: MiaoshouReconciliationContext
+  ): Promise<boolean> {
+    assert(context.version === 1, "Miaoshou reconciliation context version must be 1");
+    assert(context.approvalSnapshotId.length > 0, "approvalSnapshotId required");
+    assert(context.canonicalSuccessDetailId.length > 0, "canonicalSuccessDetailId required");
+    assert(context.sourceItemId.length > 0, "sourceItemId required");
+    assert(context.orderedRemoteAssetUrls.length > 0, "orderedRemoteAssetUrls required");
+    const result = await this.pool.query(
+      `UPDATE ${schema.jobs}
+       SET payload = jsonb_set(payload, '{reconciliationContext}', $6::jsonb, true), updated_at = now()
+       WHERE id = $1 AND kind = 'miaoshou_edit' AND status = 'running'
+         AND owner = $2 AND lease_token = $3 AND lease_expires_at > $4::timestamptz
+         AND payload->>'approvalSnapshotId' = $5`,
+      [jobId, owner, leaseToken, now, context.approvalSnapshotId, JSON.stringify(context)]
+    );
+    return result.rowCount === 1;
+  }
+
+  async loadMiaoshouReconciliationExpectation(
+    canonicalSuccessDetailId: string,
+    sourceItemId: string
+  ): Promise<Readonly<Record<string, unknown>> | undefined> {
+    const result = await this.pool.query<{ expected_detail: Record<string, unknown> }>(
+      `SELECT payload->'reconciliationContext'->'expectedDetail' AS expected_detail
+       FROM ${schema.jobs}
+       WHERE kind = 'miaoshou_edit' AND status IN ('running', 'needs_input')
+         AND payload->'reconciliationContext'->>'canonicalSuccessDetailId' = $1
+         AND payload->'reconciliationContext'->>'sourceItemId' = $2
+       ORDER BY created_at ASC
+       LIMIT 2`,
+      [canonicalSuccessDetailId, sourceItemId]
+    );
+    if (result.rows.length !== 1) return undefined;
+    const expected = result.rows[0]?.expected_detail;
+    return expected && typeof expected === "object" && !Array.isArray(expected) ? expected : undefined;
   }
 
   async enqueueCompensation(

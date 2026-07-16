@@ -421,6 +421,53 @@ describe("integration: job repository claim semantics", () => {
     expect(stored.rows[0]?.remote_task_id).toBe("remote-good");
   });
 
+  test("persists one fenced Miaoshou reconciliation expectation and fails closed on ambiguity", async () => {
+    const now = new Date("2026-07-16T00:00:00Z");
+    const firstId = await jobs.enqueue({
+      kind: "miaoshou_edit",
+      businessKey: "edit:expectation-1",
+      payload: { version: 1, approvalSnapshotId: "approval-1" }
+    });
+    const first = await jobs.claim("worker-1", now, 30_000);
+    expect(first?.jobId).toBe(firstId);
+    const context = {
+      version: 1 as const,
+      approvalSnapshotId: "approval-1",
+      canonicalSuccessDetailId: "3799770548",
+      sourceItemId: "892408514788",
+      orderedRemoteAssetUrls: ["https://stage.test/a.png"],
+      expectedDetail: { title: "approved", imgUrls: ["https://stage.test/a.png"] }
+    };
+    expect(await jobs.persistMiaoshouReconciliationContext(
+      firstId, "worker-1", first!.leaseToken, new Date("2026-07-16T00:00:01Z"), context
+    )).toBe(true);
+    await handle.pool.query(
+      `UPDATE jobs SET status = 'needs_input', owner = NULL, lease_token = NULL,
+         lease_expires_at = NULL, remote_task_id = 'canonical:3799770548',
+         error = '{"code":"reconcile_required"}'::jsonb WHERE id = $1`,
+      [firstId]
+    );
+
+    await expect(jobs.loadMiaoshouReconciliationExpectation("3799770548", "892408514788"))
+      .resolves.toEqual(context.expectedDetail);
+
+    const secondId = await jobs.enqueue({
+      kind: "miaoshou_edit",
+      businessKey: "edit:expectation-2",
+      payload: { version: 1, approvalSnapshotId: "approval-2" }
+    });
+    const second = await jobs.claim("worker-2", now, 30_000);
+    expect(second?.jobId).toBe(secondId);
+    expect(await jobs.persistMiaoshouReconciliationContext(
+      secondId, "worker-2", second!.leaseToken, new Date("2026-07-16T00:00:01Z"), { ...context, approvalSnapshotId: "approval-2" }
+    )).toBe(true);
+
+    await expect(jobs.loadMiaoshouReconciliationExpectation("3799770548", "892408514788"))
+      .resolves.toBeUndefined();
+    const persisted = await handle.pool.query("SELECT payload FROM jobs WHERE id = $1", [firstId]);
+    expect(JSON.stringify(persisted.rows[0].payload)).not.toMatch(/authorization|cookie|secret/i);
+  });
+
   test("rolls back a newly inserted job when its same-transaction audit cannot serialize", async () => {
     await expect(jobs.enqueue({
       kind: "pricing_calculate",

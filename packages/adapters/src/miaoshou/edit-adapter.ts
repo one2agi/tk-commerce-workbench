@@ -21,6 +21,27 @@ type ApiEnvelope = {
 
 export interface MiaoshouEditAdapterDeps {
   readonly http: MiaoshouHttp;
+  readonly expectationResolver?: MiaoshouEditExpectationResolver;
+}
+
+export interface MiaoshouEditExpectationResolver {
+  resolve(input: {
+    canonicalSuccessDetailId: string;
+    sourceItemId: string;
+  }): Promise<MiaoshouEditableDetail | undefined>;
+}
+
+function validExpectation(value: MiaoshouEditableDetail | undefined): value is MiaoshouEditableDetail {
+  return Boolean(value
+    && typeof value.title === "string"
+    && typeof value.notesText === "string"
+    && typeof value.notes === "string"
+    && typeof value.price === "number"
+    && typeof value.stock === "number"
+    && typeof value.weight === "number"
+    && Array.isArray(value.imgUrls)
+    && Array.isArray(value.sourceAttrs)
+    && value.skuMap && typeof value.skuMap === "object" && !Array.isArray(value.skuMap));
 }
 
 function failureLike(error: unknown): error is ExternalFailure {
@@ -155,7 +176,9 @@ export function createMiaoshouEditAdapter(deps: MiaoshouEditAdapterDeps): Miaosh
     },
 
     async reconcileByCanonicalDetailId({ canonicalSuccessDetailId, sourceItemId }) {
-      const expectedDetail = pending.get(canonicalSuccessDetailId);
+      const resolved = pending.get(canonicalSuccessDetailId)
+        ?? await deps.expectationResolver?.resolve({ canonicalSuccessDetailId, sourceItemId: String(sourceItemId) });
+      const expectedDetail = validExpectation(resolved) ? resolved : undefined;
       const result = await reconcileMiaoshouEdit({
         http: deps.http,
         canonicalSuccessDetailId,
