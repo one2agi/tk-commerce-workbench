@@ -4,18 +4,25 @@ import { readFile } from "node:fs/promises";
 
 import {
   MIAOSHOU_DEFAULT_BASE_URL,
+  createMiaoshouEditAdapter,
+  createMiaoshouHttp,
+  createSafeUrlReachability,
+  fingerprintApprovalSnapshot,
+  stableDigest,
   createAdapterBundle as createDefaultAdapterBundle,
   createLiveMiaoshouSourceAdapter,
   type AdapterBundle,
   type AdapterFactoryConfig,
   type LiveCommandContext,
-  type MiaoshouConfig
+  type MiaoshouConfig,
+  type MiaoshouEditExpectationResolver
 } from "@tk/adapters";
 import { loadConfig } from "@tk/config";
 import { createFakePorts } from "@tk/contracts/testing";
-import type { MiaoshouSourcePort } from "@tk/contracts";
+import type { MiaoshouEditPort, MiaoshouSourcePort } from "@tk/contracts";
 import {
   AuditRepository,
+  ApprovalRepository,
   CanvasQuotaRepository,
   ContentAddressedStore,
   JobRepository,
@@ -29,8 +36,10 @@ import pg from "pg";
 
 import { buildWorkerRuntime } from "./main.js";
 import { adaptLeasedJobRepository } from "./runtime/worker-loop.js";
+import { createStagingCleanupCodec } from "./runtime/staging-cleanup-codec.js";
 
 export type WorkerProcessKind = "app" | "test" | "integration" | "e2e";
+export const LIVE_MIAOSHOU_MIN_INTERVAL_MS = 250;
 
 export interface ClosableDbPool extends DbPool {
   end(): Promise<void>;
@@ -40,6 +49,7 @@ export interface WorkerEntryDependencies {
   createPool?: (connectionString: string) => ClosableDbPool;
   createAdapterBundle?: (config: AdapterFactoryConfig, context?: LiveCommandContext) => AdapterBundle;
   createMiaoshou?: (config: MiaoshouConfig) => MiaoshouSourcePort;
+  createMiaoshouEdit?: (config: MiaoshouConfig, resolver: MiaoshouEditExpectationResolver) => MiaoshouEditPort;
   resolveHost?: (hostname: string) => Promise<string[]>;
 }
 
@@ -48,6 +58,7 @@ export interface CreateWorkerApplicationInput {
   processKind?: WorkerProcessKind;
   commandContext?: LiveCommandContext;
   miaoshou?: MiaoshouSourcePort;
+  miaoshouEdit?: MiaoshouEditPort;
   dependencies?: WorkerEntryDependencies;
 }
 
@@ -167,15 +178,52 @@ export function createWorkerApplication(input: CreateWorkerApplicationInput = {}
   });
   const pipeline = new PipelineRepository(pool, config.localOperatorId);
   const jobs = new JobRepository(pool);
+  const approvals = new ApprovalRepository(pool);
+  const expectationResolver: MiaoshouEditExpectationResolver = {
+    resolve: async ({ canonicalSuccessDetailId, sourceItemId }) => {
+      const context = await jobs.loadMiaoshouReconciliationContext(canonicalSuccessDetailId, sourceItemId);
+      if (!context) return undefined;
+      const snapshot = await approvals.loadSnapshot(context.approvalSnapshotId).catch(() => undefined);
+      if (!snapshot || stableDigest(snapshot) !== context.approvalSnapshotDigest) return undefined;
+      const expected = fingerprintApprovalSnapshot(snapshot, context.orderedRemoteAssetUrlSha256);
+      return stableDigest(expected) === stableDigest(context.expectedDetail) ? expected : undefined;
+    }
+  };
+  let miaoshouEdit = input.miaoshouEdit;
+  if (!miaoshouEdit) {
+    miaoshouEdit = adapters.mode === "mock"
+      ? createFakePorts().miaoshouEdit
+      : (dependencies.createMiaoshouEdit ?? ((liveConfig, resolver) => createMiaoshouEditAdapter({
+        http: createMiaoshouHttp(liveConfig), expectationResolver: resolver
+      })))(miaoshouConfig(env), expectationResolver);
+  }
+  const assertStagedUrlReachable = createSafeUrlReachability({
+    resolveHost: async (hostname) => (await resolveHost(hostname)).map((address) => ({
+      address,
+      family: address.includes(":") ? 6 as const : 4 as const
+    })),
+  });
+  const miaoshouEditRepository = {
+    loadSnapshot: (id: string) => approvals.loadSnapshot(id),
+    saveSucceeded: (...args: Parameters<ApprovalRepository["saveSucceeded"]>) => approvals.saveSucceeded(...args),
+    saveValidationFailure: (...args: Parameters<ApprovalRepository["saveValidationFailure"]>) => approvals.saveValidationFailure(...args),
+    saveResultUnknown: (...args: Parameters<ApprovalRepository["saveResultUnknown"]>) => approvals.saveResultUnknown(...args),
+    saveReconciled: (...args: Parameters<ApprovalRepository["saveReconciled"]>) => approvals.saveReconciled(...args),
+    persistReconciliationContext: (context: Parameters<JobRepository["persistMiaoshouReconciliationContext"]>[4], fence: { jobId: string; owner: string; leaseToken: string }) =>
+      jobs.persistMiaoshouReconciliationContext(fence.jobId, fence.owner, fence.leaseToken, new Date(), context)
+  };
   const runtime = buildWorkerRuntime({
     ports: {
       miaoshou,
+      miaoshouEdit,
       llm: adapters.llm,
       exchangeRate: adapters.exchangeRate,
       canvas: adapters.canvas,
       staging: adapters.assetStaging
     },
-    repositories: pipelineRepositories(pipeline),
+    repositories: { ...pipelineRepositories(pipeline), miaoshouEdit: miaoshouEditRepository },
+    reachability: { assertReachable: async (urls) => { await Promise.all(urls.map(assertStagedUrlReachable)); } },
+    cleanupCodec: createStagingCleanupCodec(config.extensionToken),
     store,
     analyzer: createLocalImageAnalyzer(),
     quota: new CanvasQuotaRepository(pool),
@@ -183,7 +231,7 @@ export function createWorkerApplication(input: CreateWorkerApplicationInput = {}
     now: () => new Date(),
     maxCanvasRunsPerDay: config.maxCanvasRunsPerDay,
     adapterLimits: {
-      miaoshou: { concurrency: 1, minIntervalMs: 0 },
+      miaoshou: { concurrency: 1, minIntervalMs: LIVE_MIAOSHOU_MIN_INTERVAL_MS },
       llm: { concurrency: 1, minIntervalMs: 0 },
       exchangeRate: { concurrency: 1, minIntervalMs: 0 },
       canvas: { concurrency: 1, minIntervalMs: 0 },

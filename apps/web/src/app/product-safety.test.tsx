@@ -81,16 +81,23 @@ describe("product safety boundary", () => {
     expect(draftSource).toMatch(/actualDraftVersion !== command\.expectedDraftVersion/);
 
     const invalidationSource = readFileSync(new URL("../server/services/approval-invalidation.ts", import.meta.url), "utf8");
-    const productLock = invalidationSource.indexOf("SELECT id FROM products");
-    const approvalLock = invalidationSource.indexOf("SELECT id FROM approval_snapshots");
-    const syncLock = invalidationSource.indexOf("SELECT state FROM miaoshou_syncs");
-    const jobLock = invalidationSource.indexOf("SELECT status FROM jobs");
+    expect(invalidationSource).toMatch(/repository\.invalidateForProductInTransaction/);
+    expect(invalidationSource).not.toMatch(/SELECT id FROM approval_snapshots/);
+
+    const coreSource = readFileSync(
+      new URL("../../../../packages/db/src/repositories/approval-repository.ts", import.meta.url),
+      "utf8"
+    );
+    const productLock = coreSource.indexOf("SELECT id FROM ${schema.products}");
+    const approvalLock = coreSource.indexOf("SELECT id FROM ${schema.approvalSnapshots}");
+    const syncLock = coreSource.indexOf("SELECT state FROM ${schema.miaoshouSyncs}");
+    const jobLock = coreSource.indexOf("SELECT status FROM ${schema.jobs}");
     expect(productLock).toBeGreaterThan(-1);
     expect(productLock).toBeLessThan(approvalLock);
     expect(approvalLock).toBeLessThan(syncLock);
     expect(syncLock).toBeLessThan(jobLock);
-    expect(invalidationSource).toMatch(/syncState === "syncing" \|\| syncState === "result_unknown"/);
-    expect(invalidationSource).toMatch(/status IN \('queued', 'paused'\)/);
+    expect(coreSource).toMatch(/syncState === "syncing" \|\| syncState === "result_unknown"/);
+    expect(coreSource).toMatch(/status IN \('queued', 'paused'\)/);
   });
 });
 

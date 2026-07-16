@@ -7,7 +7,7 @@ import { loadRuntimeConfig } from "../../../../../../server/composition";
 import { conflictResponse } from "../../../../../../server/http/safe-conflict";
 import { BASIC_BCP47_PATTERN } from "../../../../../../lib/locale";
 import {
-  createApprovalInvalidationPort,
+  createPgApprovalInvalidationPort,
   type ApprovalInvalidationPort
 } from "../../../../../../server/services/approval-invalidation";
 
@@ -132,7 +132,9 @@ export function createPgDraftPort(approvalInvalidation: ApprovalInvalidationPort
   };
 }
 
-const pgDrafts = createPgDraftPort(createApprovalInvalidationPort());
+const pgDrafts = createPgDraftPort(
+  createPgApprovalInvalidationPort(database)
+);
 
 export async function PATCH(request: Request, context: Context): Promise<Response> {
   return createPatchHandler({ drafts: pgDrafts })(request, context);
