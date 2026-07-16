@@ -30,4 +30,44 @@ describe("worker entry", () => {
     expect(createAdapterBundle).not.toHaveBeenCalled();
     expect(createMiaoshou).not.toHaveBeenCalled();
   });
+
+  it("shares one env-aware fetch across every live adapter and closes it with the worker", async () => {
+    const closeFetch = vi.fn(async () => undefined);
+    const liveFetch = Object.assign(vi.fn(), { close: closeFetch }) as unknown as typeof fetch;
+    const createLiveFetch = vi.fn(() => liveFetch);
+    const createMiaoshou = vi.fn(() => ({ fetchItem: vi.fn() }));
+    const createMiaoshouEdit = vi.fn(() => ({ applyEdit: vi.fn(), reconcile: vi.fn() }));
+    const end = vi.fn(async () => undefined);
+    const application = createWorkerApplication({
+      env: {
+        ...testEnv,
+        NODE_ENV: "production",
+        EXTERNAL_ADAPTER_MODE: "live",
+        MIAOSHOU_APP_KEY: "miaoshou-key",
+        MIAOSHOU_APP_SECRET: "miaoshou-secret",
+        CANVAS_BASE_URL: "https://canvas.test",
+        CANVAS_API_KEY: "canvas-key",
+        LLM_BASE_URL: "https://llm.test/v1",
+        LLM_API_KEY: "llm-key",
+        LLM_MODEL: "model-1",
+        EXCHANGE_RATE_BASE_URL: "https://rates.test",
+        ASSET_ROOT: "/tmp/tk-worker-live-assets"
+      },
+      processKind: "app",
+      commandContext: { kind: "worker_command", commandId: "command_123", idempotencyKey: "stable:key:123" },
+      dependencies: {
+        createPool: vi.fn(() => ({ query: vi.fn(), connect: vi.fn(), end }) as never),
+        createMiaoshou: createMiaoshou as never,
+        createMiaoshouEdit: createMiaoshouEdit as never,
+        createLiveFetch
+      } as never
+    });
+
+    expect(createLiveFetch).toHaveBeenCalledTimes(1);
+    expect((createMiaoshou.mock.calls[0] as unknown[])?.[1]).toBe(liveFetch);
+    expect((createMiaoshouEdit.mock.calls[0] as unknown[])?.[2]).toBe(liveFetch);
+    await application.close();
+    expect(closeFetch).toHaveBeenCalledTimes(1);
+    expect(end).toHaveBeenCalledTimes(1);
+  });
 });

@@ -7,6 +7,7 @@ import {
   createMiaoshouEditAdapter,
   createMiaoshouHttp,
   createSafeUrlReachability,
+  createEnvAwareFetch,
   fingerprintApprovalSnapshot,
   stableDigest,
   createAdapterBundle as createDefaultAdapterBundle,
@@ -38,6 +39,8 @@ import { buildWorkerRuntime } from "./main.js";
 import { adaptLeasedJobRepository } from "./runtime/worker-loop.js";
 import { createStagingCleanupCodec } from "./runtime/staging-cleanup-codec.js";
 
+type EnvAwareFetch = ReturnType<typeof createEnvAwareFetch>;
+
 export type WorkerProcessKind = "app" | "test" | "integration" | "e2e";
 export const LIVE_MIAOSHOU_MIN_INTERVAL_MS = 250;
 
@@ -48,8 +51,9 @@ export interface ClosableDbPool extends DbPool {
 export interface WorkerEntryDependencies {
   createPool?: (connectionString: string) => ClosableDbPool;
   createAdapterBundle?: (config: AdapterFactoryConfig, context?: LiveCommandContext) => AdapterBundle;
-  createMiaoshou?: (config: MiaoshouConfig) => MiaoshouSourcePort;
-  createMiaoshouEdit?: (config: MiaoshouConfig, resolver: MiaoshouEditExpectationResolver) => MiaoshouEditPort;
+  createLiveFetch?: (env: NodeJS.ProcessEnv) => EnvAwareFetch;
+  createMiaoshou?: (config: MiaoshouConfig, fetchImpl?: typeof fetch) => MiaoshouSourcePort;
+  createMiaoshouEdit?: (config: MiaoshouConfig, resolver: MiaoshouEditExpectationResolver, fetchImpl?: typeof fetch) => MiaoshouEditPort;
   resolveHost?: (hostname: string) => Promise<string[]>;
 }
 
@@ -155,8 +159,18 @@ export function createWorkerApplication(input: CreateWorkerApplicationInput = {}
   // Keep this order deliberate: config and adapter-mode guards execute before
   // a database socket, Miaoshou client, or asset HTTP transport is constructed.
   const config = loadConfig(env);
-  const bundleFactory = dependencies.createAdapterBundle ?? createDefaultAdapterBundle;
-  const adapters = bundleFactory({ ...config, processKind }, input.commandContext);
+  let liveFetch: EnvAwareFetch | undefined;
+  const getLiveFetch = (): EnvAwareFetch => {
+    liveFetch ??= (dependencies.createLiveFetch ?? createEnvAwareFetch)(env);
+    return liveFetch;
+  };
+  const adapters = dependencies.createAdapterBundle
+    ? dependencies.createAdapterBundle({ ...config, processKind }, input.commandContext)
+    : createDefaultAdapterBundle(
+      { ...config, processKind },
+      input.commandContext,
+      { createLiveFetch: getLiveFetch }
+    );
 
   const connectionString = processKind === "test" || processKind === "integration" || processKind === "e2e"
     ? config.testDatabaseUrl
@@ -166,7 +180,7 @@ export function createWorkerApplication(input: CreateWorkerApplicationInput = {}
   let miaoshou = input.miaoshou;
   if (!miaoshou) {
     if (adapters.mode === "mock") miaoshou = createFakePorts().miaoshouSource;
-    else miaoshou = (dependencies.createMiaoshou ?? createLiveMiaoshouSourceAdapter)(miaoshouConfig(env));
+    else miaoshou = (dependencies.createMiaoshou ?? createLiveMiaoshouSourceAdapter)(miaoshouConfig(env), getLiveFetch());
   }
 
   const resolveHost = dependencies.resolveHost ?? (async (hostname: string) =>
@@ -193,9 +207,9 @@ export function createWorkerApplication(input: CreateWorkerApplicationInput = {}
   if (!miaoshouEdit) {
     miaoshouEdit = adapters.mode === "mock"
       ? createFakePorts().miaoshouEdit
-      : (dependencies.createMiaoshouEdit ?? ((liveConfig, resolver) => createMiaoshouEditAdapter({
-        http: createMiaoshouHttp(liveConfig), expectationResolver: resolver
-      })))(miaoshouConfig(env), expectationResolver);
+      : (dependencies.createMiaoshouEdit ?? ((liveConfig, resolver, fetchImpl) => createMiaoshouEditAdapter({
+        http: createMiaoshouHttp(liveConfig, fetchImpl), expectationResolver: resolver
+      })))(miaoshouConfig(env), expectationResolver, getLiveFetch());
   }
   const assertStagedUrlReachable = createSafeUrlReachability({
     resolveHost: async (hostname) => (await resolveHost(hostname)).map((address) => ({
@@ -248,6 +262,8 @@ export function createWorkerApplication(input: CreateWorkerApplicationInput = {}
       ...(maxJobs === undefined ? {} : { maxJobs })
     }),
     counters: () => adapters.counters(),
-    close: () => pool.end()
+    close: async () => {
+      await Promise.all([pool.end(), liveFetch?.close()]);
+    }
   };
 }
