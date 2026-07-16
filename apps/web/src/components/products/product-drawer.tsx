@@ -21,15 +21,23 @@ export function ProductDrawer({
   onStart
 }: Props): ReactElement {
   const closeButtonRef = useRef<HTMLButtonElement>(null);
+  const openerRef = useRef<HTMLElement | null>(null);
   const onCloseRef = useRef(onClose);
   onCloseRef.current = onClose;
   const activeProductId = open && item ? String(item.productId) : null;
+  const isOpen = activeProductId !== null;
 
   useLayoutEffect(() => {
     if (!activeProductId) return;
-    const trigger = document.activeElement instanceof HTMLElement
-      ? document.activeElement
-      : null;
+    const activeElement = document.activeElement;
+    if (activeElement instanceof HTMLElement && activeElement !== closeButtonRef.current) {
+      openerRef.current = activeElement;
+    }
+    closeButtonRef.current?.focus();
+  }, [activeProductId]);
+
+  useLayoutEffect(() => {
+    if (!isOpen) return;
     const handleKeyDown = (event: globalThis.KeyboardEvent): void => {
       if (event.key === "Escape") {
         event.preventDefault();
@@ -37,12 +45,13 @@ export function ProductDrawer({
       }
     };
     document.addEventListener("keydown", handleKeyDown);
-    closeButtonRef.current?.focus();
     return () => {
       document.removeEventListener("keydown", handleKeyDown);
-      if (trigger?.isConnected) trigger.focus();
+      const opener = openerRef.current;
+      openerRef.current = null;
+      if (opener?.isConnected) opener.focus();
     };
-  }, [activeProductId]);
+  }, [isOpen]);
 
   if (!open || !item) {
     return (
