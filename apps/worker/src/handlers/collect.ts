@@ -39,7 +39,7 @@ export function createCollectHandler(input: {
           action: "miaoshou.collect.result",
           targetKind: "source_batch",
           targetId: batchId,
-          payload: { state: "failed", code: "external_request_failed" },
+          payload: { state: "result_unknown", code: "reconcile_required" },
           redacted: true
         });
       } catch {
