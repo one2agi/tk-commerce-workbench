@@ -151,6 +151,18 @@ function auditPort(repository: AuditRepository) {
   };
 }
 
+async function closeWorkerResources(
+  pool: ClosableDbPool | undefined,
+  liveFetch: EnvAwareFetch | undefined
+): Promise<void> {
+  const operations: Array<Promise<unknown>> = [];
+  if (pool) operations.push(Promise.resolve().then(() => pool.end()));
+  if (liveFetch) operations.push(Promise.resolve().then(() => liveFetch.close()));
+  const results = await Promise.allSettled(operations);
+  const errors = results.flatMap((result) => result.status === "rejected" ? [result.reason] : []);
+  if (errors.length > 0) throw new AggregateError(errors, "worker resource cleanup failed");
+}
+
 export function createWorkerApplication(input: CreateWorkerApplicationInput = {}): WorkerApplication {
   const env = input.env ?? process.env;
   const processKind = input.processKind ?? "app";
@@ -172,10 +184,13 @@ export function createWorkerApplication(input: CreateWorkerApplicationInput = {}
       { createLiveFetch: getLiveFetch }
     );
 
-  const connectionString = processKind === "test" || processKind === "integration" || processKind === "e2e"
-    ? config.testDatabaseUrl
-    : config.databaseUrl;
-  const pool = (dependencies.createPool ?? ((url) => new pg.Pool({ connectionString: url })))(connectionString);
+  let acquiredPool: ClosableDbPool | undefined;
+  try {
+    const connectionString = processKind === "test" || processKind === "integration" || processKind === "e2e"
+      ? config.testDatabaseUrl
+      : config.databaseUrl;
+    const pool = (dependencies.createPool ?? ((url) => new pg.Pool({ connectionString: url })))(connectionString);
+    acquiredPool = pool;
 
   let miaoshou = input.miaoshou;
   if (!miaoshou) {
@@ -253,17 +268,19 @@ export function createWorkerApplication(input: CreateWorkerApplicationInput = {}
     }
   });
 
-  return {
-    run: ({ workerId = `worker-${process.pid}`, maxJobs } = {}) => runtime.run({
-      jobs: adaptLeasedJobRepository(jobs),
-      workerId,
-      leaseMs: config.workerLeaseMs,
-      workerConcurrency: config.workerConcurrency,
-      ...(maxJobs === undefined ? {} : { maxJobs })
-    }),
-    counters: () => adapters.counters(),
-    close: async () => {
-      await Promise.all([pool.end(), liveFetch?.close()]);
-    }
-  };
+    return {
+      run: ({ workerId = `worker-${process.pid}`, maxJobs } = {}) => runtime.run({
+        jobs: adaptLeasedJobRepository(jobs),
+        workerId,
+        leaseMs: config.workerLeaseMs,
+        workerConcurrency: config.workerConcurrency,
+        ...(maxJobs === undefined ? {} : { maxJobs })
+      }),
+      counters: () => adapters.counters(),
+      close: () => closeWorkerResources(pool, liveFetch)
+    };
+  } catch (error) {
+    void closeWorkerResources(acquiredPool, liveFetch).catch(() => undefined);
+    throw error;
+  }
 }

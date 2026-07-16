@@ -70,4 +70,71 @@ describe("worker entry", () => {
     expect(closeFetch).toHaveBeenCalledTimes(1);
     expect(end).toHaveBeenCalledTimes(1);
   });
+
+  it("starts dispatcher cleanup when pool construction fails after live adapter setup", async () => {
+    const closeFetch = vi.fn(async () => undefined);
+    const createLiveFetch = vi.fn(() => Object.assign(vi.fn(), { close: closeFetch }) as never);
+    expect(() => createWorkerApplication({
+      env: {
+        ...testEnv,
+        NODE_ENV: "production",
+        EXTERNAL_ADAPTER_MODE: "live",
+        MIAOSHOU_APP_KEY: "miaoshou-key",
+        MIAOSHOU_APP_SECRET: "miaoshou-secret",
+        CANVAS_BASE_URL: "https://canvas.test",
+        CANVAS_API_KEY: "canvas-key",
+        LLM_BASE_URL: "https://llm.test/v1",
+        LLM_API_KEY: "llm-key",
+        LLM_MODEL: "model-1",
+        EXCHANGE_RATE_BASE_URL: "https://rates.test",
+        ASSET_ROOT: "/tmp/tk-worker-live-assets"
+      },
+      processKind: "app",
+      commandContext: { kind: "worker_command", commandId: "command_123", idempotencyKey: "stable:key:123" },
+      dependencies: {
+        createPool: vi.fn(() => { throw new Error("pool construction failed"); }),
+        createLiveFetch
+      }
+    })).toThrow("pool construction failed");
+
+    await vi.waitFor(() => expect(closeFetch).toHaveBeenCalledTimes(1));
+  });
+
+  it("waits for database and dispatcher cleanup and reports every close failure", async () => {
+    const poolError = new Error("pool close failed");
+    const fetchError = new Error("fetch close failed");
+    const end = vi.fn(async () => { throw poolError; });
+    const closeFetch = vi.fn(async () => { throw fetchError; });
+    const application = createWorkerApplication({
+      env: {
+        ...testEnv,
+        NODE_ENV: "production",
+        EXTERNAL_ADAPTER_MODE: "live",
+        MIAOSHOU_APP_KEY: "miaoshou-key",
+        MIAOSHOU_APP_SECRET: "miaoshou-secret",
+        CANVAS_BASE_URL: "https://canvas.test",
+        CANVAS_API_KEY: "canvas-key",
+        LLM_BASE_URL: "https://llm.test/v1",
+        LLM_API_KEY: "llm-key",
+        LLM_MODEL: "model-1",
+        EXCHANGE_RATE_BASE_URL: "https://rates.test",
+        ASSET_ROOT: "/tmp/tk-worker-live-assets"
+      },
+      processKind: "app",
+      commandContext: { kind: "worker_command", commandId: "command_123", idempotencyKey: "stable:key:123" },
+      dependencies: {
+        createPool: vi.fn(() => ({ query: vi.fn(), connect: vi.fn(), end }) as never),
+        createLiveFetch: vi.fn(() => Object.assign(vi.fn(), { close: closeFetch }) as never),
+        createMiaoshou: vi.fn(() => ({ fetchItem: vi.fn() }) as never),
+        createMiaoshouEdit: vi.fn(() => ({ applyEdit: vi.fn(), reconcile: vi.fn() }) as never)
+      }
+    });
+
+    await expect(application.close()).rejects.toMatchObject({
+      name: "AggregateError",
+      errors: [poolError, fetchError]
+    });
+    expect(end).toHaveBeenCalledTimes(1);
+    expect(closeFetch).toHaveBeenCalledTimes(1);
+  });
 });
