@@ -15,6 +15,10 @@ import { createGetHandler as createSettingsHandler, createPatchHandler as create
 import { createGetHandler as createTasksHandler } from "./tasks/route";
 import { createPostHandler as createTaskActionHandler } from "./tasks/[taskId]/actions/route";
 import {
+  createPgRerunPort,
+  createPostHandler as createRerunHandler
+} from "./products/[productId]/rerun/route";
+import {
   createGetHandler as createTemplatesHandler,
   createPatchHandler as createTemplatePatchHandler,
   createPostHandler as createTemplatePostHandler
@@ -34,6 +38,7 @@ import { TaskService } from "../../../server/services/task-service";
 import { TemplateService } from "../../../server/services/template-service";
 import { createServerServices, loadRuntimeConfig } from "../../../server/composition";
 import { createHttpApiClient, dispatchStartAutomation } from "../../../lib/api-client";
+import { createPgApprovalInvalidationPort } from "../../../server/services/approval-invalidation";
 
 function jsonRequest(url: string, body: unknown, token = "extension-secret"): Request {
   return new Request(url, {
@@ -432,6 +437,133 @@ describe("v1 API integration", () => {
 const pgTestUrl = process.env.TEST_DATABASE_URL;
 
 describe.runIf(Boolean(pgTestUrl))("v1 API PostgreSQL integration", () => {
+  it("rerun preserves the original Chinese revision and local asset snapshot while creating downstream work", async () => {
+    const pool = new pg.Pool({ connectionString: pgTestUrl });
+    try {
+      await pool.query("DROP SCHEMA IF EXISTS public CASCADE");
+      await pool.query("CREATE SCHEMA public");
+      await pool.query(INITIAL_SQL);
+      await pool.query(
+        `INSERT INTO local_operators (id, handle, display_name)
+         VALUES ('operator-rerun', 'rerun-test', 'Rerun Test')`
+      );
+      await pool.query(
+        `INSERT INTO products (id, operator_id, source_url, source_item_id, state_source)
+         VALUES ('product-rerun', 'operator-rerun',
+           'https://detail.1688.com/offer/892408514788.html', '892408514788', 'success')`
+      );
+      await pool.query(
+        `INSERT INTO product_revisions
+          (id, product_id, draft_version, source_title, source_payload, working_draft)
+         VALUES ('revision-rerun-original', 'product-rerun', 1, '夏季轻薄防晒夹克',
+           '{"detailId":"detail-cn-1","description":"中文原始详情","imageUrls":["https://images.test/original.jpg"]}',
+           '{"targetLocale":"th-TH","targetTitle":"เสื้อแจ็กเก็ตกันแดด"}')`
+      );
+      await pool.query(
+        `INSERT INTO assets
+          (id, product_id, revision_id, remote_url, kind, state, width, height, sha256,
+           local_path, extension, perceptual_hash, visual_score, chosen_role)
+         VALUES ('asset-rerun-original', 'product-rerun', 'revision-rerun-original',
+           'https://images.test/original.jpg', 'original', 'ready', 1200, 1200,
+           'f2f824b84fc627b3ef3c33a75b951ab3be37d1342da76a9b2446157867c9a840',
+           '/data/assets/f2/f2f824b84fc627b3ef3c33a75b951ab3be37d1342da76a9b2446157867c9a840.jpg',
+           'jpg', 'original-phash', 0.91, 'primary')`
+      );
+
+      const originalRevision = (await pool.query(
+        `SELECT id, product_id, draft_version, source_title, source_payload, working_draft,
+                version, created_at
+         FROM product_revisions WHERE id = 'revision-rerun-original'`
+      )).rows[0];
+      const originalAsset = (await pool.query(
+        `SELECT id, product_id, revision_id, remote_url, kind, state, width, height, sha256,
+                local_path, extension, perceptual_hash, visual_score, chosen_role, created_at
+         FROM assets WHERE id = 'asset-rerun-original'`
+      )).rows[0];
+
+      let databaseProviderCalls = 0;
+      const databaseProvider = () => {
+        databaseProviderCalls += 1;
+        return pool;
+      };
+      const reruns = createPgRerunPort(
+        createPgApprovalInvalidationPort(databaseProvider),
+        databaseProvider
+      );
+      const response = await createRerunHandler({ reruns })(
+        jsonRequest("http://127.0.0.1/api/v1/products/product-rerun/rerun", {
+          version: 1,
+          revisionId: "revision-rerun-original",
+          expectedDraftVersion: 1,
+          startNode: "listing"
+        }),
+        { params: Promise.resolve({ productId: "product-rerun" }) }
+      );
+
+      expect(response.status).toBe(202);
+      const result = await response.json() as {
+        accepted: true; revisionId: string; draftVersion: number; jobId: string;
+      };
+      expect(result).toMatchObject({ accepted: true, draftVersion: 2 });
+      expect(result.revisionId).not.toBe("revision-rerun-original");
+      expect(databaseProviderCalls).toBeGreaterThan(0);
+
+      expect((await pool.query(
+        `SELECT id, product_id, draft_version, source_title, source_payload, working_draft,
+                version, created_at
+         FROM product_revisions WHERE id = 'revision-rerun-original'`
+      )).rows[0]).toEqual(originalRevision);
+      expect((await pool.query(
+        `SELECT id, product_id, revision_id, remote_url, kind, state, width, height, sha256,
+                local_path, extension, perceptual_hash, visual_score, chosen_role, created_at
+         FROM assets WHERE id = 'asset-rerun-original'`
+      )).rows[0]).toEqual(originalAsset);
+
+      const newRevision = (await pool.query<{
+        id: string; draft_version: number; source_title: string; source_payload: Record<string, unknown>;
+      }>(
+        `SELECT id, draft_version, source_title, source_payload
+         FROM product_revisions WHERE id = $1`,
+        [result.revisionId]
+      )).rows[0];
+      expect(newRevision).toMatchObject({
+        id: result.revisionId,
+        draft_version: 2,
+        source_title: "夏季轻薄防晒夹克",
+        source_payload: {
+          detailId: "detail-cn-1",
+          description: "中文原始详情",
+          imageUrls: ["https://images.test/original.jpg"]
+        }
+      });
+      const clonedAsset = (await pool.query<{
+        id: string; revision_id: string; sha256: string; local_path: string; remote_url: string;
+      }>(
+        `SELECT id, revision_id, sha256, local_path, remote_url
+         FROM assets WHERE revision_id = $1 AND kind = 'original'`,
+        [result.revisionId]
+      )).rows[0];
+      expect(clonedAsset).toMatchObject({
+        revision_id: result.revisionId,
+        sha256: originalAsset.sha256,
+        local_path: originalAsset.local_path,
+        remote_url: originalAsset.remote_url
+      });
+      expect(clonedAsset.id).not.toBe(originalAsset.id);
+      expect((await pool.query(
+        "SELECT id, kind, status, payload FROM jobs WHERE id = $1",
+        [result.jobId]
+      )).rows[0]).toMatchObject({
+        id: result.jobId,
+        kind: "listing_generate",
+        status: "queued",
+        payload: { version: 1, revisionId: result.revisionId }
+      });
+    } finally {
+      await pool.end();
+    }
+  }, 60_000);
+
   it("persists idempotent collection and automation jobs with redacted audits", async () => {
     const pool = new pg.Pool({ connectionString: pgTestUrl });
     try {
