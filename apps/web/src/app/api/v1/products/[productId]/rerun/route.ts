@@ -51,10 +51,13 @@ const firstJob: Record<RerunCommand["startNode"], string> = {
   listing: "listing_generate", pricing: "pricing_calculate", template: "template_match", canvas: "canvas_generate"
 };
 
-export function createPgRerunPort(approvalInvalidation: ApprovalInvalidationPort): RerunPort {
+export function createPgRerunPort(
+  approvalInvalidation: ApprovalInvalidationPort,
+  databaseProvider: () => Pick<pg.Pool, "connect"> = database
+): RerunPort {
   return {
   async enqueue(command, productId) {
-    const client = await database().connect();
+    const client = await databaseProvider().connect();
     try {
       await client.query("BEGIN");
       const product = await client.query(`SELECT id FROM products WHERE id = $1 FOR UPDATE`, [productId]);
