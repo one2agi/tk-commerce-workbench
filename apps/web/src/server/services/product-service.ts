@@ -74,6 +74,24 @@ function strings(value: unknown): string[] {
   return Array.isArray(value) ? value.filter((item): item is string => typeof item === "string") : [];
 }
 
+function imageUrls(value: unknown): string[] {
+  if (!Array.isArray(value)) return [];
+  return value.flatMap((item) => {
+    const raw = typeof item === "string"
+      ? item
+      : item && typeof item === "object" && typeof (item as Record<string, unknown>).url === "string"
+        ? String((item as Record<string, unknown>).url)
+        : null;
+    if (!raw) return [];
+    try {
+      const url = new URL(raw);
+      return url.protocol === "http:" || url.protocol === "https:" ? [raw] : [];
+    } catch {
+      return [];
+    }
+  });
+}
+
 function usableOutputCount(value: unknown): number {
   return strings(value).filter((raw) => {
     try {
@@ -207,8 +225,8 @@ export class ProductService {
         description: typeof source.description === "string" ? source.description : "",
         sourceAttributes: Array.isArray(source.sourceAttributes) ? source.sourceAttributes as Array<{ name: string; value: string }> : [],
         saleAttributes: Array.isArray(source.saleAttributes) ? source.saleAttributes as Array<{ name: string; value: string }> : [],
-        mainImages: strings(source.mainImages),
-        detailImages: strings(source.detailImages)
+        mainImages: imageUrls(source.mainImages),
+        detailImages: imageUrls(source.detailImages)
       } : null,
       target: typeof row.target_title === "string" ? {
         locale: typeof row.target_locale === "string" ? row.target_locale : "th-TH",
@@ -320,7 +338,7 @@ export class ProductService {
     const skuStocks = skus?.map((sku) => sku && typeof sku === "object"
       ? integerEvidence((sku as Record<string, unknown>).stock)
       : null) ?? [];
-    const stock = integerEvidence(source.stock) ?? (skus && skuStocks.every((value) => value !== null)
+    const stock = integerEvidence(source.sourceStock) ?? (skus && skuStocks.every((value) => value !== null)
       ? skuStocks.reduce((total, value) => total + BigInt(value!), 0n).toString()
       : null);
     const order = strings(row?.final_asset_order);
@@ -343,7 +361,7 @@ export class ProductService {
       orderedFinalImages,
       stock,
       weightKg: decimalEvidence(source.weightKg),
-      dimensions: dimensionEvidence(source.dimensions),
+      dimensions: dimensionEvidence(source.dimensionsCm),
       canonicalMiaoshouTarget: optionalString(row ?? {}, "canonical_success_detail_id")
     };
   }

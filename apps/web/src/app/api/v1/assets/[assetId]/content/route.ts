@@ -1,4 +1,4 @@
-import { readFile } from "node:fs/promises";
+import { lstat, readFile, realpath } from "node:fs/promises";
 import { extname, resolve, sep } from "node:path";
 import { rejectNonLoopback } from "../../../../../../server/auth/loopback";
 import { loadRuntimeConfig } from "../../../../../../server/composition";
@@ -24,16 +24,24 @@ export function createGetHandler(dependencies: {
     }
     const localPath = await dependencies.assets.localPath(assetId);
     if (!localPath) return Response.json({ error: "asset_not_found" }, { status: 404 });
-    const root = resolve(dependencies.assetRoot);
-    const target = resolve(localPath);
-    if (target !== root && !target.startsWith(`${root}${sep}`)) {
-      return Response.json({ error: "asset_not_found" }, { status: 404 });
-    }
-    const contentType = CONTENT_TYPES[extname(target).toLowerCase()];
-    if (!contentType) return Response.json({ error: "unsupported_asset_type" }, { status: 415 });
     try {
+      const unresolvedTarget = resolve(localPath);
+      const [root, target, targetStat] = await Promise.all([
+        realpath(resolve(dependencies.assetRoot)),
+        realpath(unresolvedTarget),
+        lstat(unresolvedTarget)
+      ]);
+      if (targetStat.isSymbolicLink() || (target !== root && !target.startsWith(`${root}${sep}`))) {
+        return Response.json({ error: "asset_not_found" }, { status: 404 });
+      }
+      const contentType = CONTENT_TYPES[extname(target).toLowerCase()];
+      if (!contentType) return Response.json({ error: "unsupported_asset_type" }, { status: 415 });
       const body = await (dependencies.read ?? readFile)(target);
-      return new Response(body as BodyInit, { headers: { "content-type": contentType, "cache-control": "private, max-age=300" } });
+      return new Response(body as BodyInit, { headers: {
+        "content-type": contentType,
+        "cache-control": "private, max-age=300",
+        "x-content-type-options": "nosniff"
+      } });
     } catch {
       return Response.json({ error: "asset_not_found" }, { status: 404 });
     }

@@ -5,6 +5,10 @@ import { UpdateProductOverridesV1, type UpdateProductOverridesV1 as UpdateComman
 import { rejectNonLoopback, rejectUnsafeBrowserMutation } from "../../../../../../server/auth/loopback";
 import { loadRuntimeConfig } from "../../../../../../server/composition";
 import { conflictResponse } from "../../../../../../server/http/safe-conflict";
+import {
+  createApprovalInvalidationPort,
+  type ApprovalInvalidationPort
+} from "../../../../../../server/services/approval-invalidation";
 
 type DraftUpdateRequest = UpdateCommand & Readonly<{ expectedDraftVersion: number }>;
 const DraftUpdateRequest = UpdateProductOverridesV1.extend({ expectedDraftVersion: z.number().int().positive() });
@@ -24,7 +28,12 @@ export function createPatchHandler(dependencies: { drafts: DraftPort }) {
     try {
       return Response.json(await dependencies.drafts.update(parsed.data));
     } catch (error) {
-      return conflictResponse(error) ?? Response.json({ error: "draft_update_failed" }, { status: 500 });
+      const conflict = conflictResponse(error);
+      if (conflict) return conflict;
+      if ((error as { code?: string }).code === "approval_sync_in_progress") {
+        return Response.json({ error: "approval_sync_in_progress" }, { status: 409 });
+      }
+      return Response.json({ error: "draft_update_failed" }, { status: 500 });
     }
   };
 }
@@ -35,7 +44,8 @@ function database(): pg.Pool {
   return pool;
 }
 
-const pgDrafts: DraftPort = {
+export function createPgDraftPort(approvalInvalidation: ApprovalInvalidationPort): DraftPort {
+  return {
   async update(command) {
     const client = await database().connect();
     try {
@@ -63,6 +73,7 @@ const pgDrafts: DraftPort = {
       [command.productId, command.expectedDraftVersion]);
       const row = latest.rows[0];
       if (!row) throw Object.assign(new Error("product_not_found"), { code: "product_not_found" });
+      await approvalInvalidation.invalidateInTransaction(client, command.productId, "draft_overrides_updated");
       const nextVersion = row.draft_version + 1;
       const revisionId = `revision_${randomUUID()}`;
       const workingDraft: Record<string, unknown> = {
@@ -94,11 +105,6 @@ const pgDrafts: DraftPort = {
         [row.id, revisionId]
       );
       await client.query(
-        `UPDATE approval_snapshots SET state = 'invalidated'
-         WHERE product_id = $1 AND state = 'approved'`,
-        [command.productId]
-      );
-      await client.query(
         `UPDATE products SET locale = COALESCE($2, locale), state_listing = 'pending',
            state_canvas = 'not_started', state_approval = 'unapproved', state_miaoshou_edit = 'not_started',
            version = version + 1, updated_at = now() WHERE id = $1`,
@@ -119,7 +125,10 @@ const pgDrafts: DraftPort = {
       client.release();
     }
   }
-};
+  };
+}
+
+const pgDrafts = createPgDraftPort(createApprovalInvalidationPort());
 
 export async function PATCH(request: Request, context: Context): Promise<Response> {
   return createPatchHandler({ drafts: pgDrafts })(request, context);

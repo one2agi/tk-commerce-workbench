@@ -3,6 +3,10 @@ import pg from "pg";
 import { RerunDownstreamV1, type RerunDownstreamV1 as RerunCommand } from "@tk/contracts";
 import { rejectNonLoopback, rejectUnsafeBrowserMutation } from "../../../../../../server/auth/loopback";
 import { loadRuntimeConfig } from "../../../../../../server/composition";
+import {
+  createApprovalInvalidationPort,
+  type ApprovalInvalidationPort
+} from "../../../../../../server/services/approval-invalidation";
 
 type Context = { params: Promise<{ productId: string }> };
 type RerunResult = { accepted: true; jobId?: string; revisionId?: string; draftVersion?: number; approvalInvalidated?: true; invalidatedNodes: string[] };
@@ -15,7 +19,15 @@ export function createPostHandler(dependencies: { reruns: RerunPort }) {
     const { productId } = await context.params;
     const parsed = RerunDownstreamV1.safeParse(await request.json().catch(() => null));
     if (!parsed.success) return Response.json({ error: "invalid_request" }, { status: 400 });
-    return Response.json(await dependencies.reruns.enqueue(parsed.data, productId), { status: 202 });
+    try {
+      return Response.json(await dependencies.reruns.enqueue(parsed.data, productId), { status: 202 });
+    } catch (error) {
+      const code = (error as { code?: string }).code;
+      if (code === "approval_sync_in_progress" || code === "stale_draft_version") {
+        return Response.json({ error: code }, { status: 409 });
+      }
+      return Response.json({ error: "rerun_failed" }, { status: 500 });
+    }
   };
 }
 
@@ -39,11 +51,14 @@ const firstJob: Record<RerunCommand["startNode"], string> = {
   listing: "listing_generate", pricing: "pricing_calculate", template: "template_match", canvas: "canvas_generate"
 };
 
-const pgReruns: RerunPort = {
+export function createPgRerunPort(approvalInvalidation: ApprovalInvalidationPort): RerunPort {
+  return {
   async enqueue(command, productId) {
     const client = await database().connect();
     try {
       await client.query("BEGIN");
+      const product = await client.query(`SELECT id FROM products WHERE id = $1 FOR UPDATE`, [productId]);
+      if (product.rowCount !== 1) throw Object.assign(new Error("product_not_found"), { code: "product_not_found" });
       const locked = await client.query<{
         draft_version: number; source_title: string | null; source_payload: Record<string, unknown>;
         working_draft: Record<string, unknown>;
@@ -58,6 +73,7 @@ const pgReruns: RerunPort = {
       if (Number(previous?.draft_version) !== command.expectedDraftVersion) {
         throw Object.assign(new Error("stale_draft_version"), { code: "stale_draft_version" });
       }
+      await approvalInvalidation.invalidateInTransaction(client, productId, "downstream_rerun_requested");
       const invalidation = buildRerunInvalidation(command.startNode);
       const newRevisionId = `revision_${randomUUID()}`;
       const newDraftVersion = command.expectedDraftVersion + 1;
@@ -136,10 +152,6 @@ const pgReruns: RerunPort = {
             asset.non_product_probability, asset.visual_score, asset.chosen_role, asset.rejection_reason]
         );
       }
-      await client.query(
-        `UPDATE approval_snapshots SET state = 'invalidated'
-         WHERE product_id = $1 AND state = 'approved'`, [productId]
-      );
       const listingState = command.startNode === "listing" ? "pending" : null;
       await client.query(
         `UPDATE products SET state_listing = COALESCE($2, state_listing), state_canvas = 'not_started',
@@ -171,12 +183,11 @@ const pgReruns: RerunPort = {
       client.release();
     }
   }
-};
+  };
+}
+
+const pgReruns = createPgRerunPort(createApprovalInvalidationPort());
 
 export async function POST(request: Request, context: Context): Promise<Response> {
-  try {
-    return await createPostHandler({ reruns: pgReruns })(request, context);
-  } catch (error) {
-    return Response.json({ error: (error as { code?: string }).code ?? "rerun_failed" }, { status: 409 });
-  }
+  return createPostHandler({ reruns: pgReruns })(request, context);
 }

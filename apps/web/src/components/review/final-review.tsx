@@ -51,7 +51,7 @@ export function FinalReview({ workspace, approvalPreview, actions }: {
         pricingRunId={approvalPreview?.pricingRunId ?? workspace.pricing?.pricingRunId ?? ""}
         templateVersion={approvalPreview?.templateVersion ?? workspace.template?.version ?? 1}
         orderedFinalAssetIds={(approvalPreview?.orderedFinalAssetIds ?? workspace.finalAssetOrder).map(String)}
-        targetLocale={workspace.target?.locale ?? "th-TH"}
+        targetLocale={workspace.target?.locale ?? approvalPreview?.locale ?? "th-TH"}
         translationStyle={workspace.target?.style ?? "marketplace"}
         actions={actions}
       />

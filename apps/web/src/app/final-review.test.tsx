@@ -1,5 +1,8 @@
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it, vi } from "vitest";
+import { mkdtemp, mkdir, rm, symlink, writeFile } from "node:fs/promises";
+import { join } from "node:path";
+import { tmpdir } from "node:os";
 import { assetId, productId, productRevisionId, templateId } from "@tk/contracts/ids";
 import type { ProductWorkspaceV1 } from "@tk/contracts/read-models";
 
@@ -80,6 +83,8 @@ describe("final review flow", () => {
     const html = renderToStaticMarkup(<FinalReview workspace={reviewWorkspace} />);
     expect(html).toContain("aria-label=\"中文原始 Listing\"");
     expect(html).toContain("便携式榨汁杯");
+    expect(html).toContain("aria-label=\"1688 原图证据\"");
+    expect(html).toContain("https://source.test/main.jpg");
     expect(html).toContain("aria-label=\"th-TH 目标 Listing\"");
     expect(html).toContain("เครื่องปั่นน้ำผลไม้แบบพกพา");
     expect(html).toContain("459.00 THB");
@@ -103,6 +108,19 @@ describe("final review flow", () => {
     }} />);
     expect(html).toContain("SKU 数量未知");
     expect(html).not.toContain("SKU 2 个");
+  });
+
+  it("uses approval preview locale when the target listing is not available yet", () => {
+    const html = renderToStaticMarkup(<FinalReview
+      workspace={{ ...reviewWorkspace, target: null }}
+      approvalPreview={{
+        productId: productId("product-13"), draftVersion: 4,
+        listingRunId: "listing-13", pricingRunId: "pricing-13", templateVersion: 3,
+        orderedFinalAssetIds: [assetId("asset-2")], locale: "id-ID", currency: "THB",
+        finalPriceWire: null, warningCodes: [], miaoshouTargetDetailId: null
+      }}
+    />);
+    expect(html).toContain("value=\"id-ID\" selected=\"\"");
   });
 });
 
@@ -169,6 +187,7 @@ describe("operational pages", () => {
     expect(settingsHtml).toContain("未配置");
     expect(settingsHtml).not.toContain("type=\"password\"");
     expect(settingsHtml).toContain("定价公式（当前只读）");
+    expect(settingsHtml).toContain("MVP 默认公式/默认参数");
     expect(settingsHtml).toContain("平台费率 0.05");
     expect(settingsHtml).toContain("支付费率 0.03");
     expect(settingsHtml).toContain("目标利润率 0.30");
@@ -179,28 +198,51 @@ describe("operational pages", () => {
 
 describe("version-aware review routes", () => {
   it("serves only DB-known local previews inside the configured asset root", async () => {
-    const read = vi.fn().mockResolvedValue(new Uint8Array([1, 2, 3]));
-    const handler = createAssetContentHandler({
-      assets: { localPath: vi.fn().mockResolvedValue("/safe/assets/final.jpg") },
-      assetRoot: "/safe/assets",
-      read
-    });
-    const response = await handler(
-      new Request("http://127.0.0.1/api/v1/assets/asset-2/content"),
-      { params: Promise.resolve({ assetId: "asset-2" }) }
-    );
-    expect(response.status).toBe(200);
-    expect(response.headers.get("content-type")).toBe("image/jpeg");
-    expect(read).toHaveBeenCalledWith("/safe/assets/final.jpg");
+    const temporary = await mkdtemp(join(tmpdir(), "tk-assets-"));
+    const root = join(temporary, "root");
+    const outside = join(temporary, "outside");
+    await Promise.all([mkdir(root), mkdir(outside)]);
+    const safeImage = join(root, "final.jpg");
+    const secretImage = join(outside, "secret.jpg");
+    const escapedLink = join(root, "escaped.jpg");
+    await Promise.all([writeFile(safeImage, new Uint8Array([1, 2, 3])), writeFile(secretImage, new Uint8Array([9]))]);
+    await symlink(secretImage, escapedLink);
+    try {
+      const handler = createAssetContentHandler({
+        assets: { localPath: vi.fn().mockResolvedValue(safeImage) }, assetRoot: root
+      });
+      const response = await handler(
+        new Request("http://127.0.0.1/api/v1/assets/asset-2/content"),
+        { params: Promise.resolve({ assetId: "asset-2" }) }
+      );
+      expect(response.status).toBe(200);
+      expect(response.headers.get("content-type")).toBe("image/jpeg");
+      expect(response.headers.get("x-content-type-options")).toBe("nosniff");
 
-    const escaped = await createAssetContentHandler({
-      assets: { localPath: vi.fn().mockResolvedValue("/private/secret.jpg") },
-      assetRoot: "/safe/assets",
-      read
-    })(new Request("http://127.0.0.1/api/v1/assets/asset-3/content"), {
-      params: Promise.resolve({ assetId: "asset-3" })
-    });
-    expect(escaped.status).toBe(404);
+      const escaped = await createAssetContentHandler({
+        assets: { localPath: vi.fn().mockResolvedValue(escapedLink) }, assetRoot: root
+      })(new Request("http://127.0.0.1/api/v1/assets/asset-3/content"), {
+        params: Promise.resolve({ assetId: "asset-3" })
+      });
+      expect(escaped.status).toBe(404);
+    } finally {
+      await rm(temporary, { recursive: true, force: true });
+    }
+  });
+
+  it("preserves URLs from the real Miaoshou image payload shape", async () => {
+    const service = new ProductService({ query: vi.fn().mockResolvedValue({ rows: [{
+      product_id: "product-13", revision_id: "revision-13", draft_version: 4,
+      source_title: "真实妙手商品", source_payload: {
+        description: "详情", sourceAttributes: [], saleAttributes: [],
+        mainImages: [{ url: "https://source.test/main.jpg", width: 800, height: 800 }],
+        detailImages: [{ url: "https://source.test/detail.jpg", width: 790, height: 1200 }]
+      },
+      working_draft: {}, target_title: null, pricing_run_id: null, template_id: null, canvas_run_id: null
+    }] }) });
+    const projected = await service.get("product-13");
+    expect(projected?.originalListing?.mainImages).toEqual(["https://source.test/main.jpg"]);
+    expect(projected?.originalListing?.detailImages).toEqual(["https://source.test/detail.jpg"]);
   });
 
   it("projects the exact listing, pricing, template and ordered-asset versions used for confirmation", async () => {
@@ -233,9 +275,15 @@ describe("version-aware review routes", () => {
     const query = vi.fn()
       .mockResolvedValueOnce({ rows: [{
         source_payload: {
-          skus: [{ skuId: "one", stock: "10" }, { skuId: "two", stock: "18" }],
+          detailId: "detail-13", sourceItemId: "source-13", sourceUrl: "https://detail.1688.com/offer/13.html",
+          title: "真实妙手商品", itemNumber: null, description: "详情", category: "家居",
+          sourcePriceWire: { amountMinor: "12900", currency: "CNY" }, sourceStock: 28,
           weightKg: "0.65",
-          dimensions: { lengthCm: "20", widthCm: "10", heightCm: "8" }
+          dimensionsCm: { lengthCm: "20", widthCm: "10", heightCm: "8" },
+          mainImages: [{ url: "https://source.test/main.jpg", width: 800, height: 800 }],
+          detailImages: [], sourceAttributes: [], saleAttributes: [], colors: [], sizes: [],
+          skus: [{ skuId: "one", attributes: {}, priceWire: { amountMinor: "12900", currency: "CNY" }, stock: 10, imageUrl: null },
+            { skuId: "two", attributes: {}, priceWire: { amountMinor: "13900", currency: "CNY" }, stock: 18, imageUrl: null }]
         },
         final_asset_order: ["asset-2", "asset-1"],
         canonical_success_detail_id: "detail-13"
@@ -300,6 +348,20 @@ describe("version-aware review routes", () => {
     });
   });
 
+  it("returns a metadata-free 409 when draft invalidation is fenced by an active sync", async () => {
+    const update = vi.fn().mockRejectedValue({
+      code: "approval_sync_in_progress",
+      metadata: { approvalSnapshotId: "approval-secret", syncState: "syncing", jobStatus: "running" }
+    });
+    const response = await createDraftPatchHandler({ drafts: { update } })(
+      sameOriginRequest("http://127.0.0.1/api/v1/products/product-13/draft", "PATCH", {
+        version: 1, expectedDraftVersion: 4, targetLocale: "en-US"
+      }), { params: Promise.resolve({ productId: "product-13" }) }
+    );
+    expect(response.status).toBe(409);
+    expect(await response.json()).toEqual({ error: "approval_sync_in_progress" });
+  });
+
   it("reruns from an explicit node with the expected draft version", async () => {
     const enqueue = vi.fn().mockResolvedValue({
       accepted: true,
@@ -330,6 +392,20 @@ describe("version-aware review routes", () => {
       draftVersion: 6,
       approvalInvalidated: true
     });
+  });
+
+  it("returns a metadata-free 409 when rerun invalidation is fenced by an active sync", async () => {
+    const enqueue = vi.fn().mockRejectedValue({
+      code: "approval_sync_in_progress",
+      metadata: { approvalSnapshotId: "approval-secret", syncState: "result_unknown", jobStatus: "paused" }
+    });
+    const response = await createRerunPostHandler({ reruns: { enqueue } })(
+      sameOriginRequest("http://127.0.0.1/api/v1/products/product-13/rerun", "POST", {
+        version: 1, revisionId: "revision-13", expectedDraftVersion: 5, startNode: "canvas"
+      }), { params: Promise.resolve({ productId: "product-13" }) }
+    );
+    expect(response.status).toBe(409);
+    expect(await response.json()).toEqual({ error: "approval_sync_in_progress" });
   });
 
   it("builds the single frozen Miaoshou confirmation command from the URL product", async () => {

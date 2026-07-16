@@ -22,6 +22,7 @@ export function renderSettingsPage(settings: WorkspaceSettingsViewV1) {
     </form>
     <section className="tk-panel" aria-label="定价公式（当前只读）">
       <h2>定价公式（当前只读）</h2>
+      <p><strong>MVP 默认公式/默认参数</strong>，尚未作为可编辑配置持久化。</p>
       <p>目标价 =（货品成本 + 国内运费 + 跨境成本）× CNY→THB 汇率 + 固定成本，再按费用率与利润率倒推并向上调整尾数。</p>
       <dl>
         <div><dt>固定目标成本</dt><dd>0 THB</dd></div>

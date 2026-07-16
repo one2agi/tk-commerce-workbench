@@ -70,13 +70,27 @@ describe("product safety boundary", () => {
     expect(source).toMatch(/INSERT INTO product_revisions/);
     expect(source).toMatch(/INSERT INTO listing_drafts/);
     expect(source).toMatch(/INSERT INTO pricing_runs/);
-    expect(source).toMatch(/UPDATE approval_snapshots SET state = 'invalidated'/);
+    expect(source).toMatch(/approvalInvalidation\.invalidateInTransaction/);
+    expect(source).not.toMatch(/UPDATE approval_snapshots SET state = 'invalidated'/);
 
     const draftSource = readFileSync(new URL("./api/v1/products/[productId]/draft/route.ts", import.meta.url), "utf8");
     expect(draftSource).toMatch(/INSERT INTO product_revisions/);
-    expect(draftSource).toMatch(/UPDATE approval_snapshots SET state = 'invalidated'/);
+    expect(draftSource).toMatch(/approvalInvalidation\.invalidateInTransaction/);
+    expect(draftSource).not.toMatch(/UPDATE approval_snapshots SET state = 'invalidated'/);
     expect(draftSource).toMatch(/SELECT id FROM products WHERE id = \$1 FOR UPDATE/);
     expect(draftSource).toMatch(/actualDraftVersion !== command\.expectedDraftVersion/);
+
+    const invalidationSource = readFileSync(new URL("../server/services/approval-invalidation.ts", import.meta.url), "utf8");
+    const productLock = invalidationSource.indexOf("SELECT id FROM products");
+    const approvalLock = invalidationSource.indexOf("SELECT id FROM approval_snapshots");
+    const syncLock = invalidationSource.indexOf("SELECT state FROM miaoshou_syncs");
+    const jobLock = invalidationSource.indexOf("SELECT status FROM jobs");
+    expect(productLock).toBeGreaterThan(-1);
+    expect(productLock).toBeLessThan(approvalLock);
+    expect(approvalLock).toBeLessThan(syncLock);
+    expect(syncLock).toBeLessThan(jobLock);
+    expect(invalidationSource).toMatch(/syncState === "syncing" \|\| syncState === "result_unknown"/);
+    expect(invalidationSource).toMatch(/status IN \('queued', 'paused'\)/);
   });
 });
 

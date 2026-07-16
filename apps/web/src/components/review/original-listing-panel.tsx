@@ -16,6 +16,10 @@ export function OriginalListingPanel({ listing, skuCount }: {
           </div>)}
         </dl>
         <p className="tk-metric">{skuCount === null ? "SKU 数量未知" : `SKU ${skuCount} 个`}</p>
+        {(listing.mainImages.length > 0 || listing.detailImages.length > 0) && <div aria-label="1688 原图证据">
+          {[...listing.mainImages, ...listing.detailImages].map((url, index) =>
+            <img key={`${url}:${index}`} src={url} alt={`1688 原图 ${index + 1}`} width="160" height="160" loading="lazy" />)}
+        </div>}
       </> : <p>原始 Listing 尚未采集完成</p>}
     </section>
   );
