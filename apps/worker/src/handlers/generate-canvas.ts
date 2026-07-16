@@ -1,6 +1,7 @@
 import type { AssetStagingPort, CanvasPort, IdempotencyKey } from "@tk/contracts";
 import { selectCanvasInputs, type CanvasCandidate } from "@tk/domain/assets/select-canvas-inputs";
 import { ExternalResultUnknownError, NeedsInputError, requireFencedWrite, type LeaseFence, type WorkerHandler } from "../runtime/worker-loop.js";
+import type { StagingCleanupCodec } from "../runtime/staging-cleanup-codec.js";
 
 export interface CanvasPlan {
   workflowId: string;
@@ -25,6 +26,7 @@ export function createCanvasHandler(input: {
   quota: { reserve(value: { runKey: string; day: string; limit: number }): Promise<boolean> };
   audit: { append(value: Record<string, unknown>): Promise<unknown> };
   now: () => Date;
+  cleanupCodec: StagingCleanupCodec;
   maxRunsPerDay: number;
 }): WorkerHandler {
   const archiveOutputs = async (
@@ -115,7 +117,14 @@ export function createCanvasHandler(input: {
       await execution.scheduleCompensation({
         kind: "staging_cleanup",
         businessKey: `${job.businessKey ?? job.jobId}:staging-cleanup`,
-        payload: { version: 1, revisionId, remoteUrls: staged.map((asset) => asset.remoteUrl) },
+        payload: {
+          version: 1,
+          revisionId,
+          protectedRemoteUrls: input.cleanupCodec.protect({
+            remoteUrls: staged.map((asset) => asset.remoteUrl),
+            expiresAt: staged.map((asset) => asset.expiresAt).sort()[0]!
+          })
+        },
         delayMs: 3_600_000
       });
       execution.assertLease();
@@ -164,16 +173,16 @@ export function createCanvasHandler(input: {
     } finally {
       if (staged.length > 0) {
         try {
-          await input.audit.append({ action: "staging.release.call", targetKind: "product_revision", targetId: revisionId, payload: { stagedCount: staged.length }, redacted: true });
+          await input.audit.append({ action: "staging.release_best_effort.call", targetKind: "product_revision", targetId: revisionId, payload: { stagedCount: staged.length, remoteDeleteVerified: false }, redacted: true });
         } catch {
           // Cleanup remains mandatory even if audit persistence is unavailable.
         }
         try {
           await input.staging.release({ remoteUrls: staged.map((asset) => asset.remoteUrl) });
-          await input.audit.append({ action: "staging.release.result", targetKind: "product_revision", targetId: revisionId, payload: { state: "succeeded" }, redacted: true });
+          await input.audit.append({ action: "staging.release_best_effort.result", targetKind: "product_revision", targetId: revisionId, payload: { state: "local_tracking_cleared", remoteDeleteVerified: false }, redacted: true });
         } catch {
           try {
-            await input.audit.append({ action: "staging.release.result", targetKind: "product_revision", targetId: revisionId, payload: { state: "failed", code: "cleanup_deferred" }, redacted: true });
+            await input.audit.append({ action: "staging.release_best_effort.result", targetKind: "product_revision", targetId: revisionId, payload: { state: "failed", code: "ttl_expiry_pending" }, redacted: true });
           } catch {
             // The persisted cleanup job remains the recovery path.
           }

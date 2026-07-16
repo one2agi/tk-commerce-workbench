@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 
-import { createWorkerApplication } from "./entry.js";
+import { createWorkerApplication, LIVE_MIAOSHOU_MIN_INTERVAL_MS } from "./entry.js";
 
 const testEnv = {
   NODE_ENV: "test",
@@ -12,6 +12,9 @@ const testEnv = {
 } satisfies NodeJS.ProcessEnv;
 
 describe("worker entry", () => {
+  it("uses a non-zero live Miaoshou request interval", () => {
+    expect(LIVE_MIAOSHOU_MIN_INTERVAL_MS).toBeGreaterThan(0);
+  });
   it("rejects live adapters in tests before constructing database or HTTP clients", () => {
     const createPool = vi.fn();
     const createAdapterBundle = vi.fn();

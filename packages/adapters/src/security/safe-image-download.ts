@@ -8,6 +8,13 @@ export type ResolvedAddress = Readonly<{ address: string; family: 4 | 6 }>;
 export type ResolveHost = (host: string) => Promise<ResolvedAddress[]>;
 type TransportResponse = Readonly<{ status: number; headers: Record<string, string>; body: Uint8Array }>;
 export type PinnedImageTransport = (url: URL, pinned: ResolvedAddress, timeoutMs: number, maxBytes: number) => Promise<TransportResponse>;
+export type PinnedReachabilityTransport = (
+  url: URL,
+  pinned: ResolvedAddress,
+  method: "HEAD" | "RANGE",
+  timeoutMs: number,
+  maxBytes: number
+) => Promise<Readonly<{ status: number; headers: Record<string, string>; bytesRead: number }>>;
 
 export interface SafeImageDownloadOptions {
   readonly resolveHost?: ResolveHost;
@@ -15,6 +22,41 @@ export interface SafeImageDownloadOptions {
   readonly timeoutMs?: number;
   readonly maxBytes?: number;
   readonly maxRedirects?: number;
+}
+
+export interface SafeUrlReachabilityOptions {
+  readonly resolveHost?: ResolveHost;
+  readonly transport?: PinnedReachabilityTransport;
+  readonly timeoutMs?: number;
+  readonly maxRedirects?: number;
+}
+
+export function createSafeUrlReachability(options: SafeUrlReachabilityOptions = {}) {
+  const resolveHost = options.resolveHost ?? resolvePublicAddresses;
+  const transport = options.transport ?? nodePinnedReachabilityTransport;
+  const timeoutMs = options.timeoutMs ?? 10_000;
+  const maxRedirects = options.maxRedirects ?? 3;
+  return async (input: string): Promise<void> => {
+    let current = parseHttpUrl(input);
+    for (let redirects = 0; ; redirects += 1) {
+      const addresses = await resolveAndValidate(current, resolveHost);
+      let result = await transport(current, addresses[0]!, "HEAD", timeoutMs, 1);
+      if (result.status === 405 || result.status === 501) {
+        result = await transport(current, addresses[0]!, "RANGE", timeoutMs, 1);
+      }
+      if (isRedirect(result.status)) {
+        if (redirects >= maxRedirects) throw externalFailure("fatal", "reachability.too_many_redirects", "Staged image redirected too many times");
+        const location = result.headers.location;
+        if (!location) throw externalFailure("fatal", "reachability.invalid_redirect", "Staged image returned an invalid redirect");
+        current = parseHttpUrl(new URL(location, current).toString());
+        continue;
+      }
+      if (result.status < 200 || result.status >= 300 || result.bytesRead > 1) {
+        throw externalFailure("retryable", `reachability.http_${result.status}`, "Staged image is not reachable");
+      }
+      return;
+    }
+  };
 }
 
 export function createSafeImageDownloader(options: SafeImageDownloadOptions = {}) {
@@ -107,6 +149,38 @@ function nodePinnedTransport(url: URL, pinned: ResolvedAddress, timeoutMs: numbe
     });
     request.setTimeout(timeoutMs, () => request.destroy(new Error("download timeout")));
     request.on("error", (error) => reject(error.message === "download body too large" ? externalFailure("fatal", "download.too_large", "Remote image exceeds the size limit") : isExternalFailure(error) ? error : externalFailure("retryable", "download.network", "Remote image is temporarily unavailable")));
+    request.end();
+  });
+}
+
+function nodePinnedReachabilityTransport(
+  url: URL,
+  pinned: ResolvedAddress,
+  method: "HEAD" | "RANGE",
+  timeoutMs: number,
+  maxBytes: number
+): Promise<{ status: number; headers: Record<string, string>; bytesRead: number }> {
+  return new Promise((resolve, reject) => {
+    const client = url.protocol === "https:" ? httpsRequest : httpRequest;
+    const request = client(url, {
+      method: method === "HEAD" ? "HEAD" : "GET",
+      headers: method === "RANGE" ? { range: "bytes=0-0", accept: "image/png,image/jpeg" } : undefined,
+      lookup: ((_host: string, _options: unknown, callback: (error: NodeJS.ErrnoException | null, address: string, family: number) => void) => callback(null, pinned.address, pinned.family)) as never
+    }, (response) => {
+      const headers: Record<string, string> = {};
+      for (const [name, value] of Object.entries(response.headers)) if (value !== undefined) headers[name.toLowerCase()] = Array.isArray(value) ? value[0] ?? "" : value;
+      let bytesRead = 0;
+      response.on("data", (chunk: Buffer) => {
+        bytesRead += Math.min(chunk.byteLength, maxBytes + 1);
+        if (bytesRead >= maxBytes) response.destroy();
+      });
+      const finish = () => resolve({ status: response.statusCode ?? 0, headers, bytesRead: Math.min(bytesRead, maxBytes) });
+      response.on("end", finish);
+      response.on("close", finish);
+      response.on("error", reject);
+    });
+    request.setTimeout(timeoutMs, () => request.destroy(new Error("reachability timeout")));
+    request.on("error", () => reject(externalFailure("retryable", "reachability.network", "Staged image is temporarily unreachable")));
     request.end();
   });
 }

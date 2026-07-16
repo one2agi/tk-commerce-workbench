@@ -11,6 +11,7 @@ import {
 import { describe, expect, it, vi } from "vitest";
 import { createMiaoshouEditAdapter } from "./edit-adapter.js";
 import { mapApprovalSnapshotToMiaoshouEdit } from "./edit-mapper.js";
+import { fingerprintMiaoshouEditableDetail, sha256Text, type MiaoshouEditExpectation } from "./reconcile-edit.js";
 import type { MiaoshouHttp } from "./client.js";
 
 const fixture = async (name: string) => JSON.parse(await readFile(new URL(`../../../../tests/fixtures/external/miaoshou/${name}`, import.meta.url), "utf8"));
@@ -98,6 +99,59 @@ describe("Miaoshou common collect-box edit mapper", () => {
 });
 
 describe("Miaoshou common collect-box edit adapter", () => {
+  it("reconciles applied against the exact observable projection of the real GET fixture", async () => {
+    const real = await fixture("detail-3799770548.json");
+    const detail = real.data.editCommonCollectBoxDetail as Record<string, any>;
+    const expected: MiaoshouEditExpectation = {
+      version: 1,
+      title: detail.title,
+      itemNum: detail.itemNum,
+      notesText: detail.notesText,
+      notes: detail.notes,
+      price: detail.price,
+      stock: detail.stock,
+      weight: detail.weight,
+      packageLength: detail.packageLength,
+      packageWidth: detail.packageWidth,
+      packageHeight: detail.packageHeight,
+      imgUrlSha256: detail.imgUrls.map(sha256Text),
+      sourceAttrs: detail.sourceAttrs,
+      // The real GET fixture exposes only price/stock per SKU. These sent fields
+      // are deliberately different/unobservable and must not cause false failure.
+      skuMap: Object.fromEntries(Object.entries(detail.skuMap).map(([key, value]) => [key, {
+        itemNum: `sent-${key}`,
+        price: (value as any).price,
+        stock: (value as any).stock,
+        weight: 9.99,
+        imgUrlSha256: "f".repeat(64)
+      }]))
+    };
+    const adapter = createMiaoshouEditAdapter({
+      http: { post: vi.fn(async () => real) } as MiaoshouHttp,
+      expectationResolver: { resolve: vi.fn().mockResolvedValue(expected) }
+    });
+
+    await expect(adapter.reconcileByCanonicalDetailId({ canonicalSuccessDetailId: "3799770548", sourceItemId: sourceItemId("892408514788") }))
+      .resolves.toEqual({ remoteDetailId: "3799770548", state: "applied" });
+  });
+
+  it("returns no_change when a real-fixture observable SKU field differs", async () => {
+    const real = await fixture("detail-3799770548.json");
+    const detail = real.data.editCommonCollectBoxDetail as Record<string, any>;
+    const [firstKey] = Object.keys(detail.skuMap);
+    const expected: MiaoshouEditExpectation = {
+      version: 1, title: detail.title, itemNum: detail.itemNum, notesText: detail.notesText, notes: detail.notes,
+      price: detail.price, stock: detail.stock, weight: detail.weight,
+      packageLength: detail.packageLength, packageWidth: detail.packageWidth, packageHeight: detail.packageHeight,
+      imgUrlSha256: detail.imgUrls.map(sha256Text), sourceAttrs: detail.sourceAttrs,
+      skuMap: Object.fromEntries(Object.entries(detail.skuMap).map(([key, value]) => [key, {
+        itemNum: "unobservable", price: (value as any).price + (key === firstKey ? 1 : 0), stock: (value as any).stock, weight: 1
+      }]))
+    };
+    const adapter = createMiaoshouEditAdapter({ http: { post: vi.fn(async () => real) } as MiaoshouHttp, expectationResolver: { resolve: vi.fn().mockResolvedValue(expected) } });
+    await expect(adapter.reconcileByCanonicalDetailId({ canonicalSuccessDetailId: "3799770548", sourceItemId: sourceItemId("892408514788") }))
+      .resolves.toMatchObject({ state: "no_change" });
+  });
   it("edits only the canonical detail and preserves full remote records", async () => {
     const success = await fixture("edit-success.json");
     const current = {
@@ -201,7 +255,7 @@ describe("Miaoshou common collect-box edit adapter", () => {
       sourceAttrs: mapped.sourceAttrs,
       // Real get_common_collect_box_detail shape: the dimension combination is
       // the key and values do not echo our internal `attributes` object.
-      skuMap: { ";แดง;S;": { price: mappedSku.price, stock: mappedSku.stock } }
+      skuMap: { ";แดง;S;": { ...mappedSku } }
     } } };
     const timeout = Object.freeze({ kind: "retryable", code: "miaoshou.network", safeMessage: "Miaoshou API is temporarily unavailable" });
     const post = vi.fn().mockResolvedValueOnce(currentBefore).mockRejectedValueOnce(timeout).mockResolvedValueOnce(currentAfter);
@@ -240,5 +294,64 @@ describe("Miaoshou common collect-box edit adapter", () => {
       .resolves.toEqual({ remoteDetailId: "3799770548", state: "no_change" });
     expect(post).toHaveBeenCalledTimes(1);
     expect(post.mock.calls.some(([path]) => String(path).includes("edit_common_collect_box_detail"))).toBe(false);
+  });
+
+  it("rebuilds the exact expectation through a repository resolver after process restart", async () => {
+    const mapped = mapApprovalSnapshotToMiaoshouEdit(approval(), remoteUrls);
+    const mappedSku = mapped.skuMap[";แดง;S;"]!;
+    const remote = { result: "success", code: "200", data: { editCommonCollectBoxDetail: {
+      commonCollectBoxDetailId: 3799770548,
+      sourceList: [{ sourceItemId: "892408514788" }],
+      ...mapped,
+      skuMap: { ";แดง;S;": { ...mappedSku } }
+    } } };
+    const expectation = fingerprintMiaoshouEditableDetail(mapped);
+    expect(JSON.stringify(expectation)).not.toContain("https://staging.test");
+    const resolve = vi.fn().mockResolvedValue(expectation);
+    const post = vi.fn(async (_path: string) => remote);
+    const restarted = createMiaoshouEditAdapter({ http: { post } as MiaoshouHttp, expectationResolver: { resolve } });
+
+    await expect(restarted.reconcileByCanonicalDetailId({ canonicalSuccessDetailId: "3799770548", sourceItemId: sourceItemId("892408514788") }))
+      .resolves.toEqual({ remoteDetailId: "3799770548", state: "applied" });
+    expect(resolve).toHaveBeenCalledWith({ canonicalSuccessDetailId: "3799770548", sourceItemId: "892408514788" });
+    expect(post.mock.calls.some(([path]) => String(path).includes("edit_common_collect_box_detail"))).toBe(false);
+  });
+
+  it("requires explicit canonical identity and an exact remote SKU key set", async () => {
+    const mapped = mapApprovalSnapshotToMiaoshouEdit(approval(), remoteUrls);
+    const expected = fingerprintMiaoshouEditableDetail(mapped);
+    const base = { sourceList: [{ sourceItemId: "892408514788" }], ...mapped };
+    const post = vi.fn()
+      .mockResolvedValueOnce({ result: "success", data: { editCommonCollectBoxDetail: base } })
+      .mockResolvedValueOnce({ result: "success", data: { editCommonCollectBoxDetail: {
+        ...base,
+        commonCollectBoxDetailId: 3799770548,
+        skuMap: { ...mapped.skuMap, ";EXTRA;": { itemNum: "EXTRA", price: 1, stock: 1, weight: 1 } }
+      } } });
+    const restarted = createMiaoshouEditAdapter({
+      http: { post } as MiaoshouHttp,
+      expectationResolver: { resolve: vi.fn().mockResolvedValue(expected) }
+    });
+
+    await expect(restarted.reconcileByCanonicalDetailId({ canonicalSuccessDetailId: "3799770548", sourceItemId: sourceItemId("892408514788") }))
+      .resolves.toMatchObject({ state: "missing" });
+    await expect(restarted.reconcileByCanonicalDetailId({ canonicalSuccessDetailId: "3799770548", sourceItemId: sourceItemId("892408514788") }))
+      .resolves.toMatchObject({ state: "no_change" });
+  });
+
+  it("fails closed when the repository resolver cannot select one unambiguous expectation", async () => {
+    const remote = { result: "success", code: "200", data: { editCommonCollectBoxDetail: {
+      commonCollectBoxDetailId: 3799770548,
+      sourceList: [{ sourceItemId: "892408514788" }]
+    } } };
+    const post = vi.fn(async (_path: string) => remote);
+    const restarted = createMiaoshouEditAdapter({
+      http: { post } as MiaoshouHttp,
+      expectationResolver: { resolve: vi.fn().mockResolvedValue(undefined) }
+    });
+
+    await expect(restarted.reconcileByCanonicalDetailId({ canonicalSuccessDetailId: "3799770548", sourceItemId: sourceItemId("892408514788") }))
+      .resolves.toEqual({ remoteDetailId: "3799770548", state: "no_change" });
+    expect(post).toHaveBeenCalledTimes(1);
   });
 });
