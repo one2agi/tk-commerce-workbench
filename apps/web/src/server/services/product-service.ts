@@ -9,9 +9,11 @@ import {
 import type { MoneyCurrency } from "@tk/contracts/quantities";
 import type { CanvasState } from "@tk/contracts/states";
 import type {
+  ApprovalPreviewV1,
   ProductPoolItemV1,
   ProductWorkspaceV1
 } from "@tk/contracts/read-models";
+import type { ReviewWorkspaceView } from "../../components/review/review-workspace-view";
 
 export interface QueryPort {
   query(text: string, values?: readonly unknown[]): Promise<{ rows: Array<Record<string, unknown>> }>;
@@ -72,6 +74,24 @@ function strings(value: unknown): string[] {
   return Array.isArray(value) ? value.filter((item): item is string => typeof item === "string") : [];
 }
 
+function imageUrls(value: unknown): string[] {
+  if (!Array.isArray(value)) return [];
+  return value.flatMap((item) => {
+    const raw = typeof item === "string"
+      ? item
+      : item && typeof item === "object" && typeof (item as Record<string, unknown>).url === "string"
+        ? String((item as Record<string, unknown>).url)
+        : null;
+    if (!raw) return [];
+    try {
+      const url = new URL(raw);
+      return url.protocol === "http:" || url.protocol === "https:" ? [raw] : [];
+    } catch {
+      return [];
+    }
+  });
+}
+
 function usableOutputCount(value: unknown): number {
   return strings(value).filter((raw) => {
     try {
@@ -91,6 +111,26 @@ function requiredString(row: Record<string, unknown>, key: string): string {
 
 function optionalString(row: Record<string, unknown>, key: string): string | null {
   return typeof row[key] === "string" ? row[key] as string : null;
+}
+
+function decimalEvidence(value: unknown): string | null {
+  const text = typeof value === "string" ? value : null;
+  return text && /^(?:0|[1-9]\d*)(?:\.\d+)?$/.test(text) ? text : null;
+}
+
+function integerEvidence(value: unknown): string | null {
+  if (typeof value === "number" && Number.isSafeInteger(value) && value >= 0) return String(value);
+  const text = typeof value === "string" ? value : null;
+  return text && /^(?:0|[1-9]\d*)$/.test(text) ? text : null;
+}
+
+function dimensionEvidence(value: unknown): ReviewWorkspaceView["reviewFacts"]["dimensions"] {
+  if (!value || typeof value !== "object") return null;
+  const source = value as Record<string, unknown>;
+  const lengthCm = decimalEvidence(source.lengthCm);
+  const widthCm = decimalEvidence(source.widthCm);
+  const heightCm = decimalEvidence(source.heightCm);
+  return lengthCm && widthCm && heightCm ? { lengthCm, widthCm, heightCm } : null;
 }
 
 function toPoolItem(row: Record<string, unknown>): ProductPoolItemV1 {
@@ -185,8 +225,8 @@ export class ProductService {
         description: typeof source.description === "string" ? source.description : "",
         sourceAttributes: Array.isArray(source.sourceAttributes) ? source.sourceAttributes as Array<{ name: string; value: string }> : [],
         saleAttributes: Array.isArray(source.saleAttributes) ? source.saleAttributes as Array<{ name: string; value: string }> : [],
-        mainImages: strings(source.mainImages),
-        detailImages: strings(source.detailImages)
+        mainImages: imageUrls(source.mainImages),
+        detailImages: imageUrls(source.detailImages)
       } : null,
       target: typeof row.target_title === "string" ? {
         locale: typeof row.target_locale === "string" ? row.target_locale : "th-TH",
@@ -224,5 +264,112 @@ export class ProductService {
       finalAssetOrder: strings(draft.finalAssetOrder).map(assetId),
       warningCodes: strings(draft.warningCodes)
     };
+  }
+
+  async preview(productIdValue: string): Promise<ApprovalPreviewV1 | null> {
+    const result = await this.database.query(
+      `SELECT p.id AS product_id, p.locale, p.currency, p.canonical_success_detail_id,
+              revision.draft_version,
+              listing.id AS listing_run_id,
+              pricing.id AS pricing_run_id, pricing.final_price_minor,
+              COALESCE(canvas.template_version,
+                NULLIF(revision.working_draft->'templateMatch'->>'templateVersion', '')::integer) AS template_version,
+              COALESCE(revision.working_draft->'finalAssetOrder', '[]'::jsonb) AS final_asset_order,
+              COALESCE(revision.working_draft->'warningCodes', '[]'::jsonb) AS warning_codes
+       FROM products p
+       JOIN LATERAL (
+         SELECT * FROM product_revisions candidate WHERE candidate.product_id = p.id
+         ORDER BY candidate.draft_version DESC, candidate.created_at DESC LIMIT 1
+       ) revision ON true
+       LEFT JOIN LATERAL (
+         SELECT * FROM listing_drafts candidate WHERE candidate.revision_id = revision.id
+         ORDER BY candidate.draft_version DESC, candidate.created_at DESC LIMIT 1
+       ) listing ON true
+       LEFT JOIN LATERAL (
+         SELECT * FROM pricing_runs candidate WHERE candidate.revision_id = revision.id
+         ORDER BY candidate.created_at DESC LIMIT 1
+       ) pricing ON true
+       LEFT JOIN LATERAL (
+         SELECT * FROM canvas_runs candidate WHERE candidate.revision_id = revision.id
+         ORDER BY candidate.created_at DESC LIMIT 1
+       ) canvas ON true
+       WHERE p.id = $1`,
+      [productIdValue]
+    );
+    const row = result.rows[0];
+    if (!row || typeof row.listing_run_id !== "string" || typeof row.pricing_run_id !== "string" ||
+      !Number.isInteger(Number(row.template_version)) || Number(row.template_version) < 1) return null;
+    const currency = requiredString(row, "currency") as MoneyCurrency;
+    const priceMinor = optionalString(row, "final_price_minor");
+    return {
+      productId: productId(requiredString(row, "product_id")),
+      draftVersion: Number(row.draft_version),
+      listingRunId: row.listing_run_id,
+      pricingRunId: row.pricing_run_id,
+      templateVersion: Number(row.template_version),
+      orderedFinalAssetIds: strings(row.final_asset_order).map(assetId),
+      locale: requiredString(row, "locale"),
+      currency,
+      finalPriceWire: priceMinor ? { amountMinor: priceMinor, currency } : null,
+      warningCodes: strings(row.warning_codes),
+      miaoshouTargetDetailId: optionalString(row, "canonical_success_detail_id")
+        ? miaoshouDetailId(optionalString(row, "canonical_success_detail_id")!)
+        : null
+    };
+  }
+
+  async facts(productIdValue: string): Promise<ReviewWorkspaceView["reviewFacts"]> {
+    const result = await this.database.query(
+      `SELECT revision.source_payload,
+              COALESCE(revision.working_draft->'finalAssetOrder', '[]'::jsonb) AS final_asset_order,
+              p.canonical_success_detail_id
+       FROM products p
+       JOIN LATERAL (
+         SELECT * FROM product_revisions candidate WHERE candidate.product_id = p.id
+         ORDER BY candidate.draft_version DESC, candidate.created_at DESC LIMIT 1
+       ) revision ON true
+       WHERE p.id = $1`, [productIdValue]
+    );
+    const row = result.rows[0];
+    const source = row?.source_payload && typeof row.source_payload === "object"
+      ? row.source_payload as Record<string, unknown>
+      : {};
+    const skus = Array.isArray(source.skus) ? source.skus : null;
+    const skuStocks = skus?.map((sku) => sku && typeof sku === "object"
+      ? integerEvidence((sku as Record<string, unknown>).stock)
+      : null) ?? [];
+    const stock = integerEvidence(source.sourceStock) ?? (skus && skus.length > 0 && skuStocks.every((value) => value !== null)
+      ? skuStocks.reduce((total, value) => total + BigInt(value!), 0n).toString()
+      : null);
+    const order = strings(row?.final_asset_order);
+    const assetResult = order.length === 0 ? { rows: [] } : await this.database.query(
+      `SELECT id, remote_url, local_path FROM assets WHERE id = ANY($1::text[])`, [order]
+    );
+    const assets = new Map(assetResult.rows.map((asset) => [String(asset.id), asset]));
+    const orderedFinalImages = order.flatMap((id) => {
+      const asset = assets.get(id);
+      if (!asset) return [];
+      const remoteUrl = typeof asset.remote_url === "string" && /^https?:\/\//.test(asset.remote_url)
+        ? asset.remote_url : null;
+      const previewUrl = remoteUrl ?? (typeof asset.local_path === "string"
+        ? `/api/v1/assets/${encodeURIComponent(id)}/content`
+        : null);
+      return previewUrl ? [{ assetId: id, previewUrl }] : [];
+    });
+    return {
+      skuCount: skus ? skus.length : null,
+      orderedFinalImages,
+      stock,
+      weightKg: decimalEvidence(source.weightKg),
+      dimensions: dimensionEvidence(source.dimensionsCm),
+      canonicalMiaoshouTarget: optionalString(row ?? {}, "canonical_success_detail_id")
+    };
+  }
+
+  async assetLocalPath(assetIdValue: string): Promise<string | null> {
+    const result = await this.database.query(
+      `SELECT local_path FROM assets WHERE id = $1 AND state = 'ready' LIMIT 1`, [assetIdValue]
+    );
+    return optionalString(result.rows[0] ?? {}, "local_path");
   }
 }
