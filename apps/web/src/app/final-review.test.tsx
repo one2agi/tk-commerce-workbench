@@ -168,7 +168,7 @@ describe("operational pages", () => {
   });
 
   it("shows template versioned controls and safe secret status only", () => {
-    const templatesHtml = renderToStaticMarkup(renderTemplatesPage({ items: [{
+    const currentTemplate = {
       templateId: templateId("template-13"),
       name: "TK 榨汁杯",
       categoryRules: [{ categoryKey: "kitchen", priority: 10 }],
@@ -178,12 +178,18 @@ describe("operational pages", () => {
       visualStyle: "marketplace",
       enabled: true,
       version: 3
-    }] }));
+    };
+    const templatesHtml = renderToStaticMarkup(renderTemplatesPage({ items: [
+      currentTemplate,
+      { ...currentTemplate, promptFragment: "old prompt", version: 2 }
+    ] }));
     expect(templatesHtml).toContain("TK 榨汁杯");
     expect(templatesHtml).toContain("v3");
     expect(templatesHtml).toContain("clean background");
-    expect(templatesHtml).toContain("当前只读，保存尚未开放");
-    expect(templatesHtml).toContain("disabled");
+    expect(templatesHtml).toContain("基于 v3 创建新版本");
+    expect(templatesHtml).toContain("v2 历史版本（只读）");
+    expect(templatesHtml).not.toContain("基于 v2 创建新版本");
+    expect(templatesHtml).not.toContain("disabled");
 
     const settingsHtml = renderToStaticMarkup(renderSettingsPage({
       defaultLocale: "th-TH",
@@ -197,19 +203,27 @@ describe("operational pages", () => {
       },
       workerConcurrency: 2,
       maxCanvasRunsPerDay: 50,
-      assetRoot: "./data/assets"
+      assetRoot: "./data/assets",
+      version: 2,
+      pricingDefaults: {
+        domesticShippingCny: "2.00", crossBorderCostCny: "6.00",
+        fixedTargetCostThb: "10.00", platformFeeRate: "0.05",
+        paymentFeeRate: "0.03", targetProfitRate: "0.30", ending: "9"
+      },
+      providerOptions: { listingProvider: "rules", listingModel: "rules-v1", canvasWorkflow: "TK工作流" },
+      retryPolicy: { maxAttempts: 3, initialDelaySeconds: 30 },
+      applicationNote: "保存为工作区默认值"
     }));
     expect(settingsHtml).toContain("MIAOSHOU_APP_KEY / MIAOSHOU_APP_SECRET");
     expect(settingsHtml).toContain("已配置");
     expect(settingsHtml).toContain("未配置");
     expect(settingsHtml).not.toContain("type=\"password\"");
-    expect(settingsHtml).toContain("定价公式（当前只读）");
-    expect(settingsHtml).toContain("MVP 默认公式/默认参数");
-    expect(settingsHtml).toContain("平台费率 0.05");
-    expect(settingsHtml).toContain("支付费率 0.03");
-    expect(settingsHtml).toContain("目标利润率 0.30");
-    expect(settingsHtml).toContain("尾数 9");
-    expect(settingsHtml).toContain("当前只读，保存尚未开放");
+    expect(settingsHtml).toContain("定价公式默认值");
+    expect(settingsHtml).toContain("name=\"platformFeeRate\"");
+    expect(settingsHtml).toContain("name=\"paymentFeeRate\"");
+    expect(settingsHtml).toContain("name=\"targetProfitRate\"");
+    expect(settingsHtml).toContain("name=\"ending\"");
+    expect(settingsHtml).toContain("保存非敏感设置");
   });
 });
 

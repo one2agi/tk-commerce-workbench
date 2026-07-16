@@ -36,11 +36,14 @@ describe("product safety boundary", () => {
     }).sort();
     expect(mutationRoutes).toEqual([
       "PATCH products/[productId]/draft",
+      "PATCH settings",
+      "PATCH templates",
       "POST automation-runs",
       "POST ingest-links",
       "POST products/[productId]/confirm-miaoshou-edit",
       "POST products/[productId]/rerun",
-      "POST tasks/[taskId]/actions"
+      "POST tasks/[taskId]/actions",
+      "POST templates"
     ]);
 
     const mutationSource = routeFiles.map((file) => readFileSync(file, "utf8")).join("\n");

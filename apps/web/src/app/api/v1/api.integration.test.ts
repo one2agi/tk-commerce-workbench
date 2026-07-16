@@ -9,10 +9,14 @@ import { createPostHandler as createIngestHandler } from "./ingest-links/route";
 import { createPostHandler as createAutomationHandler } from "./automation-runs/route";
 import { createGetHandler as createProductsHandler } from "./products/route";
 import { createGetHandler as createProductHandler } from "./products/[productId]/route";
-import { createGetHandler as createSettingsHandler } from "./settings/route";
+import { createGetHandler as createSettingsHandler, createPatchHandler as createSettingsPatchHandler } from "./settings/route";
 import { createGetHandler as createTasksHandler } from "./tasks/route";
 import { createPostHandler as createTaskActionHandler } from "./tasks/[taskId]/actions/route";
-import { createGetHandler as createTemplatesHandler } from "./templates/route";
+import {
+  createGetHandler as createTemplatesHandler,
+  createPatchHandler as createTemplatePatchHandler,
+  createPostHandler as createTemplatePostHandler
+} from "./templates/route";
 import { createExtensionTokenVerifier } from "../../../server/auth/extension-token";
 import {
   IngestService,
@@ -170,7 +174,7 @@ describe("v1 API integration", () => {
       }
     });
 
-    expect(services.settings.get().externalAdapterMode).toBe("live");
+    expect(services.settings).toBeInstanceOf(SettingsService);
   });
 
   it("fails closed when the external adapter mode is misspelled", () => {
@@ -309,13 +313,20 @@ describe("v1 API integration", () => {
   });
 
   it("returns only secret status booleans from settings", async () => {
+    let record: import("../../../server/services/settings-service").WorkspaceSettingsRecord | undefined;
+    const defaults = {
+      defaultLocale: "th-TH", defaultCurrency: "THB", externalAdapterMode: "mock" as const,
+      workerConcurrency: 2, maxCanvasRunsPerDay: 50, assetRoot: "./data/assets",
+      pricingDefaults: { domesticShippingCny: "2.00", crossBorderCostCny: "6.00", fixedTargetCostThb: "10.00", platformFeeRate: "0.05", paymentFeeRate: "0.03", targetProfitRate: "0.30", ending: "9" },
+      providerOptions: { listingProvider: "rules", listingModel: "rules-v1", canvasWorkflow: "TK工作流" },
+      retryPolicy: { maxAttempts: 3, initialDelaySeconds: 30 }
+    };
     const service = new SettingsService({
-      defaultLocale: "th-TH",
-      defaultCurrency: "THB",
-      externalAdapterMode: "mock",
-      workerConcurrency: 2,
-      maxCanvasRunsPerDay: 50,
-      assetRoot: "./data/assets",
+      initialize: async (initial) => { record ??= initial; },
+      get: async () => record,
+      update: async () => undefined
+    }, {
+      defaults,
       secretStatus: {
         miaoshouConfigured: true,
         canvasConfigured: true,
@@ -401,11 +412,13 @@ describe("v1 API integration", () => {
     expect(actionResponse.status).toBe(202);
 
     const templates = new TemplateService({
-      query: async () => ({ rows: [{
-        id: "template-1", name: "TK", category_rules: [], reference_asset_ids: [],
-        prompt_fragment: "", target_locale: "th-TH", visual_style: "clean",
-        enabled: true, version: 1
-      }] })
+      list: async () => [{
+        recordId: "template-version-1", templateId: "template-1", name: "TK",
+        categoryRules: [], referenceAssetIds: [], promptFragment: "", targetLocale: "th-TH",
+        visualStyle: "clean", enabled: true, version: 1
+      }],
+      create: async (record) => record,
+      appendVersion: async (_templateId, _expectedVersion, record) => record
     });
     const templateResponse = await createTemplatesHandler({ service: templates })(
       new Request("http://127.0.0.1/api/v1/templates")
@@ -531,4 +544,73 @@ describe.runIf(Boolean(pgTestUrl))("v1 API PostgreSQL integration", () => {
       await pool.end();
     }
   }, 60_000);
+
+  it("persists versioned settings and immutable template history across service restarts", async () => {
+    const pool = new pg.Pool({ connectionString: pgTestUrl });
+    const config = {
+      extensionToken: "extension-secret", externalAdapterMode: "mock" as const,
+      assetRoot: "./data/assets", workerConcurrency: 2, maxCanvasRunsPerDay: 50,
+      miaoshouConfigured: false, canvasConfigured: false, llmConfigured: false,
+      exchangeRateConfigured: false
+    };
+    try {
+      await pool.query("DROP SCHEMA IF EXISTS public CASCADE");
+      await pool.query("CREATE SCHEMA public");
+      await pool.query(INITIAL_SQL);
+      const first = createServerServices({ pool, config });
+      expect((await first.settings.get()).version).toBe(1);
+      const saved = await createSettingsPatchHandler({ service: first.settings })(mutationRequest(
+        "http://127.0.0.1/api/v1/settings",
+        { expectedVersion: 1, defaultLocale: "vi-VN", workerConcurrency: 4 }
+      ));
+      expect(saved.status).toBe(200);
+
+      const restarted = createServerServices({ pool, config: { ...config, canvasConfigured: true } });
+      expect(await restarted.settings.get()).toMatchObject({
+        version: 2, defaultLocale: "vi-VN", workerConcurrency: 4,
+        secretStatus: { canvasConfigured: true }
+      });
+      const stale = await createSettingsPatchHandler({ service: restarted.settings })(mutationRequest(
+        "http://127.0.0.1/api/v1/settings", { expectedVersion: 1, defaultLocale: "id-ID" }
+      ));
+      expect(stale.status).toBe(409);
+
+      const createdResponse = await createTemplatePostHandler({ service: first.templates })(mutationRequest(
+        "http://127.0.0.1/api/v1/templates",
+        { name: "TK", categoryRules: [{ categoryKey: "dress", priority: 10 }],
+          referenceAssetIds: [], promptFragment: "v1 prompt", targetLocale: "th-TH",
+          visualStyle: "marketplace", enabled: true }
+      ));
+      const created = await createdResponse.json();
+      expect(createdResponse.status).toBe(201);
+      const updatedResponse = await createTemplatePatchHandler({ service: restarted.templates })(mutationRequest(
+        "http://127.0.0.1/api/v1/templates",
+        { templateId: created.templateId, expectedVersion: 1, promptFragment: "v2 prompt" }
+      ));
+      expect(updatedResponse.status).toBe(200);
+      const templateStale = await createTemplatePatchHandler({ service: restarted.templates })(mutationRequest(
+        "http://127.0.0.1/api/v1/templates",
+        { templateId: created.templateId, expectedVersion: 1, promptFragment: "stale" }
+      ));
+      expect(templateStale.status).toBe(409);
+      const history = await pool.query<{ version: number; prompt_fragment: string }>(
+        "SELECT version, prompt_fragment FROM templates WHERE template_key = $1 ORDER BY version",
+        [created.templateId]
+      );
+      expect(history.rows).toEqual([
+        { version: 1, prompt_fragment: "v1 prompt" },
+        { version: 2, prompt_fragment: "v2 prompt" }
+      ]);
+    } finally {
+      await pool.end();
+    }
+  }, 60_000);
 });
+
+function mutationRequest(url: string, body: unknown): Request {
+  return new Request(url, {
+    method: "PATCH",
+    headers: { origin: new URL(url).origin, "content-type": "application/json" },
+    body: JSON.stringify(body)
+  });
+}

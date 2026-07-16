@@ -274,13 +274,32 @@ export class PipelineRepository {
   async loadMatchInputs(revisionId: string) {
     const revision = await this.pool.query<{ source_payload: Record<string, unknown> }>(`SELECT source_payload FROM ${schema.productRevisions} WHERE id = $1`, [revisionId]);
     assert(revision.rows[0], "revision not found");
-    const templates = await this.pool.query<{ id: string; enabled: boolean; category_rules: Array<{ category: string; priority: number }> }>(
-      `SELECT id, enabled, category_rules FROM ${schema.templates} WHERE enabled = true ORDER BY created_at ASC, id ASC`
+    const templates = await this.pool.query<{
+      id: string;
+      enabled: boolean;
+      category_rules: Array<{ category: string; priority: number }>;
+      version: number;
+    }>(
+      `SELECT template_key AS id, enabled, category_rules, version
+       FROM (
+         SELECT template_key, enabled, category_rules, version, created_at, id,
+                row_number() OVER (
+                  PARTITION BY template_key ORDER BY version DESC, created_at DESC, id DESC
+                ) AS family_rank
+         FROM ${schema.templates}
+       ) latest
+       WHERE family_rank = 1 AND enabled = true
+       ORDER BY created_at ASC, id ASC`
     );
     assert(templates.rows[0], "workspace default template is unavailable");
     return {
       category: typeof revision.rows[0].source_payload.category === "string" ? revision.rows[0].source_payload.category : null,
-      templates: templates.rows.map((row) => ({ id: row.id, enabled: row.enabled, rules: Array.isArray(row.category_rules) ? row.category_rules : [] })),
+      templates: templates.rows.map((row) => ({
+        id: row.id,
+        enabled: row.enabled,
+        rules: Array.isArray(row.category_rules) ? row.category_rules : [],
+        version: Number(row.version)
+      })),
       defaultTemplateId: templates.rows[0].id
     };
   }
