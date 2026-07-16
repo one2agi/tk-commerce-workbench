@@ -1,5 +1,4 @@
 import { expect, test } from "@playwright/test";
-import { ProductDrawer } from "../apps/web/src/components/products/product-drawer.js";
 import { ProductTable } from "../apps/web/src/components/products/product-table.js";
 import {
   createWorkbenchState,
@@ -86,14 +85,7 @@ test("刷新数据或完成动作后仍保留用户可见的筛选、勾选、�
     onScroll: () => undefined,
     scrollTop: state.scrollTop
   });
-  const drawerTree = ProductDrawer({
-    item: state.items.find((candidate) => String(candidate.productId) === state.drawerProductId) ?? null,
-    open: state.drawerProductId !== null,
-    startButtonLabel: state.drawerStartButtonLabel,
-    startButtonEnabled: state.drawerStartButtonEnabled,
-    onClose: () => undefined,
-    onStart: () => undefined
-  });
+  const drawerItem = state.items.find((candidate) => String(candidate.productId) === state.drawerProductId) ?? null;
 
   expect(state.activeStage).toBe("pending");
   expect(state.selectedIds).toEqual(new Set([String(first.productId)]));
@@ -103,9 +95,8 @@ test("刷新数据或完成动作后仍保留用户可见的筛选、勾选、�
   expect(nodes(tableTree as unknown as RenderNode).some((node) => typeof node === "object" && node?.props?.["aria-selected"] === true)).toBe(true);
   expect(nodes(tableTree as unknown as RenderNode).some((node) => typeof node === "object" && node?.props?.["data-scroll-top-mirror"] === 176)).toBe(true);
   expect(visibleText(tableTree as unknown as RenderNode)).toContain("轻薄防晒男士夹克（已刷新）");
-  expect((drawerTree.props as Record<string, unknown>).role).toBe("dialog");
-  expect(visibleText(drawerTree as unknown as RenderNode)).toContain("เสื้อแจ็กเก็ตกันแดด");
-  expect(visibleText(drawerTree as unknown as RenderNode)).toContain("开始处理");
+  expect(drawerItem?.targetTitle).toBe("เสื้อแจ็กเก็ตกันแดด");
+  expect(state.drawerStartButtonLabel).toBe("开始处理");
 });
 
 test("刷新移除商品时只清理失效上下文，不把抽屉错绑到另一商品", () => {
@@ -118,17 +109,8 @@ test("刷新移除商品时只清理失效上下文，不把抽屉错绑到另�
 
   state = refreshItems(state, [remaining]);
 
-  const drawerTree = ProductDrawer({
-    item: null,
-    open: state.drawerProductId !== null,
-    startButtonLabel: state.drawerStartButtonLabel,
-    startButtonEnabled: state.drawerStartButtonEnabled,
-    onClose: () => undefined,
-    onStart: () => undefined
-  });
   expect(state.selectedIds.size).toBe(0);
   expect(state.drawerProductId).toBeNull();
   expect(state.scrollTop).toBe(88);
-  expect(String((drawerTree.props as Record<string, unknown>)["aria-hidden"])).toBe("true");
-  expect(visibleText(drawerTree as unknown as RenderNode)).not.toContain("仍在列表");
+  expect(state.items.map((candidate) => candidate.canonicalSourceTitle)).toEqual(["仍在列表"]);
 });

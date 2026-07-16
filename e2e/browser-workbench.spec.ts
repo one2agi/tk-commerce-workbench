@@ -46,6 +46,7 @@ test("真实桌面页面保留高密度工作台布局、筛选勾选与抽屉�
     scrollWidth: document.documentElement.scrollWidth
   }));
   expect(viewport.scrollWidth).toBeLessThanOrEqual(viewport.width);
+  await expect(page.locator("[draggable='true']")).toHaveCount(0);
 
   const sidebar = await page.getByRole("navigation", { name: "主导航" }).boundingBox();
   const main = await page.locator("main").boundingBox();
@@ -78,4 +79,21 @@ test("真实桌面页面保留高密度工作台布局、筛选勾选与抽屉�
   await expect(opener).toBeFocused();
   await expect(page.getByRole("checkbox", { name: "选择商品 product_browser_a" })).toBeChecked();
   await expect(page.getByRole("button", { name: "待处理" })).toHaveAttribute("aria-pressed", "true");
+
+  const startedRevisionIds: string[] = [];
+  await page.route("**/api/v1/automation-runs", async (route) => {
+    const body = route.request().postDataJSON() as { revisionIds: string[] };
+    startedRevisionIds.push(...body.revisionIds);
+    await route.fulfill({
+      status: 202,
+      contentType: "application/json",
+      body: JSON.stringify({
+        runs: body.revisionIds.map((revisionId) => ({ revisionId, runId: `run-${revisionId}`, created: true }))
+      })
+    });
+  });
+  await page.getByRole("checkbox", { name: "选择商品 product_browser_b" }).check();
+  await page.getByRole("button", { name: "批量开始处理（2）" }).click();
+  await expect.poll(() => startedRevisionIds.length).toBe(2);
+  expect(startedRevisionIds.sort()).toEqual(["revision_browser_a", "revision_browser_b"]);
 });

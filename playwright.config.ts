@@ -17,9 +17,16 @@ export default defineConfig({
     viewport: { width: 1366, height: 768 }
   },
   webServer: {
-    command: "DATABASE_URL=$TEST_DATABASE_URL pnpm db:migrate && DATABASE_URL=$TEST_DATABASE_URL PORT=3100 pnpm --filter @tk/web start",
+    command: "pnpm db:migrate && pnpm --filter @tk/web start",
     url: "http://127.0.0.1:3100",
     reuseExistingServer: false,
-    timeout: 180_000
+    timeout: 180_000,
+    env: {
+      ...process.env,
+      DATABASE_URL: process.env.TEST_DATABASE_URL ?? "",
+      PORT: "3100",
+      NO_PROXY: loopbackNoProxy,
+      no_proxy: loopbackNoProxy
+    }
   }
 });
