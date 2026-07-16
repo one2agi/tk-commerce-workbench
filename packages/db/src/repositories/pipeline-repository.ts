@@ -274,13 +274,13 @@ export class PipelineRepository {
   async loadMatchInputs(revisionId: string) {
     const revision = await this.pool.query<{ source_payload: Record<string, unknown> }>(`SELECT source_payload FROM ${schema.productRevisions} WHERE id = $1`, [revisionId]);
     assert(revision.rows[0], "revision not found");
-    const templates = await this.pool.query<{ id: string; enabled: boolean; category_rules: Array<{ category: string; priority: number }> }>(
-      `SELECT id, enabled, category_rules FROM ${schema.templates} WHERE enabled = true ORDER BY created_at ASC, id ASC`
+    const templates = await this.pool.query<{ id: string; version: number; enabled: boolean; category_rules: Array<{ category: string; priority: number }> }>(
+      `SELECT id, version, enabled, category_rules FROM ${schema.templates} WHERE enabled = true ORDER BY created_at ASC, id ASC`
     );
     assert(templates.rows[0], "workspace default template is unavailable");
     return {
       category: typeof revision.rows[0].source_payload.category === "string" ? revision.rows[0].source_payload.category : null,
-      templates: templates.rows.map((row) => ({ id: row.id, enabled: row.enabled, rules: Array.isArray(row.category_rules) ? row.category_rules : [] })),
+      templates: templates.rows.map((row) => ({ id: row.id, version: row.version, enabled: row.enabled, rules: Array.isArray(row.category_rules) ? row.category_rules : [] })),
       defaultTemplateId: templates.rows[0].id
     };
   }
@@ -390,6 +390,12 @@ export class PipelineRepository {
              outputs = EXCLUDED.outputs, updated_at = now()`,
         [newId("canvas"), revision.rows[0].product_id, revisionId, String(match.templateId ?? "default"), Number(match.templateVersion ?? 1),
           value.state ?? "partial", value.remoteTaskId ?? null, JSON.stringify(assetIds)]
+      );
+      await client.query(
+        `UPDATE ${schema.productRevisions}
+         SET working_draft = working_draft || $2::jsonb, version = version + 1
+         WHERE id = $1`,
+        [revisionId, JSON.stringify({ finalAssetOrder: assetIds })]
       );
       await client.query(`UPDATE ${schema.products} SET state_canvas = $2, updated_at = now() WHERE id = $1`, [revision.rows[0].product_id, value.state]);
       return true;
