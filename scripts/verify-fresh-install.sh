@@ -7,35 +7,15 @@ readonly VERIFY_BIN_ROOT="${TMPDIR:-/tmp}/tk-workbench-corepack-$$"
 readonly VERIFY_RUNTIME_ROOT="${TMPDIR:-/tmp}/tk-workbench-runtime-$$"
 WEB_PID=""
 WORKER_PID=""
-
-stop_process_group() {
-  local pid="${1:-}"
-  [[ -n "$pid" ]] || return 0
-  kill -TERM -- "-$pid" >/dev/null 2>&1 || true
-  for _ in $(seq 1 20); do
-    kill -0 -- "-$pid" >/dev/null 2>&1 || { wait "$pid" 2>/dev/null || true; return 0; }
-    sleep 0.25
-  done
-  kill -KILL -- "-$pid" >/dev/null 2>&1 || true
-  for _ in $(seq 1 20); do
-    kill -0 -- "-$pid" >/dev/null 2>&1 || break
-    sleep 0.25
-  done
-  wait "$pid" 2>/dev/null || true
-  ! kill -0 -- "-$pid" >/dev/null 2>&1
-}
-
-cleanup() {
-  stop_process_group "$WORKER_PID" || true
-  stop_process_group "$WEB_PID" || true
-  docker rm -f "$POSTGRES_CONTAINER" >/dev/null 2>&1 || true
-  /usr/bin/rm -rf -- "$VERIFY_ASSET_ROOT" "$VERIFY_BIN_ROOT" "$VERIFY_RUNTIME_ROOT"
-}
-trap cleanup EXIT INT TERM
+source "$(dirname "${BASH_SOURCE[0]}")/lib/verify-fresh-install-runtime.sh"
+install_verification_traps
 
 command -v node >/dev/null
 command -v docker >/dev/null
+command -v timeout >/dev/null
+command -v setsid >/dev/null
 [[ "$(node --version)" == v22.* ]] || { echo "Node.js 22 is required" >&2; exit 1; }
+bash "$(dirname "${BASH_SOURCE[0]}")/tests/verify-fresh-install-signals.sh"
 
 mkdir -p "$VERIFY_BIN_ROOT" "$VERIFY_RUNTIME_ROOT"
 corepack enable --install-directory "$VERIFY_BIN_ROOT"
