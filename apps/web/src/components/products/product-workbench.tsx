@@ -19,6 +19,7 @@ import {
   markStartResult,
   openDrawer,
   recordScroll,
+  refreshItems,
   setStage,
   selectedStartableProductIds,
   toggleSelection,
@@ -42,6 +43,7 @@ type Action =
   | { type: "open"; productId: string }
   | { type: "close" }
   | { type: "scroll"; scrollTop: number }
+  | { type: "refresh"; items: ReadonlyArray<ProductPoolItemV1> }
   | { type: "start-pending"; productIds: string[] }
   | { type: "start-result"; productId: string; result: "success" | "failure" };
 
@@ -57,6 +59,8 @@ function reducer(state: WorkbenchState, action: Action): WorkbenchState {
       return closeDrawer(state);
     case "scroll":
       return recordScroll(state, action.scrollTop);
+    case "refresh":
+      return refreshItems(state, action.items);
     case "start-pending":
       return markStartPending(state, action.productIds);
     case "start-result":
@@ -77,6 +81,10 @@ export function ProductWorkbench({
     createWorkbenchState
   );
 
+  useEffect(() => {
+    dispatch({ type: "refresh", items: initialItems });
+  }, [initialItems]);
+
   // Restore the recorded scrollTop onto the table region after each render.
   // We avoid ref-based DOM mutation by relying on a hidden mirror that the
   // table reads back — this keeps the React tree declarative.
@@ -89,27 +97,27 @@ export function ProductWorkbench({
     }
   }, [state.scrollTop, state.filtered]);
 
-  const overview = useMemo(() => buildStageOverview(initialItems), [initialItems]);
+  const overview = useMemo(() => buildStageOverview(state.items), [state.items]);
 
   const drawerItem = useMemo<ProductPoolItemV1 | null>(() => {
     if (!state.drawerProductId) return null;
     return (
-      initialItems.find((i) => String(i.productId) === state.drawerProductId) ?? null
+      state.items.find((i) => String(i.productId) === state.drawerProductId) ?? null
     );
-  }, [state.drawerProductId, initialItems]);
+  }, [state.drawerProductId, state.items]);
 
   const progressItem = useMemo<ProductPoolItemV1 | null>(() => {
     if (drawerItem) return drawerItem;
     if (state.selectedIds.size !== 1) return null;
     const selectedId = state.selectedIds.values().next().value as string | undefined;
-    return initialItems.find((item) => String(item.productId) === selectedId) ?? null;
-  }, [drawerItem, initialItems, state.selectedIds]);
+    return state.items.find((item) => String(item.productId) === selectedId) ?? null;
+  }, [drawerItem, state.items, state.selectedIds]);
 
   const startProducts = useCallback(async (productIds: ReadonlyArray<string>) => {
     dispatch({ type: "start-pending", productIds: [...productIds] });
     onStartAutomation?.(productIds);
     await Promise.all(productIds.map(async (productId) => {
-      const item = initialItems.find((candidate) => String(candidate.productId) === productId);
+      const item = state.items.find((candidate) => String(candidate.productId) === productId);
       if (!item) {
         dispatch({ type: "start-result", productId, result: "failure" });
         return;
@@ -123,7 +131,7 @@ export function ProductWorkbench({
         dispatch({ type: "start-result", productId, result: "failure" });
       }
     }));
-  }, [apiClient, initialItems, onStartAutomation]);
+  }, [apiClient, state.items, onStartAutomation]);
 
   const handleStart = useCallback((productId: string) => {
     void startProducts([productId]);

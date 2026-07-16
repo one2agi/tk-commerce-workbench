@@ -11,6 +11,7 @@ import {
   markStartPending,
   markStartResult,
   recordScroll,
+  refreshItems,
   type ProductPoolItem,
   type WorkbenchState
 } from "./product-workbench.state";
@@ -168,5 +169,36 @@ describe("workbench state machine", () => {
     expect(s.batchButtonLabel).toContain("（1）");
     expect(s.drawerStartButtonEnabled).toBe(true);
     expect(s.drawerStartButtonLabel).toBe("重试处理");
+  });
+
+  it("refreshes product data without losing filter, valid selection, drawer or scroll context", () => {
+    let s = createWorkbenchState(items);
+    s = setStage(s, "pending");
+    s = toggleSelection(s, String(items[0]!.productId));
+    s = openDrawer(s, String(items[0]!.productId));
+    s = recordScroll(s, 144);
+
+    s = refreshItems(s, [{
+      ...items[0]!,
+      canonicalSourceTitle: "A refreshed",
+      targetTitle: "เสื้อแจ็กเก็ต"
+    }]);
+
+    expect(s.items[0]?.canonicalSourceTitle).toBe("A refreshed");
+    expect(s.selectedIds.has(String(items[0]!.productId))).toBe(true);
+    expect(s.drawerProductId).toBe(String(items[0]!.productId));
+    expect(s.activeStage).toBe("pending");
+    expect(s.scrollTop).toBe(144);
+  });
+
+  it("drops stale selection and closes a drawer when a refreshed product disappeared", () => {
+    let s = createWorkbenchState(items);
+    s = toggleSelection(s, String(items[0]!.productId));
+    s = openDrawer(s, String(items[0]!.productId));
+
+    s = refreshItems(s, [items[1]!]);
+
+    expect(s.selectedIds.size).toBe(0);
+    expect(s.drawerProductId).toBeNull();
   });
 });

@@ -144,6 +144,25 @@ export function recordScroll(s: WorkbenchState, scrollTop: number): WorkbenchSta
   });
 }
 
+export function refreshItems(
+  s: WorkbenchState,
+  items: ReadonlyArray<ProductPoolItem>
+): WorkbenchState {
+  const existingIds = new Set(items.map((item) => String(item.productId)));
+  return derive({
+    items,
+    selectedIds: new Set([...s.selectedIds].filter((id) => existingIds.has(id))),
+    activeStage: s.activeStage,
+    drawerProductId: s.drawerProductId && existingIds.has(s.drawerProductId)
+      ? s.drawerProductId
+      : null,
+    scrollTop: s.scrollTop,
+    startStatusById: new Map(
+      [...s.startStatusById].filter(([id]) => existingIds.has(id))
+    )
+  });
+}
+
 export function markStartPending(s: WorkbenchState, productIds: ReadonlyArray<string>): WorkbenchState {
   const statuses = new Map(s.startStatusById);
   for (const productId of productIds) statuses.set(productId, "pending");
