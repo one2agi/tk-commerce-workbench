@@ -285,8 +285,11 @@ test("勾选采集到当前版本审批每个修订只生成一次 TK，且只�
       saveReconciled: (...args: Parameters<ApprovalRepository["saveReconciled"]>) => approvals.saveReconciled(...args),
       persistReconciliationContext: async () => true
     };
+    const cleanupCodec = createStagingCleanupCodec({
+      key: "wave3-e2e-staging-cleanup-key"
+    });
     const editHandler = createMiaoshouEditHandler({ edit: ports.miaoshouEdit, staging: ports.assetStaging,
-      repository: editRepository, reachability: { assertReachable: async () => undefined }, audit });
+      repository: editRepository, reachability: { assertReachable: async () => undefined }, audit, cleanupCodec });
     await runWorkerLoop({ jobs: adaptLeasedJobRepository(jobs), handlers: { miaoshou_edit: editHandler }, clock: { now: () => new Date() },
       workerId: "miaoshou-current-approval", leaseMs: 30_000, maxJobs: 1 });
 
