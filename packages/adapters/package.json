@@ -11,7 +11,8 @@
     "test": "vitest run"
   },
   "dependencies": {
+    "@tk/config": "workspace:*",
     "@tk/contracts": "workspace:*",
-    "@tk/config": "workspace:*"
+    "undici": "7.28.0"
   }
 }
