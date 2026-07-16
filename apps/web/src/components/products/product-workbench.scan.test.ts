@@ -18,6 +18,10 @@ const FORBIDDEN_AFFORDANCE_REGEX = [
   />[^<]*(?:发布\s*TikTok|发布到\s*TikTok|认领到采集箱|编辑妙手详情)[^<]*</i
 ];
 const FORBIDDEN_LINK_TEXT = [/TikTok/, /采集箱/];
+const FORBIDDEN_DRAG_STATE_ENTRY = [
+  /\bdraggable\s*=/i,
+  /\bon(?:Drag(?:Start|End|Enter|Leave|Over|Capture)?|Drop(?:Capture)?)\s*=/
+];
 
 function walk(dir: string): string[] {
   const out: string[] = [];
@@ -80,6 +84,18 @@ describe("web app source invariants", () => {
       if (!isProductionSource(file)) continue;
       const src = readFileSync(file, "utf8");
       for (const pattern of FORBIDDEN_LINK_TEXT) {
+        if (pattern.test(src)) offenders.push(`${file}: ${pattern}`);
+      }
+    }
+    expect(offenders).toEqual([]);
+  });
+
+  it("never exposes drag gestures that can change product state", () => {
+    const offenders: string[] = [];
+    for (const file of walk(SRC_ROOT)) {
+      if (!isProductionSource(file)) continue;
+      const src = readFileSync(file, "utf8");
+      for (const pattern of FORBIDDEN_DRAG_STATE_ENTRY) {
         if (pattern.test(src)) offenders.push(`${file}: ${pattern}`);
       }
     }
