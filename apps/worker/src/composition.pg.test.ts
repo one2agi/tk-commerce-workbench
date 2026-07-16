@@ -43,8 +43,13 @@ describe("real PostgreSQL worker composition", () => {
     const quota = new CanvasQuotaRepository(handle.pool);
     await rates.recordManualOverride({ base: "CNY", target: "THB", rate: "4.80", observedAt: "2026-07-16T00:00:00Z" });
     await handle.pool.query(
-      `INSERT INTO templates (id, name, target_locale, enabled, category_rules)
-       VALUES ('template-default', 'Default', 'th-TH', true, '[]'::jsonb)`
+      `INSERT INTO templates
+        (id, template_key, name, target_locale, visual_style, prompt_fragment,
+         reference_asset_ids, enabled, category_rules, version)
+       VALUES
+        ('template-default-v1', 'template-default', 'Default v1', 'th-TH', 'clean', '', '[]', true, '[]', 1),
+        ('template-default-v2', 'template-default', 'Default v2', 'vi-VN', 'premium', 'summer light',
+         '["template-reference"]', true, '[{"categoryKey":"服装","priority":10}]', 2)`
     );
 
     const ports = createFakePorts();
@@ -125,8 +130,15 @@ describe("real PostgreSQL worker composition", () => {
       payload: { version: 1, batchId: "batch-1", sourceUrl: "https://detail.1688.com/offer/1.html", idempotencyKey: "collect-1" }
     });
     await makeRuntime().run({ jobs: adaptLeasedJobRepository(jobs), workerId: "runtime-before-restart", leaseMs: 30_000, maxJobs: 1 });
-    const revision = await handle.pool.query<{ id: string; source_payload: Record<string, unknown> }>("SELECT id, source_payload FROM product_revisions LIMIT 1");
+    const revision = await handle.pool.query<{ id: string; product_id: string; source_payload: Record<string, unknown> }>("SELECT id, product_id, source_payload FROM product_revisions LIMIT 1");
     expect(revision.rows[0]).toBeTruthy();
+    await handle.pool.query(
+      `INSERT INTO assets
+        (id, product_id, revision_id, remote_url, kind, state, local_path, extension)
+       VALUES ('template-reference', $1, $2, 'local:template-reference', 'reference', 'ready',
+               '/data/templates/reference.png', 'png')`,
+      [revision.rows[0]!.product_id, revision.rows[0]!.id]
+    );
     await jobs.enqueue({
       kind: "asset_archive",
       businessKey: `${revision.rows[0]!.id}:archive`,
@@ -148,10 +160,26 @@ describe("real PostgreSQL worker composition", () => {
     ]);
     expect(dag.rows.filter((row) => row.kind !== "staging_cleanup").every((row) => row.status === "succeeded" && row.batch_key === "batch-1")).toBe(true);
     expect(ports.canvas.calls.filter((call) => call.method === "submit")).toHaveLength(1);
-    const qualityAssets = await handle.pool.query("SELECT id, remote_url, state, rejection_reason, perceptual_hash FROM assets WHERE revision_id = $1 AND kind <> 'generated' ORDER BY remote_url", [revision.rows[0]!.id]);
+    const canvasSubmission = ports.canvas.calls.find((call) => call.method === "submit")?.input as {
+      imageUrls: string[]; referenceImageUrls: string[]; promptContext: Record<string, string>; idempotencyKey: string;
+    };
+    expect(canvasSubmission).toMatchObject({
+      referenceImageUrls: [expect.stringContaining("template-reference")],
+      promptContext: {
+        sourceLocale: "zh-CN", targetLocale: "vi-VN",
+        style: "premium\n--- template prompt ---\nsummer light"
+      },
+      idempotencyKey: `canvas:${revision.rows[0]!.id}:2`
+    });
+    expect(canvasSubmission.imageUrls).toHaveLength(1);
+    const qualityAssets = await handle.pool.query("SELECT id, remote_url, state, rejection_reason, perceptual_hash FROM assets WHERE revision_id = $1 AND kind NOT IN ('generated', 'reference') ORDER BY remote_url", [revision.rows[0]!.id]);
     expect(qualityAssets.rows).toHaveLength(3);
     expect(qualityAssets.rows.find((asset) => asset.remote_url.includes("rejected"))).toMatchObject({ state: "rejected", rejection_reason: "low_resolution" });
     const selectedRevision = await handle.pool.query<{ working_draft: Record<string, unknown> }>("SELECT working_draft FROM product_revisions WHERE id = $1", [revision.rows[0]!.id]);
+    expect(selectedRevision.rows[0]?.working_draft.templateMatch).toMatchObject({
+      templateId: "template-default", templateVersion: 2, targetLocale: "vi-VN",
+      visualStyle: "premium", promptFragment: "summer light"
+    });
     const selectedIds = ((selectedRevision.rows[0]?.working_draft.imageSelection as { assetIds?: string[] } | undefined)?.assetIds ?? []);
     expect(selectedIds).toHaveLength(1);
     expect(selectedIds).not.toContain(qualityAssets.rows.find((asset) => asset.remote_url.includes("rejected"))?.id);
@@ -161,8 +189,10 @@ describe("real PostgreSQL worker composition", () => {
     );
     expect(generated.rows).toHaveLength(5);
     await Promise.all(generated.rows.map(async (asset) => expect((await stat(asset.local_path)).isFile()).toBe(true)));
-    const initialCanvas = await handle.pool.query<{ outputs: string[] }>("SELECT outputs FROM canvas_runs WHERE revision_id = $1", [revision.rows[0]!.id]);
+    const initialCanvas = await handle.pool.query<{ outputs: string[]; template_version: number }>("SELECT outputs, template_version FROM canvas_runs WHERE revision_id = $1", [revision.rows[0]!.id]);
     expect(initialCanvas.rows[0]?.outputs).toHaveLength(5);
+    expect(initialCanvas.rows[0]?.template_version).toBe(2);
+    expect(selectedRevision.rows[0]?.working_draft.finalAssetOrder).toEqual(initialCanvas.rows[0]?.outputs);
     const generatedById = new Map(generated.rows.map((asset) => [asset.id, asset.remote_url]));
     expect(initialCanvas.rows[0]?.outputs.map((id) => generatedById.get(id))).toEqual(ports.canvas.outputsResult.outputs.map((output) => output.url));
 

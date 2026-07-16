@@ -277,12 +277,18 @@ export class PipelineRepository {
     const templates = await this.pool.query<{
       id: string;
       enabled: boolean;
-      category_rules: Array<{ category: string; priority: number }>;
+      category_rules: Array<{ categoryKey?: string; category?: string; priority: number }>;
+      reference_asset_ids: string[];
+      prompt_fragment: string;
+      target_locale: string;
+      visual_style: string;
       version: number;
     }>(
-      `SELECT template_key AS id, enabled, category_rules, version
+      `SELECT template_key AS id, enabled, category_rules, reference_asset_ids,
+              prompt_fragment, target_locale, visual_style, version
        FROM (
-         SELECT template_key, enabled, category_rules, version, created_at, id,
+         SELECT template_key, enabled, category_rules, reference_asset_ids, prompt_fragment,
+                target_locale, visual_style, version, created_at, id,
                 row_number() OVER (
                   PARTITION BY template_key ORDER BY version DESC, created_at DESC, id DESC
                 ) AS family_rank
@@ -297,7 +303,14 @@ export class PipelineRepository {
       templates: templates.rows.map((row) => ({
         id: row.id,
         enabled: row.enabled,
-        rules: Array.isArray(row.category_rules) ? row.category_rules : [],
+        rules: Array.isArray(row.category_rules) ? row.category_rules.flatMap((rule) => {
+          const category = typeof rule.categoryKey === "string" ? rule.categoryKey : rule.category;
+          return typeof category === "string" ? [{ category, priority: Number(rule.priority) }] : [];
+        }) : [],
+        referenceAssetIds: Array.isArray(row.reference_asset_ids) ? row.reference_asset_ids.map(String) : [],
+        promptFragment: row.prompt_fragment ?? "",
+        targetLocale: row.target_locale,
+        visualStyle: row.visual_style ?? "",
         version: Number(row.version)
       })),
       defaultTemplateId: templates.rows[0].id
@@ -327,9 +340,17 @@ export class PipelineRepository {
          AND visual_score IS NOT NULL AND chosen_role IS NOT NULL`,
       [revision.rows[0].product_id, revisionId]
     );
+    const match = object(revision.rows[0].working_draft.templateMatch);
+    const referenceIds = Array.isArray(match.referenceAssetIds) ? match.referenceAssetIds.map(String) : [];
+    const references = referenceIds.length === 0 ? { rows: [] } : await this.pool.query<{ id: string; local_path: string }>(
+      `SELECT id, local_path FROM ${schema.assets}
+       WHERE id = ANY($1::text[]) AND state = 'ready' AND rejection_reason IS NULL AND local_path IS NOT NULL`,
+      [referenceIds]
+    );
+    const referencePaths = new Map(references.rows.map((row) => [row.id, row.local_path]));
     return {
       candidates: rows.rows.map((row) => ({ assetId: row.id, url: row.local_path, role: row.chosen_role, score: row.visual_score, perceptualHash: row.perceptual_hash })),
-      referenceUrls: [],
+      referenceUrls: referenceIds.flatMap((id) => referencePaths.has(id) ? [referencePaths.get(id)!] : []),
       capacity: Number(object(revision.rows[0].working_draft).canvasInputCapacity ?? 9)
     };
   }
@@ -348,6 +369,19 @@ export class PipelineRepository {
     const draft = object(revision.rows[0].working_draft);
     const selection = object(draft.imageSelection);
     const match = object(draft.templateMatch);
+    const templateKey = String(match.templateId ?? "");
+    const templateVersion = Number(match.templateVersion ?? 0);
+    const template = await this.pool.query<{
+      reference_asset_ids: string[];
+      prompt_fragment: string;
+      target_locale: string;
+      visual_style: string;
+    }>(
+      `SELECT reference_asset_ids, prompt_fragment, target_locale, visual_style
+       FROM ${schema.templates} WHERE template_key = $1 AND version = $2`,
+      [templateKey, templateVersion]
+    );
+    assert(template.rows[0], "matched immutable template version is unavailable");
     const assetIds = Array.isArray(selection.assetIds) ? selection.assetIds.map(String) : [];
     const assets = assetIds.length === 0 ? { rows: [] } : await this.pool.query<{ id: string; local_path: string; chosen_role: "primary" | "angle" | "detail" | "sku"; visual_score: number; perceptual_hash: string }>(
       `SELECT id, local_path, chosen_role, visual_score, perceptual_hash FROM ${schema.assets}
@@ -356,15 +390,25 @@ export class PipelineRepository {
          AND visual_score IS NOT NULL AND perceptual_hash IS NOT NULL AND perceptual_hash <> ''`,
       [assetIds, revisionId]
     );
+    const referenceIds = Array.isArray(template.rows[0].reference_asset_ids)
+      ? [...new Set(template.rows[0].reference_asset_ids.map(String))]
+      : [];
+    const referenceRows = referenceIds.length === 0 ? { rows: [] } : await this.pool.query<{ id: string }>(
+      `SELECT id FROM ${schema.assets}
+       WHERE id = ANY($1::text[]) AND state = 'ready' AND rejection_reason IS NULL AND local_path IS NOT NULL`,
+      [referenceIds]
+    );
+    const readyReferenceIds = new Set(referenceRows.rows.map((row) => row.id));
     return {
       workflowId: String(draft.workflowId ?? "TK工作流"),
-      templateVersion: Number(match.templateVersion ?? 1),
+      templateVersion,
       productImages: assets.rows.map((row) => ({ assetId: row.id, url: row.local_path, role: row.chosen_role, score: row.visual_score, perceptualHash: row.perceptual_hash })),
-      referenceUrls: Array.isArray(selection.referenceUrls) ? selection.referenceUrls.map(String) : [],
+      referenceAssetIds: referenceIds.filter((id) => readyReferenceIds.has(id)),
       localAssetIds: assetIds,
       sourceLocale: String(draft.sourceLocale ?? "zh-CN"),
-      targetLocale: String(draft.targetLocale ?? "th-TH"),
-      style: String(draft.style ?? "neutral"),
+      targetLocale: template.rows[0].target_locale,
+      style: template.rows[0].visual_style || "neutral",
+      promptFragment: template.rows[0].prompt_fragment || "",
       expectedOutputCount: Number(draft.expectedOutputCount ?? 5)
     };
   }
@@ -409,6 +453,12 @@ export class PipelineRepository {
              outputs = EXCLUDED.outputs, updated_at = now()`,
         [newId("canvas"), revision.rows[0].product_id, revisionId, String(match.templateId ?? "default"), Number(match.templateVersion ?? 1),
           value.state ?? "partial", value.remoteTaskId ?? null, JSON.stringify(assetIds)]
+      );
+      await client.query(
+        `UPDATE ${schema.productRevisions}
+         SET working_draft = working_draft || $2::jsonb, version = version + 1
+         WHERE id = $1`,
+        [revisionId, JSON.stringify({ finalAssetOrder: assetIds })]
       );
       await client.query(`UPDATE ${schema.products} SET state_canvas = $2, updated_at = now() WHERE id = $1`, [revision.rows[0].product_id, value.state]);
       return true;

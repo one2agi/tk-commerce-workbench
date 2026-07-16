@@ -126,17 +126,18 @@ describe("integration: bootstrap", () => {
       `INSERT INTO templates
         (id, template_key, name, category_rules, target_locale, enabled, version)
        VALUES
-        ('family-a-v1', 'family-a', 'Old A', '[{"category":"old","priority":1}]', 'th-TH', true, 1),
-        ('family-a-v2', 'family-a', 'Current A', '[{"category":"dress","priority":10}]', 'th-TH', true, 2),
+        ('family-a-v1', 'family-a', 'Old A', '[{"categoryKey":"old","priority":1}]', 'th-TH', true, 1),
+        ('family-a-v2', 'family-a', 'Current A', '[{"categoryKey":"dress","priority":10}]', 'th-TH', true, 2),
         ('family-b-v1', 'family-b', 'Old B', '[]', 'th-TH', true, 1),
         ('family-b-v2', 'family-b', 'Disabled B', '[]', 'th-TH', false, 2)`
     );
 
     const inputs = await pipeline.loadMatchInputs(revisionId);
-    expect(inputs.templates).toEqual([{
+    expect(inputs.templates).toHaveLength(1);
+    expect(inputs.templates[0]).toMatchObject({
       id: "family-a", enabled: true,
       rules: [{ category: "dress", priority: 10 }], version: 2
-    }]);
+    });
     expect(inputs.defaultTemplateId).toBe("family-a");
   });
 

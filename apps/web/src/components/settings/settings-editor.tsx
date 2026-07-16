@@ -4,48 +4,23 @@ import { useState, type FormEvent } from "react";
 import type { WorkspaceSettingsView } from "../../server/services/settings-service";
 
 export function SettingsEditor({ settings }: { settings: WorkspaceSettingsView }) {
+  const [current, setCurrent] = useState(settings);
   const [message, setMessage] = useState("");
 
   async function save(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     const data = new FormData(event.currentTarget);
-    const response = await fetch("/api/v1/settings", {
-      method: "PATCH",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({
-        expectedVersion: settings.version,
-        defaultLocale: data.get("defaultLocale"),
-        defaultCurrency: data.get("defaultCurrency"),
-        externalAdapterMode: data.get("externalAdapterMode"),
-        assetRoot: data.get("assetRoot"),
-        workerConcurrency: Number(data.get("workerConcurrency")),
-        maxCanvasRunsPerDay: Number(data.get("maxCanvasRunsPerDay")),
-        pricingDefaults: {
-          domesticShippingCny: data.get("domesticShippingCny"),
-          crossBorderCostCny: data.get("crossBorderCostCny"),
-          fixedTargetCostThb: data.get("fixedTargetCostThb"),
-          platformFeeRate: data.get("platformFeeRate"),
-          paymentFeeRate: data.get("paymentFeeRate"),
-          targetProfitRate: data.get("targetProfitRate"),
-          ending: data.get("ending")
-        },
-        providerOptions: {
-          listingProvider: data.get("listingProvider"),
-          listingModel: data.get("listingModel"),
-          canvasWorkflow: data.get("canvasWorkflow")
-        },
-        retryPolicy: {
-          maxAttempts: Number(data.get("maxAttempts")),
-          initialDelaySeconds: Number(data.get("initialDelaySeconds"))
-        }
-      })
-    });
-    setMessage(response.ok ? "已保存工作区默认值，刷新后显示新版本。" :
-      response.status === 409 ? "设置已被其他页面更新，请刷新后重试。" : "保存失败，请检查输入。");
+    const response = await saveSettings(fetch, current, data);
+    if (response.ok) {
+      setCurrent(response.value);
+      setMessage("已保存工作区默认值，可继续修改并保存。");
+    } else {
+      setMessage(response.status === 409 ? "设置已被其他页面更新，请刷新后重试。" : "保存失败，请检查输入。");
+    }
   }
 
   return <form className="tk-panel" aria-label="非敏感工作区设置" onSubmit={save}>
-    <p>配置版本 v{settings.version}。{settings.applicationNote}</p>
+    <p>配置版本 v{current.version}。{current.applicationNote}</p>
     <label>默认语言<input name="defaultLocale" defaultValue={settings.defaultLocale} required /></label>
     <label>默认币种<input name="defaultCurrency" defaultValue={settings.defaultCurrency} required /></label>
     <label>Provider 模式<select name="externalAdapterMode" defaultValue={settings.externalAdapterMode}><option value="mock">mock</option><option value="live">live</option></select></label>
@@ -72,4 +47,45 @@ export function SettingsEditor({ settings }: { settings: WorkspaceSettingsView }
     </fieldset>
     <button type="submit">保存非敏感设置</button><output aria-live="polite">{message}</output>
   </form>;
+}
+
+export async function saveSettings(
+  fetcher: typeof fetch,
+  current: WorkspaceSettingsView,
+  data: FormData
+): Promise<{ ok: true; value: WorkspaceSettingsView } | { ok: false; status: number }> {
+    const response = await fetcher("/api/v1/settings", {
+      method: "PATCH",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        expectedVersion: current.version,
+        defaultLocale: data.get("defaultLocale"),
+        defaultCurrency: data.get("defaultCurrency"),
+        externalAdapterMode: data.get("externalAdapterMode"),
+        assetRoot: data.get("assetRoot"),
+        workerConcurrency: Number(data.get("workerConcurrency")),
+        maxCanvasRunsPerDay: Number(data.get("maxCanvasRunsPerDay")),
+        pricingDefaults: {
+          domesticShippingCny: data.get("domesticShippingCny"),
+          crossBorderCostCny: data.get("crossBorderCostCny"),
+          fixedTargetCostThb: data.get("fixedTargetCostThb"),
+          platformFeeRate: data.get("platformFeeRate"),
+          paymentFeeRate: data.get("paymentFeeRate"),
+          targetProfitRate: data.get("targetProfitRate"),
+          ending: data.get("ending")
+        },
+        providerOptions: {
+          listingProvider: data.get("listingProvider"),
+          listingModel: data.get("listingModel"),
+          canvasWorkflow: data.get("canvasWorkflow")
+        },
+        retryPolicy: {
+          maxAttempts: Number(data.get("maxAttempts")),
+          initialDelaySeconds: Number(data.get("initialDelaySeconds"))
+        }
+      })
+    });
+    return response.ok
+      ? { ok: true, value: await response.json() as WorkspaceSettingsView }
+      : { ok: false, status: response.status };
 }

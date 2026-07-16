@@ -3,7 +3,17 @@ import { requireFencedWrite, type LeaseFence, type WorkerHandler } from "../runt
 
 export function createTemplateMatchHandler(input: {
   repository: {
-    loadMatchInputs(revisionId: string): Promise<{ category: string | null; templates: MatchableTemplate[]; defaultTemplateId: string }>;
+    loadMatchInputs(revisionId: string): Promise<{
+      category: string | null;
+      templates: Array<MatchableTemplate & {
+        version: number;
+        referenceAssetIds: string[];
+        promptFragment: string;
+        targetLocale: string;
+        visualStyle: string;
+      }>;
+      defaultTemplateId: string;
+    }>;
     saveMatch(value: Record<string, unknown>, fence: LeaseFence): Promise<boolean>;
   };
 }): WorkerHandler {
@@ -15,6 +25,11 @@ export function createTemplateMatchHandler(input: {
     requireFencedWrite(await input.repository.saveMatch({
       revisionId,
       templateId: matched.id,
+      templateVersion: matched.version,
+      referenceAssetIds: matched.referenceAssetIds,
+      promptFragment: matched.promptFragment,
+      targetLocale: matched.targetLocale,
+      visualStyle: matched.visualStyle,
       fallbackUsed: matched.fallbackUsed
     }, execution.fence));
     return { next: [{ kind: "image_select", businessKey: `${revisionId}:images`, payload: { version: 1, revisionId } }] };

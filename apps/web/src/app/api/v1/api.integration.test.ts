@@ -4,6 +4,8 @@ import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import pg from "pg";
 import { INITIAL_SQL } from "../../../../../../packages/db/src/migrations/0000_initial.js";
+import { PipelineRepository } from "../../../../../../packages/db/src/repositories/pipeline-repository.js";
+import { matchTemplate } from "@tk/domain/templates/match-template";
 
 import { createPostHandler as createIngestHandler } from "./ingest-links/route";
 import { createPostHandler as createAutomationHandler } from "./automation-runs/route";
@@ -601,6 +603,17 @@ describe.runIf(Boolean(pgTestUrl))("v1 API PostgreSQL integration", () => {
         { version: 1, prompt_fragment: "v1 prompt" },
         { version: 2, prompt_fragment: "v2 prompt" }
       ]);
+      await pool.query("INSERT INTO local_operators (id, handle, display_name) VALUES ('operator-template', 'template-test', 'Template Test')");
+      await pool.query(`INSERT INTO products (id, operator_id, source_url) VALUES
+        ('product-template', 'operator-template', 'https://detail.1688.com/offer/template.html')`);
+      await pool.query(`INSERT INTO product_revisions
+        (id, product_id, draft_version, source_payload, working_draft) VALUES
+        ('revision-template', 'product-template', 1, '{"category":"dress"}', '{}')`);
+      const matchInputs = await new PipelineRepository(pool).loadMatchInputs("revision-template");
+      expect(matchTemplate(matchInputs)).toMatchObject({
+        id: created.templateId, version: 2, fallbackUsed: false,
+        rules: [{ category: "dress", priority: 10 }]
+      });
     } finally {
       await pool.end();
     }
