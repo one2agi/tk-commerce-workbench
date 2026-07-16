@@ -60,8 +60,8 @@ test("勾选采集到当前版本审批每个修订只生成一次 TK，且只�
     });
     await new ExchangeRateRepository(database.pool).recordManualOverride({ base: "CNY", target: "THB", rate: "4.80", observedAt: "2026-07-16T00:00:00Z" });
     await database.pool.query(
-      `INSERT INTO templates (id, name, target_locale, enabled, version, category_rules)
-       VALUES ('template-tk', 'TK 工作流', 'th-TH', true, 7, '[{"category":"服装","priority":10}]'::jsonb)`
+      `INSERT INTO templates (id, template_key, name, target_locale, enabled, version, category_rules)
+       VALUES ('template-tk-v7', 'template-tk', 'TK 工作流', 'th-TH', true, 7, '[{"categoryKey":"服装","priority":10}]'::jsonb)`
     );
 
     const ports = createFakePorts();
