@@ -81,9 +81,11 @@ describe("createMiaoshouEditHandler", () => {
   it("stages approved assets in their frozen order, checks reachability and releases them", async () => {
     const deps = dependencies({ kind: "succeeded", remoteDetailId: "remote-1" });
     const handler = createMiaoshouEditHandler(deps);
+    const run = execution();
 
-    await expect(handler(job(), execution())).resolves.toEqual({ next: [] });
+    await expect(handler(job(), run)).resolves.toEqual({ next: [] });
 
+    expect(run.persistRemoteTask).toHaveBeenCalledWith("canonical:detail-3799770548");
     expect(deps.staging.stage).toHaveBeenCalledWith({ localAssetIds: ["asset-b", "asset-a"], purpose: "miaoshou_edit" });
     expect(deps.reachability.assertReachable).toHaveBeenCalledWith(["https://stage.test/asset-b", "https://stage.test/asset-a"]);
     expect(deps.edit.applyEdit).toHaveBeenCalledWith(expect.objectContaining({
@@ -93,6 +95,21 @@ describe("createMiaoshouEditHandler", () => {
     }));
     expect(deps.repository.saveSucceeded).toHaveBeenCalledWith("approval-1", "remote-1", expect.any(Object));
     expect(deps.staging.release).toHaveBeenCalledWith({ remoteUrls: ["https://stage.test/asset-b", "https://stage.test/asset-a"] });
+  });
+
+  it("turns a crash after remote acceptance but before local save into reconciliation-only recovery", async () => {
+    const deps = dependencies({ kind: "succeeded", remoteDetailId: "remote-1" });
+    deps.repository.saveSucceeded.mockRejectedValueOnce(new Error("database disconnected after remote acceptance"));
+    const handler = createMiaoshouEditHandler(deps);
+
+    await expect(handler(job(), execution())).rejects.toMatchObject({
+      remoteTaskId: "canonical:detail-3799770548"
+    });
+    expect(deps.edit.applyEdit).toHaveBeenCalledTimes(1);
+
+    await handler(job("canonical:detail-3799770548"), execution());
+    expect(deps.edit.applyEdit).toHaveBeenCalledTimes(1);
+    expect(deps.edit.reconcileByCanonicalDetailId).toHaveBeenCalledTimes(1);
   });
 
   it("persists field-level validation errors without retrying", async () => {

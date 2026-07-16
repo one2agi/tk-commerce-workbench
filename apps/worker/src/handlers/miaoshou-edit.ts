@@ -8,6 +8,7 @@ import type {
 
 import {
   ExternalResultUnknownError,
+  LeaseLostError,
   NeedsInputError,
   requireFencedWrite,
   type LeaseFence,
@@ -89,6 +90,8 @@ export function createMiaoshouEditHandler(input: {
     }
 
     let staged: Awaited<ReturnType<AssetStagingPort["stage"]>> = [];
+    const reconciliationMarker = `canonical:${snapshot.canonicalSuccessDetailId}`;
+    let externalCallStarted = false;
     try {
       execution.assertLease();
       staged = await input.staging.stage({
@@ -101,6 +104,9 @@ export function createMiaoshouEditHandler(input: {
       const orderedRemoteAssetUrls = staged.map((asset) => asset.remoteUrl);
       await input.reachability.assertReachable(orderedRemoteAssetUrls);
       execution.assertLease();
+      // Persist before the non-transactional external write. From this point onward a
+      // lease expiry must reconcile by canonical detail and must never call edit again.
+      await execution.persistRemoteTask(reconciliationMarker);
       await input.audit.append({
         action: "miaoshou.edit.call",
         targetKind: "approval_snapshot",
@@ -108,6 +114,7 @@ export function createMiaoshouEditHandler(input: {
         payload: { imageCount: orderedRemoteAssetUrls.length },
         redacted: true
       });
+      externalCallStarted = true;
       const result = await input.edit.applyEdit({
         approvalSnapshot: snapshot,
         orderedRemoteAssetUrls,
@@ -148,8 +155,21 @@ export function createMiaoshouEditHandler(input: {
         redacted: true
       });
       throw new ExternalResultUnknownError(
-        result.remoteTaskId ?? `canonical:${snapshot.canonicalSuccessDetailId}`,
+        result.remoteTaskId ?? reconciliationMarker,
         "Miaoshou edit result is unknown and must be reconciled"
+      );
+    } catch (error) {
+      if (
+        error instanceof ExternalResultUnknownError ||
+        error instanceof NeedsInputError ||
+        error instanceof LeaseLostError ||
+        !externalCallStarted
+      ) {
+        throw error;
+      }
+      throw new ExternalResultUnknownError(
+        reconciliationMarker,
+        "Miaoshou edit may have succeeded before the local result was saved"
       );
     } finally {
       if (staged.length > 0) {

@@ -1,6 +1,8 @@
 import { strict as assert } from "node:assert";
+import { isDeepStrictEqual } from "node:util";
 
 import type { ApprovalSnapshotV1, ConfirmMiaoshouEditV1 } from "@tk/contracts";
+import { createApprovalSnapshot, type ApprovalSnapshotMaterial } from "@tk/domain";
 import type { PoolClient } from "pg";
 
 import { schema, type DbPool } from "../schema/index.js";
@@ -79,6 +81,90 @@ interface LockedRevision {
   draft_version: number;
   source_payload: Record<string, unknown>;
   working_draft: Record<string, unknown>;
+}
+
+interface PersistedApprovalRow {
+  id: string;
+  product_id: string;
+  revision_id: string;
+  draft_version: number;
+  listing_run_id: string;
+  pricing_run_id: string;
+  template_version: number;
+  ordered_final_asset_ids: string[];
+  source_platform: "1688";
+  source_canonical_url: string;
+  source_item_id: string;
+  canonical_success_detail_id: string;
+  locale: string;
+  currency: string;
+  title: string;
+  description: string;
+  attributes: Array<{ name: string; value: string }>;
+  item_number: string | null;
+  price_minor: string;
+  price_currency: string;
+  stock: number;
+  weight_kg: string;
+  dimensions: { lengthCm: string; widthCm: string; heightCm: string } | null;
+  skus: ApprovalSnapshotV1["skus"];
+  state: string;
+  created_at: Date;
+}
+
+function snapshotFromRow(row: PersistedApprovalRow): ApprovalSnapshotV1 {
+  assert(row.source_platform === "1688", "unsupported approval source platform");
+  assert(row.state === "approved", "approval snapshot is not active");
+  const material = {
+    approvalSnapshotId: row.id,
+    productId: row.product_id,
+    revisionId: row.revision_id,
+    draftVersion: row.draft_version,
+    listingRunId: row.listing_run_id,
+    pricingRunId: row.pricing_run_id,
+    templateVersion: row.template_version,
+    orderedFinalAssetIds: row.ordered_final_asset_ids ?? [],
+    sourceCanonicalUrl: row.source_canonical_url,
+    sourceItemId: row.source_item_id,
+    canonicalSuccessDetailId: row.canonical_success_detail_id,
+    locale: row.locale,
+    currency: row.currency,
+    title: row.title,
+    description: row.description,
+    attributes: row.attributes ?? [],
+    itemNumber: row.item_number,
+    priceWire: { amountMinor: row.price_minor, currency: row.price_currency },
+    stock: row.stock,
+    weightKg: row.weight_kg,
+    dimensions: row.dimensions,
+    skus: row.skus ?? [],
+    createdAt: row.created_at.toISOString()
+  } as unknown as ApprovalSnapshotMaterial;
+  return createApprovalSnapshot(material);
+}
+
+function assertSameApprovedMaterial(existing: ApprovalSnapshotV1, current: ApprovalSnapshotV1): void {
+  const comparisons: Array<[string, unknown, unknown]> = [
+    ["templateVersion", existing.templateVersion, current.templateVersion],
+    ["orderedFinalAssetIds", existing.orderedFinalAssetIds, current.orderedFinalAssetIds],
+    ["sourceCanonicalUrl", existing.sourceCanonicalUrl, current.sourceCanonicalUrl],
+    ["sourceItemId", existing.sourceItemId, current.sourceItemId],
+    ["canonicalSuccessDetailId", existing.canonicalSuccessDetailId, current.canonicalSuccessDetailId],
+    ["locale", existing.locale, current.locale],
+    ["currency", existing.currency, current.currency],
+    ["title", existing.title, current.title],
+    ["description", existing.description, current.description],
+    ["attributes", existing.attributes, current.attributes],
+    ["itemNumber", existing.itemNumber, current.itemNumber],
+    ["priceWire", existing.priceWire, current.priceWire],
+    ["stock", existing.stock, current.stock],
+    ["weightKg", existing.weightKg, current.weightKg],
+    ["dimensions", existing.dimensions, current.dimensions],
+    ["skus", existing.skus, current.skus]
+  ];
+  for (const [field, expected, actual] of comparisons) {
+    if (!isDeepStrictEqual(expected, actual)) conflict(field, expected, actual);
+  }
 }
 
 export class ApprovalRepository {
@@ -183,21 +269,6 @@ export class ApprovalRepository {
     try {
       await client.query("BEGIN");
       const material = await this.loadMaterial(client, command);
-      const existingResult = await client.query<{ approval_snapshot_id: string; sync_id: string }>(
-        `SELECT approval.id AS approval_snapshot_id, sync.id AS sync_id
-         FROM ${schema.approvalSnapshots} approval
-         JOIN ${schema.miaoshouSyncs} sync ON sync.approval_snapshot_id = approval.id
-         WHERE approval.product_id = $1 AND approval.revision_id = $2
-           AND approval.draft_version = $3 AND approval.listing_run_id = $4
-           AND approval.pricing_run_id = $5`,
-        [command.productId, material.revision.id, command.expectedDraftVersion, command.expectedListingRunId, command.expectedPricingRunId]
-      );
-      const existing = existingResult.rows[0];
-      if (existing) {
-        await client.query("COMMIT");
-        return { approvalSnapshotId: existing.approval_snapshot_id, syncId: existing.sync_id };
-      }
-
       const source = object(material.revision.source_payload);
       const sourceItemId = material.product.source_item_id ?? String(source.sourceItemId ?? "");
       const canonicalSuccessDetailId = material.product.canonical_success_detail_id ?? "";
@@ -261,6 +332,24 @@ export class ApprovalRepository {
         skus,
         createdAt
       } as unknown as ApprovalSnapshotV1;
+
+      const existingResult = await client.query<PersistedApprovalRow & { sync_id: string }>(
+        `SELECT approval.*, sync.id AS sync_id
+         FROM ${schema.approvalSnapshots} approval
+         JOIN ${schema.miaoshouSyncs} sync ON sync.approval_snapshot_id = approval.id
+         WHERE approval.product_id = $1 AND approval.revision_id = $2
+           AND approval.draft_version = $3 AND approval.listing_run_id = $4
+           AND approval.pricing_run_id = $5
+         FOR UPDATE`,
+        [command.productId, material.revision.id, command.expectedDraftVersion, command.expectedListingRunId, command.expectedPricingRunId]
+      );
+      const existing = existingResult.rows[0];
+      if (existing) {
+        if (existing.state !== "approved") conflict("approvalState", "approved", existing.state);
+        assertSameApprovedMaterial(snapshotFromRow(existing), snapshot);
+        await client.query("COMMIT");
+        return { approvalSnapshotId: existing.id, syncId: existing.sync_id };
+      }
 
       await client.query(
         `INSERT INTO ${schema.approvalSnapshots}
@@ -327,65 +416,83 @@ export class ApprovalRepository {
     }
   }
 
+  async invalidateForProductInTransaction(
+    client: PoolClient,
+    productId: string,
+    reason: string
+  ): Promise<boolean> {
+    assert(productId.length > 0, "productId required");
+    assert(reason.length > 0, "invalidation reason required");
+    const current = await client.query<{ id: string }>(
+      `SELECT id FROM ${schema.approvalSnapshots}
+       WHERE product_id = $1 AND state = 'approved'
+       ORDER BY created_at DESC, id DESC
+       LIMIT 1 FOR UPDATE`,
+      [productId]
+    );
+    const approvalSnapshotId = current.rows[0]?.id;
+    if (!approvalSnapshotId) return false;
+
+    await client.query(
+      `UPDATE ${schema.approvalSnapshots} SET state = 'invalidated'
+       WHERE id = $1 AND state = 'approved'`,
+      [approvalSnapshotId]
+    );
+    await client.query(
+      `UPDATE ${schema.products}
+       SET state_approval = 'unapproved', updated_at = now()
+       WHERE id = $1`,
+      [productId]
+    );
+    await client.query(
+      `UPDATE ${schema.jobs}
+       SET status = 'failed',
+           error = $2::jsonb,
+           owner = NULL, lease_token = NULL, lease_expires_at = NULL,
+           updated_at = now()
+       WHERE kind = 'miaoshou_edit'
+         AND payload->>'approvalSnapshotId' = $1
+         AND status IN ('queued', 'paused')`,
+      [approvalSnapshotId, JSON.stringify({ code: "approval_invalidated", safeMessage: "Approval changed before Miaoshou sync" })]
+    );
+    await client.query(
+      `UPDATE ${schema.miaoshouSyncs}
+       SET state = 'failed', error = $2::jsonb, updated_at = now()
+       WHERE approval_snapshot_id = $1 AND state = 'queued'`,
+      [approvalSnapshotId, JSON.stringify({ code: "approval_invalidated", safeMessage: "Approval changed before Miaoshou sync" })]
+    );
+    await appendAuditInTransaction(client, {
+      actorType: "operator",
+      action: "approval.invalidated",
+      targetKind: "approval_snapshot",
+      payload: { productId, reason }
+    }, approvalSnapshotId);
+    return true;
+  }
+
+  async invalidateCurrentApproval(productId: string, reason: string): Promise<boolean> {
+    const client = await this.pool.connect();
+    try {
+      await client.query("BEGIN");
+      const invalidated = await this.invalidateForProductInTransaction(client, productId, reason);
+      await client.query("COMMIT");
+      return invalidated;
+    } catch (error) {
+      await client.query("ROLLBACK").catch(() => undefined);
+      throw error;
+    } finally {
+      client.release();
+    }
+  }
+
   async loadSnapshot(approvalSnapshotId: string): Promise<ApprovalSnapshotV1> {
-    const result = await this.pool.query<{
-      id: string;
-      product_id: string;
-      revision_id: string;
-      draft_version: number;
-      listing_run_id: string;
-      pricing_run_id: string;
-      template_version: number;
-      ordered_final_asset_ids: string[];
-      source_platform: "1688";
-      source_canonical_url: string;
-      source_item_id: string;
-      canonical_success_detail_id: string;
-      locale: string;
-      currency: string;
-      title: string;
-      description: string;
-      attributes: Array<{ name: string; value: string }>;
-      item_number: string | null;
-      price_minor: string;
-      price_currency: string;
-      stock: number;
-      weight_kg: string;
-      dimensions: { lengthCm: string; widthCm: string; heightCm: string } | null;
-      skus: ApprovalSnapshotV1["skus"];
-      created_at: Date;
-    }>(
+    const result = await this.pool.query<PersistedApprovalRow>(
       `SELECT * FROM ${schema.approvalSnapshots} WHERE id = $1`,
       [approvalSnapshotId]
     );
     const row = result.rows[0];
     assert(row, "approval snapshot not found");
-    return Object.freeze({
-      approvalSnapshotId: row.id,
-      productId: row.product_id,
-      revisionId: row.revision_id,
-      draftVersion: row.draft_version,
-      listingRunId: row.listing_run_id,
-      pricingRunId: row.pricing_run_id,
-      templateVersion: row.template_version,
-      orderedFinalAssetIds: Object.freeze([...(row.ordered_final_asset_ids ?? [])]),
-      sourcePlatform: row.source_platform,
-      sourceCanonicalUrl: row.source_canonical_url,
-      sourceItemId: row.source_item_id,
-      canonicalSuccessDetailId: row.canonical_success_detail_id,
-      locale: row.locale,
-      currency: row.currency,
-      title: row.title,
-      description: row.description,
-      attributes: Object.freeze([...(row.attributes ?? [])]),
-      itemNumber: row.item_number,
-      priceWire: { amountMinor: row.price_minor, currency: row.price_currency },
-      stock: row.stock,
-      weightKg: row.weight_kg,
-      dimensions: row.dimensions,
-      skus: Object.freeze([...(row.skus ?? [])]),
-      createdAt: row.created_at.toISOString()
-    } as unknown as ApprovalSnapshotV1);
+    return snapshotFromRow(row);
   }
 
   private async withSyncFence(

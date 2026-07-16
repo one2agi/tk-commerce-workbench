@@ -480,6 +480,24 @@ describe("integration: job repository claim semantics", () => {
     expect(await jobs.retrySafe(unknownWithoutRemoteId, new Date("2026-07-16T00:00:00Z"))).toBe(false);
   });
 
+  test("historical Miaoshou result_unknown without a marker stays manual and cannot be claimed for edit", async () => {
+    const jobId = await jobs.enqueue({
+      kind: "miaoshou_edit",
+      businessKey: "historical-result-unknown-without-marker",
+      payload: { version: 1, approvalSnapshotId: "legacy-approval" }
+    });
+    await handle.pool.query(
+      `UPDATE jobs SET status = 'needs_input', remote_task_id = NULL,
+         error = '{"code":"reconcile_required"}'::jsonb WHERE id = $1`,
+      [jobId]
+    );
+
+    expect(await jobs.retrySafe(jobId, new Date())).toBe(false);
+    expect(await jobs.claim("ordinary-worker", new Date(), 30_000)).toBeNull();
+    expect(await jobs.claimReconciliation("reconcile-worker", new Date(), 30_000)).toBeNull();
+    expect((await handle.pool.query("SELECT status FROM jobs WHERE id = $1", [jobId])).rows[0]?.status).toBe("needs_input");
+  });
+
   test("expired paid or external jobs require review instead of being automatically charged again", async () => {
     const startedAt = new Date("2026-07-16T00:00:00Z");
     const expiredAt = new Date("2026-07-16T00:00:01Z");
@@ -1058,6 +1076,18 @@ describe("integration: ApprovalRepository.confirmAndEnqueue", () => {
     });
     const snapshot = await approvals.loadSnapshot(confirmed.approvalSnapshotId);
     expect(snapshot.skus[0]?.priceWire).toEqual({ amountMinor: "25900", currency: "THB" });
+    expect(Object.isFrozen(snapshot)).toBe(true);
+    expect(Object.isFrozen(snapshot.attributes[0])).toBe(true);
+    expect(Object.isFrozen(snapshot.priceWire)).toBe(true);
+    expect(Object.isFrozen(snapshot.dimensions)).toBe(true);
+    expect(Object.isFrozen(snapshot.skus[0])).toBe(true);
+    expect(Object.isFrozen(snapshot.skus[0]?.attributes)).toBe(true);
+    expect(Object.isFrozen(snapshot.skus[0]?.priceWire)).toBe(true);
+    expect(Object.isFrozen(snapshot.skus[0]?.assetIds)).toBe(true);
+    expect(() => { (snapshot.attributes[0] as { value: string }).value = "polyester"; }).toThrow();
+    expect(() => { (snapshot.priceWire as { amountMinor: string }).amountMinor = "1"; }).toThrow();
+    expect(() => { (snapshot.dimensions as { lengthCm: string }).lengthCm = "1"; }).toThrow();
+    expect(() => { (snapshot.skus[0]!.attributes as { color: string }).color = "blue"; }).toThrow();
 
     const firstClaim = await jobs.claim("worker-first", new Date(), 30_000);
     expect(firstClaim).not.toBeNull();
@@ -1090,5 +1120,52 @@ describe("integration: ApprovalRepository.confirmAndEnqueue", () => {
     );
     expect(sync.rows[0]).toMatchObject({ state: "succeeded", remote_detail_id: "detail-canonical", error: null });
     expect(sync.rows[0].last_reconciled_at).not.toBeNull();
+  });
+
+  test("does not reuse an idempotent approval when persisted material changed under the same run ids", async () => {
+    const { productId } = await readyApprovalFixture();
+    const command: ConfirmMiaoshouEditV1 = {
+      version: 1,
+      productId,
+      expectedDraftVersion: 1,
+      expectedListingRunId: "run-listing-1",
+      expectedPricingRunId: "run-pricing-1",
+      expectedTemplateVersion: 3,
+      orderedFinalAssetIds: ["asset-a", "asset-b"]
+    };
+    await approvals.confirmAndEnqueue(command);
+    await handle.pool.query("UPDATE listing_drafts SET title = 'Changed title' WHERE id = 'run-listing-1'");
+
+    await expect(approvals.confirmAndEnqueue(command)).rejects.toMatchObject({
+      code: "approval_conflict",
+      metadata: expect.objectContaining({ field: "title", expected: "Thai title", actual: "Changed title" })
+    });
+    const counts = await handle.pool.query("SELECT (SELECT count(*) FROM approval_snapshots)::int AS snapshots, (SELECT count(*) FROM jobs WHERE kind = 'miaoshou_edit')::int AS jobs");
+    expect(counts.rows[0]).toEqual({ snapshots: 1, jobs: 1 });
+  });
+
+  test("transactionally invalidates the current approval and queued edit exactly once", async () => {
+    const { productId } = await readyApprovalFixture();
+    const confirmed = await approvals.confirmAndEnqueue({
+      version: 1,
+      productId,
+      expectedDraftVersion: 1,
+      expectedListingRunId: "run-listing-1",
+      expectedPricingRunId: "run-pricing-1",
+      expectedTemplateVersion: 3,
+      orderedFinalAssetIds: ["asset-a", "asset-b"]
+    });
+
+    expect(await approvals.invalidateCurrentApproval(productId, "title_changed")).toBe(true);
+    expect(await approvals.invalidateCurrentApproval(productId, "title_changed")).toBe(false);
+    await expect(approvals.loadSnapshot(confirmed.approvalSnapshotId)).rejects.toThrow(/not active/i);
+    const state = await handle.pool.query(
+      `SELECT
+         (SELECT state FROM approval_snapshots WHERE id = $1) AS approval,
+         (SELECT state_approval FROM products WHERE id = $2) AS product,
+         (SELECT status FROM jobs WHERE payload->>'approvalSnapshotId' = $1) AS job`,
+      [confirmed.approvalSnapshotId, productId]
+    );
+    expect(state.rows[0]).toEqual({ approval: "invalidated", product: "unapproved", job: "failed" });
   });
 });
