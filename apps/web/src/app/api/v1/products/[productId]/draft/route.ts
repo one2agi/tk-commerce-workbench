@@ -1,0 +1,106 @@
+import { randomUUID } from "node:crypto";
+import pg from "pg";
+import { UpdateProductOverridesV1, type UpdateProductOverridesV1 as UpdateCommand } from "@tk/contracts";
+import { rejectNonLoopback, rejectUnsafeBrowserMutation } from "../../../../../../server/auth/loopback";
+import { loadRuntimeConfig } from "../../../../../../server/composition";
+
+type Context = { params: Promise<{ productId: string }> };
+export interface DraftPort {
+  update(command: UpdateCommand): Promise<{ draftVersion: number; revisionId?: string; approvalInvalidated: true }>;
+}
+
+export function createPatchHandler(dependencies: { drafts: DraftPort }) {
+  return async function patch(request: Request, context: Context): Promise<Response> {
+    const rejected = rejectNonLoopback(request) ?? rejectUnsafeBrowserMutation(request);
+    if (rejected) return rejected;
+    const { productId } = await context.params;
+    const parsed = UpdateProductOverridesV1.safeParse({ ...(await request.json().catch(() => null)), productId });
+    if (!parsed.success) return Response.json({ error: "invalid_request" }, { status: 400 });
+    return Response.json(await dependencies.drafts.update(parsed.data));
+  };
+}
+
+let pool: pg.Pool | undefined;
+function database(): pg.Pool {
+  pool ??= new pg.Pool({ connectionString: loadRuntimeConfig().databaseUrl });
+  return pool;
+}
+
+const pgDrafts: DraftPort = {
+  async update(command) {
+    const client = await database().connect();
+    try {
+      await client.query("BEGIN");
+      const latest = await client.query<{
+        id: string; draft_version: number; source_title: string | null;
+        source_payload: Record<string, unknown>; working_draft: Record<string, unknown>;
+      }>(`SELECT id, draft_version, source_title, source_payload, working_draft
+          FROM product_revisions WHERE product_id = $1
+          ORDER BY draft_version DESC, created_at DESC LIMIT 1 FOR UPDATE`, [command.productId]);
+      const row = latest.rows[0];
+      if (!row) throw Object.assign(new Error("product_not_found"), { code: "product_not_found" });
+      const nextVersion = row.draft_version + 1;
+      const revisionId = `revision_${randomUUID()}`;
+      const workingDraft: Record<string, unknown> = {
+        ...(row.working_draft ?? {}),
+        ...(command.targetLocale ? { targetLocale: command.targetLocale } : {}),
+        ...(command.translationStyle ? { style: command.translationStyle } : {}),
+        approvalInvalidatedAt: new Date().toISOString(),
+        warningCodes: [],
+        finalAssetOrder: []
+      };
+      delete workingDraft.templateMatch;
+      delete workingDraft.imageSelection;
+      delete workingDraft.approvalPreview;
+      await client.query(
+        `INSERT INTO product_revisions
+         (id, product_id, draft_version, source_title, source_payload, working_draft)
+         VALUES ($1, $2, $3, $4, $5::jsonb, $6::jsonb)`,
+        [revisionId, command.productId, nextVersion, row.source_title, JSON.stringify(row.source_payload), JSON.stringify(workingDraft)]
+      );
+      await client.query(
+        `INSERT INTO assets
+         (id, product_id, revision_id, remote_url, kind, state, width, height, sha256, local_path,
+          extension, perceptual_hash, clarity, duplicate_distance, watermark_probability,
+          collage_probability, non_product_probability, visual_score, chosen_role, rejection_reason)
+         SELECT 'asset_' || md5(id || $2), product_id, $2, remote_url, kind, state, width, height, sha256,
+                local_path, extension, perceptual_hash, clarity, duplicate_distance, watermark_probability,
+                collage_probability, non_product_probability, visual_score, chosen_role, rejection_reason
+         FROM assets WHERE revision_id = $1 AND kind <> 'generated'`,
+        [row.id, revisionId]
+      );
+      await client.query(
+        `UPDATE approval_snapshots SET state = 'invalidated'
+         WHERE product_id = $1 AND state = 'approved'`,
+        [command.productId]
+      );
+      await client.query(
+        `UPDATE products SET locale = COALESCE($2, locale), state_listing = 'pending',
+           state_canvas = 'not_started', state_approval = 'unapproved', state_miaoshou_edit = 'not_started',
+           version = version + 1, updated_at = now() WHERE id = $1`,
+        [command.productId, command.targetLocale ?? null]
+      );
+      await client.query(
+        `INSERT INTO audit_events (id, actor_type, action, target_kind, target_id, payload, redacted)
+         VALUES ($1, 'operator', 'product_draft_overrides_updated', 'product', $2, $3::jsonb, true)`,
+        [`audit_${randomUUID()}`, command.productId, JSON.stringify({ revisionId, draftVersion: nextVersion,
+          changed: [command.targetLocale ? "targetLocale" : null, command.translationStyle ? "translationStyle" : null].filter(Boolean) })]
+      );
+      await client.query("COMMIT");
+      return { draftVersion: nextVersion, revisionId, approvalInvalidated: true as const };
+    } catch (error) {
+      await client.query("ROLLBACK").catch(() => undefined);
+      throw error;
+    } finally {
+      client.release();
+    }
+  }
+};
+
+export async function PATCH(request: Request, context: Context): Promise<Response> {
+  try {
+    return await createPatchHandler({ drafts: pgDrafts })(request, context);
+  } catch (error) {
+    return Response.json({ error: (error as { code?: string }).code ?? "draft_update_failed" }, { status: 409 });
+  }
+}

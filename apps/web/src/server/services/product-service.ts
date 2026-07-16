@@ -9,6 +9,7 @@ import {
 import type { MoneyCurrency } from "@tk/contracts/quantities";
 import type { CanvasState } from "@tk/contracts/states";
 import type {
+  ApprovalPreviewV1,
   ProductPoolItemV1,
   ProductWorkspaceV1
 } from "@tk/contracts/read-models";
@@ -223,6 +224,58 @@ export class ProductService {
       } : null,
       finalAssetOrder: strings(draft.finalAssetOrder).map(assetId),
       warningCodes: strings(draft.warningCodes)
+    };
+  }
+
+  async preview(productIdValue: string): Promise<ApprovalPreviewV1 | null> {
+    const result = await this.database.query(
+      `SELECT p.id AS product_id, p.locale, p.currency, p.canonical_success_detail_id,
+              revision.draft_version,
+              listing.id AS listing_run_id,
+              pricing.id AS pricing_run_id, pricing.final_price_minor,
+              COALESCE(canvas.template_version,
+                NULLIF(revision.working_draft->'templateMatch'->>'templateVersion', '')::integer) AS template_version,
+              COALESCE(revision.working_draft->'finalAssetOrder', '[]'::jsonb) AS final_asset_order,
+              COALESCE(revision.working_draft->'warningCodes', '[]'::jsonb) AS warning_codes
+       FROM products p
+       JOIN LATERAL (
+         SELECT * FROM product_revisions candidate WHERE candidate.product_id = p.id
+         ORDER BY candidate.draft_version DESC, candidate.created_at DESC LIMIT 1
+       ) revision ON true
+       LEFT JOIN LATERAL (
+         SELECT * FROM listing_drafts candidate WHERE candidate.revision_id = revision.id
+         ORDER BY candidate.draft_version DESC, candidate.created_at DESC LIMIT 1
+       ) listing ON true
+       LEFT JOIN LATERAL (
+         SELECT * FROM pricing_runs candidate WHERE candidate.revision_id = revision.id
+         ORDER BY candidate.created_at DESC LIMIT 1
+       ) pricing ON true
+       LEFT JOIN LATERAL (
+         SELECT * FROM canvas_runs candidate WHERE candidate.revision_id = revision.id
+         ORDER BY candidate.created_at DESC LIMIT 1
+       ) canvas ON true
+       WHERE p.id = $1`,
+      [productIdValue]
+    );
+    const row = result.rows[0];
+    if (!row || typeof row.listing_run_id !== "string" || typeof row.pricing_run_id !== "string" ||
+      !Number.isInteger(Number(row.template_version)) || Number(row.template_version) < 1) return null;
+    const currency = requiredString(row, "currency") as MoneyCurrency;
+    const priceMinor = optionalString(row, "final_price_minor");
+    return {
+      productId: productId(requiredString(row, "product_id")),
+      draftVersion: Number(row.draft_version),
+      listingRunId: row.listing_run_id,
+      pricingRunId: row.pricing_run_id,
+      templateVersion: Number(row.template_version),
+      orderedFinalAssetIds: strings(row.final_asset_order).map(assetId),
+      locale: requiredString(row, "locale"),
+      currency,
+      finalPriceWire: priceMinor ? { amountMinor: priceMinor, currency } : null,
+      warningCodes: strings(row.warning_codes),
+      miaoshouTargetDetailId: optionalString(row, "canonical_success_detail_id")
+        ? miaoshouDetailId(optionalString(row, "canonical_success_detail_id")!)
+        : null
     };
   }
 }

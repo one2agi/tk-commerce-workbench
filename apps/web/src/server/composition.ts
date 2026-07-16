@@ -5,6 +5,7 @@ import pg from "pg";
 
 import { AutomationRunRepository } from "../../../../packages/db/src/repositories/automation-run-repository.js";
 import { JobRepository } from "../../../../packages/db/src/repositories/job-repository.js";
+import { ApprovalRepository } from "@tk/db";
 import type { DbPool } from "../../../../packages/db/src/schema/index.js";
 
 import { createExtensionTokenVerifier, type ExtensionTokenVerifier } from "./auth/extension-token";
@@ -23,6 +24,7 @@ export interface ServerServices {
   tasks: TaskService;
   templates: TemplateService;
   settings: SettingsService;
+  approvals: ApprovalRepository;
 }
 
 interface RuntimeConfig {
@@ -173,7 +175,8 @@ export function createServerServices(input: {
       workerConcurrency: input.config.workerConcurrency,
       maxCanvasRunsPerDay: input.config.maxCanvasRunsPerDay,
       assetRoot: input.config.assetRoot
-    })
+    }),
+    approvals: new ApprovalRepository(input.pool)
   };
 }
 
