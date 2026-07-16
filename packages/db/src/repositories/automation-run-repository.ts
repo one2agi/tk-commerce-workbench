@@ -106,7 +106,15 @@ export class AutomationRunRepository {
 }
 
 function extractRemoteUrls(payload: Record<string, unknown>): string[] {
-  const candidates = [payload.remoteUrls, payload.imageUrls, payload.images];
+  // Canonical collection payloads use mainImages/detailImages. Keep legacy aliases
+  // readable so an existing local database can still start an older revision.
+  const candidates = [
+    payload.mainImages,
+    payload.detailImages,
+    payload.remoteUrls,
+    payload.imageUrls,
+    payload.images
+  ];
   const urls = candidates.flatMap((value) => {
     if (!Array.isArray(value)) return [];
     return value.flatMap((item) => {
