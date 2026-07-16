@@ -1,11 +1,10 @@
 import { randomUUID } from "node:crypto";
 import pg from "pg";
-import { ApprovalRepository } from "@tk/db";
 import { RerunDownstreamV1, type RerunDownstreamV1 as RerunCommand } from "@tk/contracts";
 import { rejectNonLoopback, rejectUnsafeBrowserMutation } from "../../../../../../server/auth/loopback";
 import { loadRuntimeConfig } from "../../../../../../server/composition";
 import {
-  createApprovalInvalidationPort,
+  createPgApprovalInvalidationPort,
   type ApprovalInvalidationPort
 } from "../../../../../../server/services/approval-invalidation";
 
@@ -188,7 +187,7 @@ export function createPgRerunPort(approvalInvalidation: ApprovalInvalidationPort
 }
 
 const pgReruns = createPgRerunPort(
-  createApprovalInvalidationPort(new ApprovalRepository(database()))
+  createPgApprovalInvalidationPort(database)
 );
 
 export async function POST(request: Request, context: Context): Promise<Response> {
