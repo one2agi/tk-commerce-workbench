@@ -1168,4 +1168,92 @@ describe("integration: ApprovalRepository.confirmAndEnqueue", () => {
     );
     expect(state.rows[0]).toEqual({ approval: "invalidated", product: "unapproved", job: "failed" });
   });
+
+  test("rejects invalidation while the corresponding Miaoshou edit job is running", async () => {
+    const { productId } = await readyApprovalFixture();
+    const confirmed = await approvals.confirmAndEnqueue({
+      version: 1, productId, expectedDraftVersion: 1,
+      expectedListingRunId: "run-listing-1", expectedPricingRunId: "run-pricing-1",
+      expectedTemplateVersion: 3, orderedFinalAssetIds: ["asset-a", "asset-b"]
+    });
+    const claimed = await jobs.claim("sync-worker", new Date(), 30_000);
+    expect(claimed).not.toBeNull();
+
+    await expect(approvals.invalidateCurrentApproval(productId, "title_changed")).rejects.toMatchObject({
+      code: "approval_sync_in_progress"
+    });
+    const state = await handle.pool.query(
+      `SELECT
+         (SELECT state FROM approval_snapshots WHERE id = $1) AS approval,
+         (SELECT state FROM miaoshou_syncs WHERE approval_snapshot_id = $1) AS sync,
+         (SELECT status FROM jobs WHERE id = $2) AS job`,
+      [confirmed.approvalSnapshotId, claimed!.jobId]
+    );
+    expect(state.rows[0]).toEqual({ approval: "approved", sync: "queued", job: "running" });
+  });
+
+  test.each(["syncing", "result_unknown"])(
+    "rejects invalidation while Miaoshou sync state is %s",
+    async (syncState) => {
+      const { productId } = await readyApprovalFixture();
+      const confirmed = await approvals.confirmAndEnqueue({
+        version: 1, productId, expectedDraftVersion: 1,
+        expectedListingRunId: "run-listing-1", expectedPricingRunId: "run-pricing-1",
+        expectedTemplateVersion: 3, orderedFinalAssetIds: ["asset-a", "asset-b"]
+      });
+      await handle.pool.query(
+        "UPDATE miaoshou_syncs SET state = $2 WHERE approval_snapshot_id = $1",
+        [confirmed.approvalSnapshotId, syncState]
+      );
+
+      await expect(approvals.invalidateCurrentApproval(productId, "image_order_changed")).rejects.toMatchObject({
+        code: "approval_sync_in_progress"
+      });
+      expect((await handle.pool.query("SELECT state FROM approval_snapshots WHERE id = $1", [confirmed.approvalSnapshotId])).rows[0]?.state).toBe("approved");
+    }
+  );
+
+  test("atomically cancels a paused edit before invalidating approval", async () => {
+    const { productId } = await readyApprovalFixture();
+    const confirmed = await approvals.confirmAndEnqueue({
+      version: 1, productId, expectedDraftVersion: 1,
+      expectedListingRunId: "run-listing-1", expectedPricingRunId: "run-pricing-1",
+      expectedTemplateVersion: 3, orderedFinalAssetIds: ["asset-a", "asset-b"]
+    });
+    await handle.pool.query(
+      "UPDATE jobs SET status = 'paused', pause_reason = 'operator' WHERE payload->>'approvalSnapshotId' = $1",
+      [confirmed.approvalSnapshotId]
+    );
+
+    expect(await approvals.invalidateCurrentApproval(productId, "price_changed")).toBe(true);
+    expect((await handle.pool.query("SELECT status FROM jobs WHERE payload->>'approvalSnapshotId' = $1", [confirmed.approvalSnapshotId])).rows[0]?.status).toBe("failed");
+  });
+
+  test("running sync persistence and invalidation share lock order without deadlock or stale invalidation", async () => {
+    const { productId } = await readyApprovalFixture();
+    const confirmed = await approvals.confirmAndEnqueue({
+      version: 1, productId, expectedDraftVersion: 1,
+      expectedListingRunId: "run-listing-1", expectedPricingRunId: "run-pricing-1",
+      expectedTemplateVersion: 3, orderedFinalAssetIds: ["asset-a", "asset-b"]
+    });
+    const claimed = await jobs.claim("concurrent-sync-worker", new Date(), 30_000);
+    expect(claimed).not.toBeNull();
+    const fence = { jobId: claimed!.jobId, owner: "concurrent-sync-worker", leaseToken: claimed!.leaseToken };
+
+    const [saved, invalidated] = await Promise.allSettled([
+      approvals.saveSucceeded(confirmed.approvalSnapshotId, "detail-canonical", fence),
+      approvals.invalidateCurrentApproval(productId, "title_changed")
+    ]);
+
+    expect(saved).toEqual({ status: "fulfilled", value: true });
+    expect(invalidated.status).toBe("rejected");
+    if (invalidated.status === "rejected") expect(invalidated.reason).toMatchObject({ code: "approval_sync_in_progress" });
+    const state = await handle.pool.query(
+      `SELECT
+         (SELECT state FROM approval_snapshots WHERE id = $1) AS approval,
+         (SELECT state FROM miaoshou_syncs WHERE approval_snapshot_id = $1) AS sync`,
+      [confirmed.approvalSnapshotId]
+    );
+    expect(state.rows[0]).toEqual({ approval: "approved", sync: "succeeded" });
+  });
 });

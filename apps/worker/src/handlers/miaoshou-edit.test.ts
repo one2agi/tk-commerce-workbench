@@ -169,4 +169,53 @@ describe("createMiaoshouEditHandler", () => {
       );
     }
   );
+
+  it("does not overturn a persisted success when a later best-effort audit fails", async () => {
+    const deps = dependencies({ kind: "succeeded", remoteDetailId: "remote-1" });
+    deps.audit.append.mockResolvedValueOnce(undefined).mockRejectedValue(new Error("audit unavailable"));
+
+    await expect(createMiaoshouEditHandler(deps)(job(), execution())).resolves.toEqual({ next: [] });
+
+    expect(deps.repository.saveSucceeded).toHaveBeenCalledTimes(1);
+    expect(deps.repository.saveResultUnknown).not.toHaveBeenCalled();
+  });
+
+  it("does not persist a marker or write remotely when the pre-call audit fails", async () => {
+    const deps = dependencies({ kind: "succeeded", remoteDetailId: "must-not-be-used" });
+    deps.audit.append.mockRejectedValue(new Error("audit unavailable before call"));
+    const run = execution();
+
+    await expect(createMiaoshouEditHandler(deps)(job(), run)).rejects.toThrow(/audit unavailable/);
+
+    expect(run.persistRemoteTask).not.toHaveBeenCalled();
+    expect(deps.edit.applyEdit).not.toHaveBeenCalled();
+    expect(deps.repository.saveSucceeded).not.toHaveBeenCalled();
+    expect(deps.repository.saveResultUnknown).not.toHaveBeenCalled();
+  });
+
+  it("does not overturn persisted validation errors when a later best-effort audit fails", async () => {
+    const deps = dependencies({
+      kind: "validation_failed",
+      fieldErrors: [{ fieldPath: "title", message: "invalid" }]
+    });
+    deps.audit.append.mockResolvedValueOnce(undefined).mockRejectedValue(new Error("audit unavailable"));
+
+    await expect(createMiaoshouEditHandler(deps)(job(), execution())).rejects.toMatchObject({
+      code: "miaoshou_validation_failed"
+    });
+
+    expect(deps.repository.saveValidationFailure).toHaveBeenCalledTimes(1);
+    expect(deps.repository.saveResultUnknown).not.toHaveBeenCalled();
+  });
+
+  it("does not overturn reconciliation success when its best-effort call audit fails", async () => {
+    const deps = dependencies({ kind: "succeeded", remoteDetailId: "must-not-be-used" });
+    deps.audit.append.mockRejectedValue(new Error("reconciliation audit unavailable"));
+
+    await expect(createMiaoshouEditHandler(deps)(job("canonical:detail-3799770548"), execution())).resolves.toEqual({ next: [] });
+
+    expect(deps.repository.saveReconciled).toHaveBeenCalledTimes(1);
+    expect(deps.repository.saveResultUnknown).not.toHaveBeenCalled();
+    expect(deps.audit.append).toHaveBeenCalledTimes(1);
+  });
 });

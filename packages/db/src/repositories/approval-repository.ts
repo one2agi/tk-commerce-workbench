@@ -52,6 +52,15 @@ export class ApprovalConflictError extends Error {
   }
 }
 
+export class ApprovalSyncInProgressError extends Error {
+  readonly code = "approval_sync_in_progress";
+
+  constructor(readonly metadata: { approvalSnapshotId: string; syncState: string | null; jobStatus: string | null }) {
+    super("Approval cannot be invalidated while Miaoshou synchronization is in progress");
+    this.name = "ApprovalSyncInProgressError";
+  }
+}
+
 /** Kept as a compatibility export for callers compiled against Wave 1. */
 export class ApprovalNotReadyError extends Error {
   readonly code = "approval_mapping_not_ready";
@@ -423,6 +432,12 @@ export class ApprovalRepository {
   ): Promise<boolean> {
     assert(productId.length > 0, "productId required");
     assert(reason.length > 0, "invalidation reason required");
+    // Global lock order for approval mutations: product -> approval -> sync -> job.
+    const product = await client.query<{ id: string }>(
+      `SELECT id FROM ${schema.products} WHERE id = $1 FOR UPDATE`,
+      [productId]
+    );
+    assert(product.rows[0], "product not found");
     const current = await client.query<{ id: string }>(
       `SELECT id FROM ${schema.approvalSnapshots}
        WHERE product_id = $1 AND state = 'approved'
@@ -432,6 +447,27 @@ export class ApprovalRepository {
     );
     const approvalSnapshotId = current.rows[0]?.id;
     if (!approvalSnapshotId) return false;
+
+    const sync = await client.query<{ state: string }>(
+      `SELECT state FROM ${schema.miaoshouSyncs}
+       WHERE approval_snapshot_id = $1 FOR UPDATE`,
+      [approvalSnapshotId]
+    );
+    const editJobs = await client.query<{ status: string }>(
+      `SELECT status FROM ${schema.jobs}
+       WHERE kind = 'miaoshou_edit' AND payload->>'approvalSnapshotId' = $1
+       ORDER BY id FOR UPDATE`,
+      [approvalSnapshotId]
+    );
+    const syncState = sync.rows[0]?.state ?? null;
+    const runningJob = editJobs.rows.find((row) => row.status === "running");
+    if (runningJob || syncState === "syncing" || syncState === "result_unknown") {
+      throw new ApprovalSyncInProgressError({
+        approvalSnapshotId,
+        syncState,
+        jobStatus: runningJob?.status ?? editJobs.rows[0]?.status ?? null
+      });
+    }
 
     await client.query(
       `UPDATE ${schema.approvalSnapshots} SET state = 'invalidated'
@@ -505,6 +541,37 @@ export class ApprovalRepository {
     const client = await this.pool.connect();
     try {
       await client.query("BEGIN");
+      // Match invalidation lock order so a UI edit racing a Worker terminal write
+      // serializes cleanly instead of invalidating material still being sent remotely.
+      const product = await client.query(
+        `SELECT product.id
+         FROM ${schema.products} product
+         JOIN ${schema.approvalSnapshots} approval ON approval.product_id = product.id
+         WHERE approval.id = $1
+         FOR UPDATE OF product`,
+        [approvalSnapshotId]
+      );
+      if ((product.rowCount ?? 0) === 0) {
+        await client.query("ROLLBACK");
+        return false;
+      }
+      const approval = await client.query<{ state: string }>(
+        `SELECT state FROM ${schema.approvalSnapshots} WHERE id = $1 FOR UPDATE`,
+        [approvalSnapshotId]
+      );
+      if (approval.rows[0]?.state !== "approved") {
+        await client.query("ROLLBACK");
+        return false;
+      }
+      const sync = await client.query(
+        `SELECT id FROM ${schema.miaoshouSyncs}
+         WHERE approval_snapshot_id = $1 FOR UPDATE`,
+        [approvalSnapshotId]
+      );
+      if ((sync.rowCount ?? 0) === 0) {
+        await client.query("ROLLBACK");
+        return false;
+      }
       const owned = await client.query(
         `SELECT id FROM ${schema.jobs}
          WHERE id = $1 AND kind = 'miaoshou_edit' AND status = 'running'
