@@ -1,12 +1,17 @@
 import { randomUUID } from "node:crypto";
 import pg from "pg";
+import { z } from "zod";
 import { UpdateProductOverridesV1, type UpdateProductOverridesV1 as UpdateCommand } from "@tk/contracts";
 import { rejectNonLoopback, rejectUnsafeBrowserMutation } from "../../../../../../server/auth/loopback";
 import { loadRuntimeConfig } from "../../../../../../server/composition";
+import { conflictResponse } from "../../../../../../server/http/safe-conflict";
+
+type DraftUpdateRequest = UpdateCommand & Readonly<{ expectedDraftVersion: number }>;
+const DraftUpdateRequest = UpdateProductOverridesV1.extend({ expectedDraftVersion: z.number().int().positive() });
 
 type Context = { params: Promise<{ productId: string }> };
 export interface DraftPort {
-  update(command: UpdateCommand): Promise<{ draftVersion: number; revisionId?: string; approvalInvalidated: true }>;
+  update(command: DraftUpdateRequest): Promise<{ draftVersion: number; revisionId?: string; approvalInvalidated: true }>;
 }
 
 export function createPatchHandler(dependencies: { drafts: DraftPort }) {
@@ -14,9 +19,13 @@ export function createPatchHandler(dependencies: { drafts: DraftPort }) {
     const rejected = rejectNonLoopback(request) ?? rejectUnsafeBrowserMutation(request);
     if (rejected) return rejected;
     const { productId } = await context.params;
-    const parsed = UpdateProductOverridesV1.safeParse({ ...(await request.json().catch(() => null)), productId });
+    const parsed = DraftUpdateRequest.safeParse({ ...(await request.json().catch(() => null)), productId });
     if (!parsed.success) return Response.json({ error: "invalid_request" }, { status: 400 });
-    return Response.json(await dependencies.drafts.update(parsed.data));
+    try {
+      return Response.json(await dependencies.drafts.update(parsed.data));
+    } catch (error) {
+      return conflictResponse(error) ?? Response.json({ error: "draft_update_failed" }, { status: 500 });
+    }
   };
 }
 
@@ -31,12 +40,27 @@ const pgDrafts: DraftPort = {
     const client = await database().connect();
     try {
       await client.query("BEGIN");
+      const product = await client.query(`SELECT id FROM products WHERE id = $1 FOR UPDATE`, [command.productId]);
+      if (product.rowCount !== 1) throw Object.assign(new Error("product_not_found"), { code: "product_not_found" });
+      const versionResult = await client.query<{ draft_version: number }>(
+        `SELECT max(draft_version)::integer AS draft_version FROM product_revisions WHERE product_id = $1`,
+        [command.productId]
+      );
+      const actualDraftVersion = Number(versionResult.rows[0]?.draft_version ?? 0);
+      if (actualDraftVersion !== command.expectedDraftVersion) {
+        throw Object.assign(new Error("draft_version_conflict"), {
+          code: "draft_version_conflict",
+          field: "draftVersion",
+          expected: String(command.expectedDraftVersion),
+          actual: String(actualDraftVersion)
+        });
+      }
       const latest = await client.query<{
         id: string; draft_version: number; source_title: string | null;
         source_payload: Record<string, unknown>; working_draft: Record<string, unknown>;
       }>(`SELECT id, draft_version, source_title, source_payload, working_draft
-          FROM product_revisions WHERE product_id = $1
-          ORDER BY draft_version DESC, created_at DESC LIMIT 1 FOR UPDATE`, [command.productId]);
+          FROM product_revisions WHERE product_id = $1 AND draft_version = $2 FOR UPDATE`,
+      [command.productId, command.expectedDraftVersion]);
       const row = latest.rows[0];
       if (!row) throw Object.assign(new Error("product_not_found"), { code: "product_not_found" });
       const nextVersion = row.draft_version + 1;
@@ -98,9 +122,5 @@ const pgDrafts: DraftPort = {
 };
 
 export async function PATCH(request: Request, context: Context): Promise<Response> {
-  try {
-    return await createPatchHandler({ drafts: pgDrafts })(request, context);
-  } catch (error) {
-    return Response.json({ error: (error as { code?: string }).code ?? "draft_update_failed" }, { status: 409 });
-  }
+  return createPatchHandler({ drafts: pgDrafts })(request, context);
 }

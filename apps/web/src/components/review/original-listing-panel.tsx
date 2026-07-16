@@ -1,6 +1,9 @@
 import type { ProductWorkspaceV1 } from "@tk/contracts/read-models";
 
-export function OriginalListingPanel({ listing }: { listing: ProductWorkspaceV1["originalListing"] }) {
+export function OriginalListingPanel({ listing, skuCount }: {
+  listing: ProductWorkspaceV1["originalListing"];
+  skuCount: number | null;
+}) {
   return (
     <section aria-label="中文原始 Listing" className="tk-panel tk-review__source">
       <header><span>1688 原文</span><strong>中文</strong></header>
@@ -12,7 +15,7 @@ export function OriginalListingPanel({ listing }: { listing: ProductWorkspaceV1[
             <dt>{attribute.name}</dt><dd>{attribute.value}</dd>
           </div>)}
         </dl>
-        <p className="tk-metric">SKU {listing.saleAttributes.length} 个</p>
+        <p className="tk-metric">{skuCount === null ? "SKU 数量未知" : `SKU ${skuCount} 个`}</p>
       </> : <p>原始 Listing 尚未采集完成</p>}
     </section>
   );

@@ -13,6 +13,7 @@ import type {
   ProductPoolItemV1,
   ProductWorkspaceV1
 } from "@tk/contracts/read-models";
+import type { ReviewWorkspaceView } from "../../components/review/review-workspace-view";
 
 export interface QueryPort {
   query(text: string, values?: readonly unknown[]): Promise<{ rows: Array<Record<string, unknown>> }>;
@@ -92,6 +93,26 @@ function requiredString(row: Record<string, unknown>, key: string): string {
 
 function optionalString(row: Record<string, unknown>, key: string): string | null {
   return typeof row[key] === "string" ? row[key] as string : null;
+}
+
+function decimalEvidence(value: unknown): string | null {
+  const text = typeof value === "string" ? value : null;
+  return text && /^(?:0|[1-9]\d*)(?:\.\d+)?$/.test(text) ? text : null;
+}
+
+function integerEvidence(value: unknown): string | null {
+  if (typeof value === "number" && Number.isSafeInteger(value) && value >= 0) return String(value);
+  const text = typeof value === "string" ? value : null;
+  return text && /^(?:0|[1-9]\d*)$/.test(text) ? text : null;
+}
+
+function dimensionEvidence(value: unknown): ReviewWorkspaceView["reviewFacts"]["dimensions"] {
+  if (!value || typeof value !== "object") return null;
+  const source = value as Record<string, unknown>;
+  const lengthCm = decimalEvidence(source.lengthCm);
+  const widthCm = decimalEvidence(source.widthCm);
+  const heightCm = decimalEvidence(source.heightCm);
+  return lengthCm && widthCm && heightCm ? { lengthCm, widthCm, heightCm } : null;
 }
 
 function toPoolItem(row: Record<string, unknown>): ProductPoolItemV1 {
@@ -277,5 +298,60 @@ export class ProductService {
         ? miaoshouDetailId(optionalString(row, "canonical_success_detail_id")!)
         : null
     };
+  }
+
+  async facts(productIdValue: string): Promise<ReviewWorkspaceView["reviewFacts"]> {
+    const result = await this.database.query(
+      `SELECT revision.source_payload,
+              COALESCE(revision.working_draft->'finalAssetOrder', '[]'::jsonb) AS final_asset_order,
+              p.canonical_success_detail_id
+       FROM products p
+       JOIN LATERAL (
+         SELECT * FROM product_revisions candidate WHERE candidate.product_id = p.id
+         ORDER BY candidate.draft_version DESC, candidate.created_at DESC LIMIT 1
+       ) revision ON true
+       WHERE p.id = $1`, [productIdValue]
+    );
+    const row = result.rows[0];
+    const source = row?.source_payload && typeof row.source_payload === "object"
+      ? row.source_payload as Record<string, unknown>
+      : {};
+    const skus = Array.isArray(source.skus) ? source.skus : null;
+    const skuStocks = skus?.map((sku) => sku && typeof sku === "object"
+      ? integerEvidence((sku as Record<string, unknown>).stock)
+      : null) ?? [];
+    const stock = integerEvidence(source.stock) ?? (skus && skuStocks.every((value) => value !== null)
+      ? skuStocks.reduce((total, value) => total + BigInt(value!), 0n).toString()
+      : null);
+    const order = strings(row?.final_asset_order);
+    const assetResult = order.length === 0 ? { rows: [] } : await this.database.query(
+      `SELECT id, remote_url, local_path FROM assets WHERE id = ANY($1::text[])`, [order]
+    );
+    const assets = new Map(assetResult.rows.map((asset) => [String(asset.id), asset]));
+    const orderedFinalImages = order.flatMap((id) => {
+      const asset = assets.get(id);
+      if (!asset) return [];
+      const remoteUrl = typeof asset.remote_url === "string" && /^https?:\/\//.test(asset.remote_url)
+        ? asset.remote_url : null;
+      const previewUrl = remoteUrl ?? (typeof asset.local_path === "string"
+        ? `/api/v1/assets/${encodeURIComponent(id)}/content`
+        : null);
+      return previewUrl ? [{ assetId: id, previewUrl }] : [];
+    });
+    return {
+      skuCount: skus ? skus.length : null,
+      orderedFinalImages,
+      stock,
+      weightKg: decimalEvidence(source.weightKg),
+      dimensions: dimensionEvidence(source.dimensions),
+      canonicalMiaoshouTarget: optionalString(row ?? {}, "canonical_success_detail_id")
+    };
+  }
+
+  async assetLocalPath(assetIdValue: string): Promise<string | null> {
+    const result = await this.database.query(
+      `SELECT local_path FROM assets WHERE id = $1 AND state = 'ready' LIMIT 1`, [assetIdValue]
+    );
+    return optionalString(result.rows[0] ?? {}, "local_path");
   }
 }

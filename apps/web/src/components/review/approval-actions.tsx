@@ -4,8 +4,9 @@ import { useState } from "react";
 import type { ConfirmMiaoshouEditV1, RerunDownstreamV1, UpdateProductOverridesV1 } from "@tk/contracts";
 
 type ActionResult = Record<string, unknown> & { draftVersion?: number; revisionId?: string };
+type VersionedDraftUpdate = UpdateProductOverridesV1 & Readonly<{ expectedDraftVersion: number }>;
 export type ReviewActions = Readonly<{
-  updateDraft(command: UpdateProductOverridesV1): Promise<ActionResult>;
+  updateDraft(command: VersionedDraftUpdate): Promise<ActionResult>;
   rerun(command: RerunDownstreamV1): Promise<ActionResult>;
   confirm(command: ConfirmMiaoshouEditV1): Promise<ActionResult>;
 }>;
@@ -13,6 +14,7 @@ export type ReviewActions = Readonly<{
 const defaultActions: ReviewActions = {
   updateDraft: (command) => request(`/api/v1/products/${command.productId}/draft`, "PATCH", {
     version: command.version,
+    expectedDraftVersion: command.expectedDraftVersion,
     targetLocale: command.targetLocale,
     translationStyle: command.translationStyle
   }),
@@ -61,7 +63,13 @@ export function ApprovalActions(props: Readonly<{
   async function saveDraft() {
     setStatus("正在保存草稿…");
     try {
-      const result = await actions.updateDraft({ version: 1, productId: props.productId, targetLocale: locale, translationStyle: style });
+      const result = await actions.updateDraft({
+        version: 1,
+        productId: props.productId,
+        expectedDraftVersion: draftVersion,
+        targetLocale: locale,
+        translationStyle: style
+      });
       if (typeof result.draftVersion === "number") setDraftVersion(result.draftVersion);
       if (typeof result.revisionId === "string") setRevisionId(result.revisionId);
       setApprovalInvalidated(true);

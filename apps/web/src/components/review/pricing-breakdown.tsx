@@ -2,8 +2,13 @@ import type { ProductWorkspaceV1 } from "@tk/contracts/read-models";
 
 function displayPrice(pricing: ProductWorkspaceV1["pricing"]): string {
   if (!pricing?.finalPriceWire) return "待计算";
-  const amount = Number(pricing.finalPriceWire.amountMinor) / 100;
-  return `${amount.toFixed(2)} ${pricing.finalPriceWire.currency}`;
+  const minor = pricing.finalPriceWire.amountMinor;
+  if (!/^-?\d+$/.test(minor)) return "待计算";
+  const negative = minor.startsWith("-");
+  const digits = (negative ? minor.slice(1) : minor).padStart(3, "0");
+  const major = digits.slice(0, -2);
+  const fraction = digits.slice(-2);
+  return `${negative ? "-" : ""}${major}.${fraction} ${pricing.finalPriceWire.currency}`;
 }
 
 export function PricingBreakdown({ pricing }: { pricing: ProductWorkspaceV1["pricing"] }) {

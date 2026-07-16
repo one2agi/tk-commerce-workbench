@@ -12,6 +12,8 @@ import { createPostHandler as createRerunPostHandler } from "./api/v1/products/[
 import { createPostHandler as createConfirmPostHandler } from "./api/v1/products/[productId]/confirm-miaoshou-edit/route";
 import { Sidebar } from "../components/navigation/sidebar";
 import { ProductService } from "../server/services/product-service";
+import type { ReviewWorkspaceView } from "../components/review/review-workspace-view";
+import { createGetHandler as createAssetContentHandler } from "./api/v1/assets/[assetId]/content/route";
 
 const workspace: ProductWorkspaceV1 = {
   productId: productId("product-13"),
@@ -58,20 +60,49 @@ const workspace: ProductWorkspaceV1 = {
   warningCodes: ["W_TITLE_LONG"]
 };
 
+const reviewWorkspace: ReviewWorkspaceView = {
+  ...workspace,
+  reviewFacts: {
+    skuCount: 2,
+    orderedFinalImages: [
+      { assetId: "asset-2", previewUrl: "https://images.test/final-2.jpg" },
+      { assetId: "asset-1", previewUrl: "https://images.test/final-1.jpg" }
+    ],
+    stock: "28",
+    weightKg: "0.65",
+    dimensions: { lengthCm: "20", widthCm: "10", heightCm: "8" },
+    canonicalMiaoshouTarget: "detail-13"
+  }
+};
+
 describe("final review flow", () => {
   it("shows Chinese source beside Thai draft, pricing, SKU count, warnings, selected assets and five outputs", () => {
-    const html = renderToStaticMarkup(<FinalReview workspace={workspace} />);
+    const html = renderToStaticMarkup(<FinalReview workspace={reviewWorkspace} />);
     expect(html).toContain("aria-label=\"中文原始 Listing\"");
     expect(html).toContain("便携式榨汁杯");
-    expect(html).toContain("aria-label=\"泰文目标 Listing\"");
+    expect(html).toContain("aria-label=\"th-TH 目标 Listing\"");
     expect(html).toContain("เครื่องปั่นน้ำผลไม้แบบพกพา");
     expect(html).toContain("459.00 THB");
     expect(html).toContain("SKU 2 个");
+    expect(html).toContain("库存 28");
+    expect(html).toContain("重量 0.65 kg");
+    expect(html).toContain("20 × 10 × 8 cm");
+    expect(html).toContain("妙手目标 detail-13");
     expect(html).toContain("W_TITLE_LONG");
     expect(html).toContain("asset-2");
+    expect(html).toContain("https://images.test/final-2.jpg");
     expect(html.match(/alt=\"Canvas 产出/g)).toHaveLength(5);
     expect(html).toContain("确认并推送妙手");
     expect(html).not.toContain("发布 TikTok");
+  });
+
+  it("shows unknown instead of guessing SKU count from sale attributes", () => {
+    const html = renderToStaticMarkup(<FinalReview workspace={{
+      ...reviewWorkspace,
+      reviewFacts: { ...reviewWorkspace.reviewFacts, skuCount: null }
+    }} />);
+    expect(html).toContain("SKU 数量未知");
+    expect(html).not.toContain("SKU 2 个");
   });
 });
 
@@ -116,6 +147,8 @@ describe("operational pages", () => {
     expect(templatesHtml).toContain("TK 榨汁杯");
     expect(templatesHtml).toContain("v3");
     expect(templatesHtml).toContain("clean background");
+    expect(templatesHtml).toContain("当前只读，保存尚未开放");
+    expect(templatesHtml).toContain("disabled");
 
     const settingsHtml = renderToStaticMarkup(renderSettingsPage({
       defaultLocale: "th-TH",
@@ -135,10 +168,41 @@ describe("operational pages", () => {
     expect(settingsHtml).toContain("已配置");
     expect(settingsHtml).toContain("未配置");
     expect(settingsHtml).not.toContain("type=\"password\"");
+    expect(settingsHtml).toContain("定价公式（当前只读）");
+    expect(settingsHtml).toContain("平台费率 0.05");
+    expect(settingsHtml).toContain("支付费率 0.03");
+    expect(settingsHtml).toContain("目标利润率 0.30");
+    expect(settingsHtml).toContain("尾数 9");
+    expect(settingsHtml).toContain("当前只读，保存尚未开放");
   });
 });
 
 describe("version-aware review routes", () => {
+  it("serves only DB-known local previews inside the configured asset root", async () => {
+    const read = vi.fn().mockResolvedValue(new Uint8Array([1, 2, 3]));
+    const handler = createAssetContentHandler({
+      assets: { localPath: vi.fn().mockResolvedValue("/safe/assets/final.jpg") },
+      assetRoot: "/safe/assets",
+      read
+    });
+    const response = await handler(
+      new Request("http://127.0.0.1/api/v1/assets/asset-2/content"),
+      { params: Promise.resolve({ assetId: "asset-2" }) }
+    );
+    expect(response.status).toBe(200);
+    expect(response.headers.get("content-type")).toBe("image/jpeg");
+    expect(read).toHaveBeenCalledWith("/safe/assets/final.jpg");
+
+    const escaped = await createAssetContentHandler({
+      assets: { localPath: vi.fn().mockResolvedValue("/private/secret.jpg") },
+      assetRoot: "/safe/assets",
+      read
+    })(new Request("http://127.0.0.1/api/v1/assets/asset-3/content"), {
+      params: Promise.resolve({ assetId: "asset-3" })
+    });
+    expect(escaped.status).toBe(404);
+  });
+
   it("projects the exact listing, pricing, template and ordered-asset versions used for confirmation", async () => {
     const service = new ProductService({ query: vi.fn().mockResolvedValue({ rows: [{
       product_id: "product-13",
@@ -165,11 +229,41 @@ describe("version-aware review routes", () => {
     });
   });
 
+  it("projects evidence-backed review facts and ordered preview URLs", async () => {
+    const query = vi.fn()
+      .mockResolvedValueOnce({ rows: [{
+        source_payload: {
+          skus: [{ skuId: "one", stock: "10" }, { skuId: "two", stock: "18" }],
+          weightKg: "0.65",
+          dimensions: { lengthCm: "20", widthCm: "10", heightCm: "8" }
+        },
+        final_asset_order: ["asset-2", "asset-1"],
+        canonical_success_detail_id: "detail-13"
+      }] })
+      .mockResolvedValueOnce({ rows: [
+        { id: "asset-1", remote_url: "file:///data/final-1.jpg", local_path: "/data/final-1.jpg" },
+        { id: "asset-2", remote_url: "https://images.test/final-2.jpg", local_path: "/data/asset-2.jpg" }
+      ] });
+    const facts = await new ProductService({ query }).facts("product-13");
+    expect(facts).toEqual({
+      skuCount: 2,
+      orderedFinalImages: [
+        { assetId: "asset-2", previewUrl: "https://images.test/final-2.jpg" },
+        { assetId: "asset-1", previewUrl: "/api/v1/assets/asset-1/content" }
+      ],
+      stock: "28",
+      weightKg: "0.65",
+      dimensions: { lengthCm: "20", widthCm: "10", heightCm: "8" },
+      canonicalMiaoshouTarget: "detail-13"
+    });
+  });
+
   it("patches only locale/style overrides and reports approval invalidation", async () => {
     const update = vi.fn().mockResolvedValue({ draftVersion: 5, approvalInvalidated: true });
     const response = await createDraftPatchHandler({ drafts: { update } })(
       sameOriginRequest("http://127.0.0.1/api/v1/products/product-13/draft", "PATCH", {
         version: 1,
+        expectedDraftVersion: 4,
         targetLocale: "en-US",
         translationStyle: "concise"
       }),
@@ -180,10 +274,30 @@ describe("version-aware review routes", () => {
     expect(update).toHaveBeenCalledWith({
       version: 1,
       productId: "product-13",
+      expectedDraftVersion: 4,
       targetLocale: "en-US",
       translationStyle: "concise"
     });
     expect(await response.json()).toMatchObject({ approvalInvalidated: true, draftVersion: 5 });
+  });
+
+  it("returns safe version conflict metadata for a stale draft editor", async () => {
+    const update = vi.fn().mockRejectedValue({
+      code: "draft_version_conflict", field: "draftVersion", expected: "3", actual: "4", internal: "secret"
+    });
+    const response = await createDraftPatchHandler({ drafts: { update } })(
+      sameOriginRequest("http://127.0.0.1/api/v1/products/product-13/draft", "PATCH", {
+        version: 1,
+        expectedDraftVersion: 3,
+        targetLocale: "en-US"
+      }),
+      { params: Promise.resolve({ productId: "product-13" }) }
+    );
+    expect(response.status).toBe(409);
+    expect(await response.json()).toEqual({
+      error: "draft_version_conflict",
+      conflict: { field: "draftVersion", expected: "3", actual: "4" }
+    });
   });
 
   it("reruns from an explicit node with the expected draft version", async () => {
@@ -243,6 +357,71 @@ describe("version-aware review routes", () => {
       expectedTemplateVersion: 3,
       orderedFinalAssetIds: ["asset-2", "asset-1"]
     });
+  });
+
+  it("returns safe confirmation conflict metadata without leaking internals", async () => {
+    const confirmAndEnqueue = vi.fn().mockRejectedValue({
+      code: "approval_conflict",
+      metadata: { field: "orderedFinalAssetIds", expected: ["asset-2"], actual: ["asset-3"] },
+      sql: "private"
+    });
+    const response = await createConfirmPostHandler({ approvals: { confirmAndEnqueue } })(
+      sameOriginRequest("http://127.0.0.1/api/v1/products/product-13/confirm-miaoshou-edit", "POST", {
+        version: 1,
+        expectedDraftVersion: 5,
+        expectedListingRunId: "listing-13",
+        expectedPricingRunId: "pricing-13",
+        expectedTemplateVersion: 3,
+        orderedFinalAssetIds: ["asset-2"]
+      }),
+      { params: Promise.resolve({ productId: "product-13" }) }
+    );
+    expect(response.status).toBe(409);
+    expect(await response.json()).toEqual({
+      error: "approval_conflict",
+      conflict: { field: "orderedFinalAssetIds", expected: ["asset-2"], actual: ["asset-3"] }
+    });
+  });
+
+  it("does not expose approval ids or worker state when sync is already in progress", async () => {
+    const confirmAndEnqueue = vi.fn().mockRejectedValue({
+      code: "approval_sync_in_progress",
+      metadata: { approvalSnapshotId: "approval-secret", syncState: "syncing", jobStatus: "running" },
+      message: "internal details"
+    });
+    const response = await createConfirmPostHandler({ approvals: { confirmAndEnqueue } })(
+      sameOriginRequest("http://127.0.0.1/api/v1/products/product-13/confirm-miaoshou-edit", "POST", {
+        version: 1,
+        expectedDraftVersion: 5,
+        expectedListingRunId: "listing-13",
+        expectedPricingRunId: "pricing-13",
+        expectedTemplateVersion: 3,
+        orderedFinalAssetIds: ["asset-2"]
+      }),
+      { params: Promise.resolve({ productId: "product-13" }) }
+    );
+    expect(response.status).toBe(409);
+    expect(await response.json()).toEqual({ error: "approval_sync_in_progress" });
+  });
+
+  it("does not expose conflict metadata outside the safe field allowlist", async () => {
+    const confirmAndEnqueue = vi.fn().mockRejectedValue({
+      code: "approval_conflict",
+      metadata: { field: "internalSql", expected: "secret-before", actual: "secret-after" }
+    });
+    const response = await createConfirmPostHandler({ approvals: { confirmAndEnqueue } })(
+      sameOriginRequest("http://127.0.0.1/api/v1/products/product-13/confirm-miaoshou-edit", "POST", {
+        version: 1,
+        expectedDraftVersion: 5,
+        expectedListingRunId: "listing-13",
+        expectedPricingRunId: "pricing-13",
+        expectedTemplateVersion: 3,
+        orderedFinalAssetIds: ["asset-2"]
+      }),
+      { params: Promise.resolve({ productId: "product-13" }) }
+    );
+    expect(response.status).toBe(409);
+    expect(await response.json()).toEqual({ error: "approval_conflict" });
   });
 });
 

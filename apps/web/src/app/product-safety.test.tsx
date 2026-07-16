@@ -1,5 +1,6 @@
 import { readdirSync, readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
+import { relative } from "node:path";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
 
@@ -25,11 +26,26 @@ describe("product safety boundary", () => {
     expect(labels.some((label) => /claim|publish|TikTok/i.test(label))).toBe(false);
   });
 
-  it("registers no claim, TikTok collect-box edit or publish mutation routes", () => {
+  it("keeps mutation routes on an explicit product-safe allowlist", () => {
     const apiRoot = fileURLToPath(new URL("./api/v1", import.meta.url));
     const routeFiles = walk(apiRoot).filter((file) => file.endsWith("route.ts"));
-    const mutationRoutes = routeFiles.filter((file) => /export async function (POST|PATCH|PUT|DELETE)/.test(readFileSync(file, "utf8")));
-    expect(mutationRoutes.some((file) => /claim|tiktok|publish|collect-?box/i.test(file))).toBe(false);
+    const mutationRoutes = routeFiles.flatMap((file) => {
+      const source = readFileSync(file, "utf8");
+      return Array.from(source.matchAll(/export async function (POST|PATCH|PUT|DELETE)/g), (match) =>
+        `${match[1]} ${relative(apiRoot, file).replaceAll("\\", "/").replace(/\/route\.ts$/, "")}`);
+    }).sort();
+    expect(mutationRoutes).toEqual([
+      "PATCH products/[productId]/draft",
+      "POST automation-runs",
+      "POST ingest-links",
+      "POST products/[productId]/confirm-miaoshou-edit",
+      "POST products/[productId]/rerun",
+      "POST tasks/[taskId]/actions"
+    ]);
+
+    const mutationSource = routeFiles.map((file) => readFileSync(file, "utf8")).join("\n");
+    expect(mutationSource).not.toMatch(/from\s+["']@tk\/adapters/);
+    expect(mutationSource).not.toMatch(/\.(?:claim|publish|editTikTokCollectBox)\s*\(/);
   });
 
   it("keeps Miaoshou sync status strictly read-only", async () => {
@@ -59,6 +75,8 @@ describe("product safety boundary", () => {
     const draftSource = readFileSync(new URL("./api/v1/products/[productId]/draft/route.ts", import.meta.url), "utf8");
     expect(draftSource).toMatch(/INSERT INTO product_revisions/);
     expect(draftSource).toMatch(/UPDATE approval_snapshots SET state = 'invalidated'/);
+    expect(draftSource).toMatch(/SELECT id FROM products WHERE id = \$1 FOR UPDATE/);
+    expect(draftSource).toMatch(/actualDraftVersion !== command\.expectedDraftVersion/);
   });
 });
 

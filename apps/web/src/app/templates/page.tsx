@@ -16,7 +16,7 @@ export function renderTemplatesPage(data: { items: TemplateV1[] }) {
         <div><dt>风格</dt><dd>{template.visualStyle}</dd></div>
         <div><dt>状态</dt><dd>{template.enabled ? "启用" : "停用"}</dd></div>
       </dl>
-      <button type="button">编辑新版本</button>
+      <button type="button" disabled>当前只读，保存尚未开放</button>
     </article>)}</div>
   </section>;
 }
