@@ -2,6 +2,7 @@ export * from "./miaoshou/client.js";
 export * from "./miaoshou/source-adapter.js";
 export * from "./miaoshou/edit-adapter.js";
 export * from "./miaoshou/edit-mapper.js";
+export * from "./miaoshou/reconcile-edit.js";
 export * from "./canvas/canvas-adapter.js";
 export * from "./llm/openai-compatible-adapter.js";
 export * from "./exchange-rate/exchange-rate-adapter.js";

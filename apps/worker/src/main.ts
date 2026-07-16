@@ -12,6 +12,7 @@ import { createStagingCleanupHandler } from "./handlers/staging-cleanup.js";
 import { createMiaoshouEditHandler } from "./handlers/miaoshou-edit.js";
 import { AdapterLimiterSet, type AdapterLimit } from "./runtime/adapter-limiter.js";
 import { runWorkerLoop, type WorkerHandler, type WorkerJobRepository } from "./runtime/worker-loop.js";
+import type { StagingCleanupCodec } from "./runtime/staging-cleanup-codec.js";
 
 export type CoreAdapterName = "miaoshou" | "llm" | "exchangeRate" | "canvas" | "staging";
 type LimitedRun = <T>(operation: () => Promise<T>) => Promise<T>;
@@ -57,6 +58,7 @@ export interface HandlerRegistryInput {
     miaoshouEdit: Parameters<typeof createMiaoshouEditHandler>[0]["repository"];
   };
   reachability: Parameters<typeof createMiaoshouEditHandler>[0]["reachability"];
+  cleanupCodec: StagingCleanupCodec;
   store: Parameters<typeof createArchiveAssetsHandler>[0]["store"];
   analyzer: Parameters<typeof createArchiveAssetsHandler>[0]["analyzer"];
   quota: Parameters<typeof createCanvasHandler>[0]["quota"];
@@ -98,12 +100,13 @@ export function buildHandlerRegistry(input: HandlerRegistryInput): Readonly<Reco
     canvas_generate: createCanvasHandler({ canvas, staging, store: input.store, repository: input.repositories.canvas, quota: input.quota, audit: input.audit, now: input.now, maxRunsPerDay: input.maxCanvasRunsPerDay }),
     final_preview: createFinalPreviewHandler({ repository: input.repositories.finalPreview }),
     exchange_rate_refresh: createExchangeRateRefreshHandler({ port: exchangeRate, repository: input.repositories.exchangeRate, audit: input.audit, now: input.now }),
-    staging_cleanup: createStagingCleanupHandler({ staging, audit: input.audit }),
+    staging_cleanup: createStagingCleanupHandler({ staging, audit: input.audit, codec: input.cleanupCodec }),
     miaoshou_edit: createMiaoshouEditHandler({
       edit: miaoshouEdit,
       staging,
       repository: input.repositories.miaoshouEdit,
       reachability: input.reachability,
+      cleanupCodec: input.cleanupCodec,
       audit: input.audit
     })
   });

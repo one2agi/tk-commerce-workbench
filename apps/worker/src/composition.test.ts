@@ -21,6 +21,7 @@ describe("worker composition", () => {
         finalPreview: {} as never, miaoshouEdit: {} as never
       },
       reachability: {} as never,
+      cleanupCodec: {} as never,
       store: {} as never,
       analyzer: {} as never,
       quota: {} as never,
@@ -62,7 +63,7 @@ describe("worker composition", () => {
         collect: { saveCollected: vi.fn(async () => ({ revisionId: "rev-1" })) }, archive: {} as never, listing: {} as never, pricing: {} as never,
         exchangeRate: {} as never, templates: {} as never, images: {} as never, canvas: {} as never, finalPreview: {} as never, miaoshouEdit: {} as never
       },
-      reachability: {} as never, store: {} as never, analyzer: {} as never, quota: {} as never, audit: { append: vi.fn(async () => undefined) }, now: () => new Date(), maxCanvasRunsPerDay: 1,
+      reachability: {} as never, cleanupCodec: {} as never, store: {} as never, analyzer: {} as never, quota: {} as never, audit: { append: vi.fn(async () => undefined) }, now: () => new Date(), maxCanvasRunsPerDay: 1,
       adapterLimits: { miaoshou: { concurrency: 1, minIntervalMs: 0 }, llm: { concurrency: 1, minIntervalMs: 0 }, exchangeRate: { concurrency: 1, minIntervalMs: 0 }, canvas: { concurrency: 1, minIntervalMs: 0 }, staging: { concurrency: 1, minIntervalMs: 0 } }
     });
     const claimed: ClaimedWorkerJob = { jobId: "job-1", kind: "miaoshou_collect", businessKey: "collect-1", payload, leaseToken: "lease-1", remoteTaskId: null };

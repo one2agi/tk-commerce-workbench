@@ -11,6 +11,7 @@ import {
 import { describe, expect, it, vi } from "vitest";
 import { createMiaoshouEditAdapter } from "./edit-adapter.js";
 import { mapApprovalSnapshotToMiaoshouEdit } from "./edit-mapper.js";
+import { fingerprintMiaoshouEditableDetail } from "./reconcile-edit.js";
 import type { MiaoshouHttp } from "./client.js";
 
 const fixture = async (name: string) => JSON.parse(await readFile(new URL(`../../../../tests/fixtures/external/miaoshou/${name}`, import.meta.url), "utf8"));
@@ -201,7 +202,7 @@ describe("Miaoshou common collect-box edit adapter", () => {
       sourceAttrs: mapped.sourceAttrs,
       // Real get_common_collect_box_detail shape: the dimension combination is
       // the key and values do not echo our internal `attributes` object.
-      skuMap: { ";แดง;S;": { price: mappedSku.price, stock: mappedSku.stock } }
+      skuMap: { ";แดง;S;": { ...mappedSku } }
     } } };
     const timeout = Object.freeze({ kind: "retryable", code: "miaoshou.network", safeMessage: "Miaoshou API is temporarily unavailable" });
     const post = vi.fn().mockResolvedValueOnce(currentBefore).mockRejectedValueOnce(timeout).mockResolvedValueOnce(currentAfter);
@@ -249,9 +250,11 @@ describe("Miaoshou common collect-box edit adapter", () => {
       commonCollectBoxDetailId: 3799770548,
       sourceList: [{ sourceItemId: "892408514788" }],
       ...mapped,
-      skuMap: { ";แดง;S;": { price: mappedSku.price, stock: mappedSku.stock } }
+      skuMap: { ";แดง;S;": { ...mappedSku } }
     } } };
-    const resolve = vi.fn().mockResolvedValue(mapped);
+    const expectation = fingerprintMiaoshouEditableDetail(mapped);
+    expect(JSON.stringify(expectation)).not.toContain("https://staging.test");
+    const resolve = vi.fn().mockResolvedValue(expectation);
     const post = vi.fn(async (_path: string) => remote);
     const restarted = createMiaoshouEditAdapter({ http: { post } as MiaoshouHttp, expectationResolver: { resolve } });
 
@@ -259,6 +262,28 @@ describe("Miaoshou common collect-box edit adapter", () => {
       .resolves.toEqual({ remoteDetailId: "3799770548", state: "applied" });
     expect(resolve).toHaveBeenCalledWith({ canonicalSuccessDetailId: "3799770548", sourceItemId: "892408514788" });
     expect(post.mock.calls.some(([path]) => String(path).includes("edit_common_collect_box_detail"))).toBe(false);
+  });
+
+  it("requires explicit canonical identity and an exact remote SKU key set", async () => {
+    const mapped = mapApprovalSnapshotToMiaoshouEdit(approval(), remoteUrls);
+    const expected = fingerprintMiaoshouEditableDetail(mapped);
+    const base = { sourceList: [{ sourceItemId: "892408514788" }], ...mapped };
+    const post = vi.fn()
+      .mockResolvedValueOnce({ result: "success", data: { editCommonCollectBoxDetail: base } })
+      .mockResolvedValueOnce({ result: "success", data: { editCommonCollectBoxDetail: {
+        ...base,
+        commonCollectBoxDetailId: 3799770548,
+        skuMap: { ...mapped.skuMap, ";EXTRA;": { itemNum: "EXTRA", price: 1, stock: 1, weight: 1 } }
+      } } });
+    const restarted = createMiaoshouEditAdapter({
+      http: { post } as MiaoshouHttp,
+      expectationResolver: { resolve: vi.fn().mockResolvedValue(expected) }
+    });
+
+    await expect(restarted.reconcileByCanonicalDetailId({ canonicalSuccessDetailId: "3799770548", sourceItemId: sourceItemId("892408514788") }))
+      .resolves.toMatchObject({ state: "missing" });
+    await expect(restarted.reconcileByCanonicalDetailId({ canonicalSuccessDetailId: "3799770548", sourceItemId: sourceItemId("892408514788") }))
+      .resolves.toMatchObject({ state: "no_change" });
   });
 
   it("fails closed when the repository resolver cannot select one unambiguous expectation", async () => {

@@ -75,7 +75,8 @@ function dependencies(result: Awaited<ReturnType<MiaoshouEditPort["applyEdit"]>>
   };
   const audit = { append: vi.fn().mockResolvedValue(undefined) };
   const reachability = { assertReachable: vi.fn().mockResolvedValue(undefined) };
-  return { edit, staging, repository, audit, reachability };
+  const cleanupCodec = { protect: vi.fn(() => "protected-envelope"), unprotect: vi.fn(() => []) };
+  return { edit, staging, repository, audit, reachability, cleanupCodec };
 }
 
 describe("createMiaoshouEditHandler", () => {
@@ -86,19 +87,23 @@ describe("createMiaoshouEditHandler", () => {
 
     await expect(handler(job(), run)).resolves.toEqual({ next: [] });
 
-    expect(run.persistRemoteTask).toHaveBeenCalledWith("canonical:detail-3799770548");
+    expect(run.persistRemoteTask).toHaveBeenCalledWith(expect.stringMatching(/^canonical:detail-3799770548:ctx:[a-f0-9]{64}$/));
     expect(deps.repository.persistReconciliationContext).toHaveBeenCalledWith(
       expect.objectContaining({
         version: 1,
         approvalSnapshotId: "approval-1",
         canonicalSuccessDetailId: "detail-3799770548",
         sourceItemId: "892408514788",
-        orderedRemoteAssetUrls: ["https://stage.test/asset-b", "https://stage.test/asset-a"],
-        expectedDetail: expect.objectContaining({ title: "title", imgUrls: ["https://stage.test/asset-b", "https://stage.test/asset-a"] })
+        jobId: "job-1",
+        approvalSnapshotDigest: expect.stringMatching(/^[a-f0-9]{64}$/),
+        orderedRemoteAssetUrlSha256: [expect.stringMatching(/^[a-f0-9]{64}$/), expect.stringMatching(/^[a-f0-9]{64}$/)],
+        expectedDetail: expect.objectContaining({ title: "title", imgUrlSha256: [expect.any(String), expect.any(String)] })
       }),
       expect.any(Object)
     );
+    expect(JSON.stringify(deps.repository.persistReconciliationContext.mock.calls)).not.toContain("https://stage.test");
     const persistedMarker = vi.mocked(run.persistRemoteTask);
+    expect(deps.audit.append.mock.invocationCallOrder[0]).toBeLessThan(deps.repository.persistReconciliationContext.mock.invocationCallOrder[0]!);
     expect(deps.repository.persistReconciliationContext.mock.invocationCallOrder[0])
       .toBeLessThan(persistedMarker.mock.invocationCallOrder[0]!);
     expect(persistedMarker.mock.invocationCallOrder[0]).toBeLessThan(deps.edit.applyEdit.mock.invocationCallOrder[0]!);
@@ -119,7 +124,7 @@ describe("createMiaoshouEditHandler", () => {
     const handler = createMiaoshouEditHandler(deps);
 
     await expect(handler(job(), execution())).rejects.toMatchObject({
-      remoteTaskId: "canonical:detail-3799770548"
+      remoteTaskId: expect.stringMatching(/^canonical:detail-3799770548:ctx:/)
     });
     expect(deps.edit.applyEdit).toHaveBeenCalledTimes(1);
 
@@ -194,6 +199,20 @@ describe("createMiaoshouEditHandler", () => {
 
     expect(deps.repository.saveSucceeded).toHaveBeenCalledTimes(1);
     expect(deps.repository.saveResultUnknown).not.toHaveBeenCalled();
+  });
+
+  it("persists an encrypted cleanup compensation when staged URL release fails", async () => {
+    const deps = dependencies({ kind: "succeeded", remoteDetailId: "remote-1" });
+    deps.staging.release = vi.fn().mockRejectedValue(new Error("cleanup unavailable"));
+    const run = execution();
+
+    await createMiaoshouEditHandler(deps)(job(), run);
+
+    expect(run.scheduleCompensation).toHaveBeenCalledWith(expect.objectContaining({
+      kind: "staging_cleanup",
+      payload: expect.objectContaining({ protectedRemoteUrls: "protected-envelope" })
+    }));
+    expect(JSON.stringify(vi.mocked(run.scheduleCompensation).mock.calls)).not.toContain("https://stage.test");
   });
 
   it("does not persist a marker or write remotely when the pre-call audit fails", async () => {

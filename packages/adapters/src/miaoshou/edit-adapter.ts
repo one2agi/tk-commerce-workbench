@@ -8,7 +8,7 @@ import {
 import type { MiaoshouConfig, MiaoshouHttp } from "./client.js";
 import { createMiaoshouHttp } from "./client.js";
 import { mapApprovalSnapshotToMiaoshouEdit, type MiaoshouEditableDetail, type MiaoshouEditableSku } from "./edit-mapper.js";
-import { detailIdWire, readCanonicalDetail, reconcileMiaoshouEdit } from "./reconcile-edit.js";
+import { detailIdWire, fingerprintMiaoshouEditableDetail, readCanonicalDetail, reconcileMiaoshouEdit, type MiaoshouEditExpectation } from "./reconcile-edit.js";
 
 const EDIT_PATH = "/open/v1/product/common_collect_box/common_collect_box/edit_common_collect_box_detail";
 
@@ -28,18 +28,19 @@ export interface MiaoshouEditExpectationResolver {
   resolve(input: {
     canonicalSuccessDetailId: string;
     sourceItemId: string;
-  }): Promise<MiaoshouEditableDetail | undefined>;
+  }): Promise<MiaoshouEditExpectation | undefined>;
 }
 
-function validExpectation(value: MiaoshouEditableDetail | undefined): value is MiaoshouEditableDetail {
+function validExpectation(value: MiaoshouEditExpectation | undefined): value is MiaoshouEditExpectation {
   return Boolean(value
+    && value.version === 1
     && typeof value.title === "string"
     && typeof value.notesText === "string"
     && typeof value.notes === "string"
     && typeof value.price === "number"
     && typeof value.stock === "number"
     && typeof value.weight === "number"
-    && Array.isArray(value.imgUrls)
+    && Array.isArray(value.imgUrlSha256)
     && Array.isArray(value.sourceAttrs)
     && value.skuMap && typeof value.skuMap === "object" && !Array.isArray(value.skuMap));
 }
@@ -124,7 +125,7 @@ function mergeDetail(current: Record<string, unknown>, desired: MiaoshouEditable
 }
 
 export function createMiaoshouEditAdapter(deps: MiaoshouEditAdapterDeps): MiaoshouEditPort {
-  const pending = new Map<string, MiaoshouEditableDetail>();
+  const pending = new Map<string, MiaoshouEditExpectation>();
   return {
     async applyEdit({ approvalSnapshot, orderedRemoteAssetUrls }) {
       const canonicalId = String(approvalSnapshot.canonicalSuccessDetailId);
@@ -153,7 +154,7 @@ export function createMiaoshouEditAdapter(deps: MiaoshouEditAdapterDeps): Miaosh
       } catch (error) {
         if (failureLike(error) && error.kind !== "retryable" && error.kind !== "reconcile_required") throw error;
         const unknown = unknownWriteResult(desired);
-        pending.set(canonicalId, unknown.desired);
+        pending.set(canonicalId, fingerprintMiaoshouEditableDetail(unknown.desired));
         return unknown.result;
       }
 
@@ -162,7 +163,7 @@ export function createMiaoshouEditAdapter(deps: MiaoshouEditAdapterDeps): Miaosh
       }
       if (hasUnknownWriteResult(response)) {
         const unknown = unknownWriteResult(desired);
-        pending.set(canonicalId, unknown.desired);
+        pending.set(canonicalId, fingerprintMiaoshouEditableDetail(unknown.desired));
         return unknown.result;
       }
       const fieldErrors = validationErrors(response);

@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { createSafeImageDownloader, type PinnedImageTransport } from "./safe-image-download.js";
+import { createSafeImageDownloader, createSafeUrlReachability, type PinnedImageTransport } from "./safe-image-download.js";
 
 const png = new Uint8Array([137, 80, 78, 71, 13, 10, 26, 10]);
 
@@ -44,5 +44,30 @@ describe("safe external image downloader", () => {
       maxRedirects: 1
     });
     await expect(download("https://images.test/a.png")).rejects.toMatchObject({ code: "download.too_many_redirects" });
+  });
+});
+
+describe("safe staged URL reachability", () => {
+  it("uses DNS-pinned HEAD without downloading the image body", async () => {
+    const transport = vi.fn(async () => ({ status: 200, headers: { "content-type": "image/png" }, bytesRead: 0 }));
+    const assertReachable = createSafeUrlReachability({
+      resolveHost: vi.fn(async () => [{ address: "93.184.216.34", family: 4 as const }]),
+      transport
+    });
+    await expect(assertReachable("https://stage.test/a.png?signature=bearer")).resolves.toBeUndefined();
+    expect(transport).toHaveBeenCalledWith(expect.any(URL), { address: "93.184.216.34", family: 4 }, "HEAD", expect.any(Number), 1);
+  });
+
+  it("falls back to a one-byte range GET when HEAD is unsupported", async () => {
+    const transport = vi.fn()
+      .mockResolvedValueOnce({ status: 405, headers: {}, bytesRead: 0 })
+      .mockResolvedValueOnce({ status: 206, headers: { "content-type": "image/jpeg" }, bytesRead: 1 });
+    const assertReachable = createSafeUrlReachability({
+      resolveHost: vi.fn(async () => [{ address: "93.184.216.34", family: 4 as const }]),
+      transport
+    });
+    await assertReachable("https://stage.test/a.jpg");
+    expect(transport.mock.calls.map((call) => call[2])).toEqual(["HEAD", "RANGE"]);
+    expect(transport.mock.calls[1]?.[4]).toBe(1);
   });
 });

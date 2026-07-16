@@ -2,6 +2,7 @@
 // lease expired cannot overwrite the result produced by a newer owner.
 
 import { strict as assert } from "node:assert";
+import { createHash } from "node:crypto";
 
 import { schema, type DbPool } from "../schema/index.js";
 import { appendAuditInTransaction, assertSafeAuditPayload, type TransactionAuditMetadata } from "./audit-repository.js";
@@ -34,11 +35,31 @@ export interface ClaimedJob {
 
 export interface MiaoshouReconciliationContext {
   readonly version: 1;
+  readonly jobId: string;
   readonly approvalSnapshotId: string;
   readonly canonicalSuccessDetailId: string;
   readonly sourceItemId: string;
-  readonly orderedRemoteAssetUrls: readonly string[];
+  readonly approvalSnapshotDigest: string;
+  readonly orderedRemoteAssetUrlSha256: readonly string[];
   readonly expectedDetail: Readonly<Record<string, unknown>>;
+  readonly contextDigest: string;
+}
+
+function stableDigest(value: unknown): string {
+  const normalize = (candidate: unknown): unknown => Array.isArray(candidate)
+    ? candidate.map(normalize)
+    : candidate && typeof candidate === "object"
+      ? Object.fromEntries(Object.entries(candidate as Record<string, unknown>).sort(([a], [b]) => a.localeCompare(b)).map(([key, item]) => [key, normalize(item)]))
+      : candidate;
+  return createHash("sha256").update(JSON.stringify(normalize(value))).digest("hex");
+}
+
+export function createMiaoshouReconciliationContext(
+  input: Omit<MiaoshouReconciliationContext, "version" | "contextDigest">
+): MiaoshouReconciliationContext {
+  const { version: _version, contextDigest: _digest, ...clean } = input as MiaoshouReconciliationContext;
+  const material = { version: 1 as const, ...clean };
+  return Object.freeze({ ...material, contextDigest: stableDigest(material) });
 }
 
 export class JobRepository {
@@ -305,7 +326,10 @@ export class JobRepository {
     assert(context.approvalSnapshotId.length > 0, "approvalSnapshotId required");
     assert(context.canonicalSuccessDetailId.length > 0, "canonicalSuccessDetailId required");
     assert(context.sourceItemId.length > 0, "sourceItemId required");
-    assert(context.orderedRemoteAssetUrls.length > 0, "orderedRemoteAssetUrls required");
+    assert(context.jobId === jobId, "Miaoshou reconciliation context jobId mismatch");
+    assert(context.orderedRemoteAssetUrlSha256.length > 0, "orderedRemoteAssetUrlSha256 required");
+    const { contextDigest, ...material } = context;
+    assert(contextDigest === stableDigest(material), "invalid context digest");
     const result = await this.pool.query(
       `UPDATE ${schema.jobs}
        SET payload = jsonb_set(payload, '{reconciliationContext}', $6::jsonb, true), updated_at = now()
@@ -317,14 +341,16 @@ export class JobRepository {
     return result.rowCount === 1;
   }
 
-  async loadMiaoshouReconciliationExpectation(
+  async loadMiaoshouReconciliationContext(
     canonicalSuccessDetailId: string,
     sourceItemId: string
-  ): Promise<Readonly<Record<string, unknown>> | undefined> {
-    const result = await this.pool.query<{ expected_detail: Record<string, unknown> }>(
-      `SELECT payload->'reconciliationContext'->'expectedDetail' AS expected_detail
+  ): Promise<MiaoshouReconciliationContext | undefined> {
+    const result = await this.pool.query<{ id: string; approval_snapshot_id: string; remote_task_id: string; context: MiaoshouReconciliationContext }>(
+      `SELECT id, payload->>'approvalSnapshotId' AS approval_snapshot_id, remote_task_id,
+              payload->'reconciliationContext' AS context
        FROM ${schema.jobs}
        WHERE kind = 'miaoshou_edit' AND status IN ('running', 'needs_input')
+         AND remote_task_id IS NOT NULL
          AND payload->'reconciliationContext'->>'canonicalSuccessDetailId' = $1
          AND payload->'reconciliationContext'->>'sourceItemId' = $2
        ORDER BY created_at ASC
@@ -332,8 +358,21 @@ export class JobRepository {
       [canonicalSuccessDetailId, sourceItemId]
     );
     if (result.rows.length !== 1) return undefined;
-    const expected = result.rows[0]?.expected_detail;
-    return expected && typeof expected === "object" && !Array.isArray(expected) ? expected : undefined;
+    const row = result.rows[0];
+    const context = row?.context;
+    if (!row || !context || typeof context !== "object" || Array.isArray(context)) return undefined;
+    const { contextDigest, ...material } = context;
+    if (
+      context.version !== 1
+      || context.jobId !== row.id
+      || context.approvalSnapshotId !== row.approval_snapshot_id
+      || context.contextDigest !== stableDigest(material)
+      || !row.remote_task_id.endsWith(`:ctx:${contextDigest}`)
+      || !Array.isArray(context.orderedRemoteAssetUrlSha256)
+      || context.orderedRemoteAssetUrlSha256.some((hash) => !/^[a-f0-9]{64}$/.test(hash))
+      || !context.expectedDetail || typeof context.expectedDetail !== "object" || Array.isArray(context.expectedDetail)
+    ) return undefined;
+    return context;
   }
 
   async enqueueCompensation(

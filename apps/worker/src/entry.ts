@@ -6,14 +6,15 @@ import {
   MIAOSHOU_DEFAULT_BASE_URL,
   createMiaoshouEditAdapter,
   createMiaoshouHttp,
-  createSafeImageDownloader,
+  createSafeUrlReachability,
+  fingerprintApprovalSnapshot,
+  stableDigest,
   createAdapterBundle as createDefaultAdapterBundle,
   createLiveMiaoshouSourceAdapter,
   type AdapterBundle,
   type AdapterFactoryConfig,
   type LiveCommandContext,
   type MiaoshouConfig,
-  type MiaoshouEditableDetail,
   type MiaoshouEditExpectationResolver
 } from "@tk/adapters";
 import { loadConfig } from "@tk/config";
@@ -35,8 +36,10 @@ import pg from "pg";
 
 import { buildWorkerRuntime } from "./main.js";
 import { adaptLeasedJobRepository } from "./runtime/worker-loop.js";
+import { createStagingCleanupCodec } from "./runtime/staging-cleanup-codec.js";
 
 export type WorkerProcessKind = "app" | "test" | "integration" | "e2e";
+export const LIVE_MIAOSHOU_MIN_INTERVAL_MS = 250;
 
 export interface ClosableDbPool extends DbPool {
   end(): Promise<void>;
@@ -177,8 +180,14 @@ export function createWorkerApplication(input: CreateWorkerApplicationInput = {}
   const jobs = new JobRepository(pool);
   const approvals = new ApprovalRepository(pool);
   const expectationResolver: MiaoshouEditExpectationResolver = {
-    resolve: async ({ canonicalSuccessDetailId, sourceItemId }) =>
-      await jobs.loadMiaoshouReconciliationExpectation(canonicalSuccessDetailId, sourceItemId) as MiaoshouEditableDetail | undefined
+    resolve: async ({ canonicalSuccessDetailId, sourceItemId }) => {
+      const context = await jobs.loadMiaoshouReconciliationContext(canonicalSuccessDetailId, sourceItemId);
+      if (!context) return undefined;
+      const snapshot = await approvals.loadSnapshot(context.approvalSnapshotId).catch(() => undefined);
+      if (!snapshot || stableDigest(snapshot) !== context.approvalSnapshotDigest) return undefined;
+      const expected = fingerprintApprovalSnapshot(snapshot, context.orderedRemoteAssetUrlSha256);
+      return stableDigest(expected) === stableDigest(context.expectedDetail) ? expected : undefined;
+    }
   };
   let miaoshouEdit = input.miaoshouEdit;
   if (!miaoshouEdit) {
@@ -188,12 +197,11 @@ export function createWorkerApplication(input: CreateWorkerApplicationInput = {}
         http: createMiaoshouHttp(liveConfig), expectationResolver: resolver
       })))(miaoshouConfig(env), expectationResolver);
   }
-  const safeStagedDownload = createSafeImageDownloader({
+  const assertStagedUrlReachable = createSafeUrlReachability({
     resolveHost: async (hostname) => (await resolveHost(hostname)).map((address) => ({
       address,
       family: address.includes(":") ? 6 as const : 4 as const
     })),
-    maxBytes: 12 * 1024 * 1024
   });
   const miaoshouEditRepository = {
     loadSnapshot: (id: string) => approvals.loadSnapshot(id),
@@ -214,7 +222,8 @@ export function createWorkerApplication(input: CreateWorkerApplicationInput = {}
       staging: adapters.assetStaging
     },
     repositories: { ...pipelineRepositories(pipeline), miaoshouEdit: miaoshouEditRepository },
-    reachability: { assertReachable: async (urls) => { await Promise.all(urls.map((url) => safeStagedDownload(url))); } },
+    reachability: { assertReachable: async (urls) => { await Promise.all(urls.map(assertStagedUrlReachable)); } },
+    cleanupCodec: createStagingCleanupCodec(config.extensionToken),
     store,
     analyzer: createLocalImageAnalyzer(),
     quota: new CanvasQuotaRepository(pool),
@@ -222,7 +231,7 @@ export function createWorkerApplication(input: CreateWorkerApplicationInput = {}
     now: () => new Date(),
     maxCanvasRunsPerDay: config.maxCanvasRunsPerDay,
     adapterLimits: {
-      miaoshou: { concurrency: 1, minIntervalMs: 0 },
+      miaoshou: { concurrency: 1, minIntervalMs: LIVE_MIAOSHOU_MIN_INTERVAL_MS },
       llm: { concurrency: 1, minIntervalMs: 0 },
       exchangeRate: { concurrency: 1, minIntervalMs: 0 },
       canvas: { concurrency: 1, minIntervalMs: 0 },

@@ -5,7 +5,8 @@ import type {
   MiaoshouEditFieldError,
   MiaoshouEditPort
 } from "@tk/contracts";
-import { mapApprovalSnapshotToMiaoshouEdit, type MiaoshouEditableDetail } from "@tk/adapters";
+import { fingerprintApprovalSnapshot, sha256Text, stableDigest, type MiaoshouEditExpectation } from "@tk/adapters";
+import { createMiaoshouReconciliationContext, type MiaoshouReconciliationContext } from "@tk/db";
 
 import {
   ExternalResultUnknownError,
@@ -15,6 +16,7 @@ import {
   type LeaseFence,
   type WorkerHandler
 } from "../runtime/worker-loop.js";
+import type { StagingCleanupCodec } from "../runtime/staging-cleanup-codec.js";
 
 interface MiaoshouEditRepository {
   loadSnapshot(approvalSnapshotId: string): Promise<ApprovalSnapshotV1>;
@@ -34,14 +36,7 @@ interface MiaoshouEditRepository {
     result: { remoteDetailId: string; state: "applied" | "no_change" | "missing" },
     fence: LeaseFence
   ): Promise<boolean>;
-  persistReconciliationContext(context: {
-    version: 1;
-    approvalSnapshotId: string;
-    canonicalSuccessDetailId: string;
-    sourceItemId: string;
-    orderedRemoteAssetUrls: readonly string[];
-    expectedDetail: MiaoshouEditableDetail;
-  }, fence: LeaseFence): Promise<boolean>;
+  persistReconciliationContext(context: MiaoshouReconciliationContext, fence: LeaseFence): Promise<boolean>;
 }
 
 export function createMiaoshouEditHandler(input: {
@@ -49,6 +44,7 @@ export function createMiaoshouEditHandler(input: {
   staging: AssetStagingPort;
   repository: MiaoshouEditRepository;
   reachability: { assertReachable(urls: string[]): Promise<void> };
+  cleanupCodec: StagingCleanupCodec;
   audit: { append(value: Record<string, unknown>): Promise<unknown> };
 }): WorkerHandler {
   return async (job, execution) => {
@@ -90,7 +86,7 @@ export function createMiaoshouEditHandler(input: {
     }
 
     let staged: Awaited<ReturnType<AssetStagingPort["stage"]>> = [];
-    const reconciliationMarker = `canonical:${snapshot.canonicalSuccessDetailId}`;
+    let reconciliationMarker = `canonical:${snapshot.canonicalSuccessDetailId}`;
     let externalCallStarted = false;
     try {
       execution.assertLease();
@@ -104,15 +100,6 @@ export function createMiaoshouEditHandler(input: {
       const orderedRemoteAssetUrls = staged.map((asset) => asset.remoteUrl);
       await input.reachability.assertReachable(orderedRemoteAssetUrls);
       execution.assertLease();
-      const expectedDetail = mapApprovalSnapshotToMiaoshouEdit(snapshot, orderedRemoteAssetUrls);
-      requireFencedWrite(await input.repository.persistReconciliationContext({
-        version: 1,
-        approvalSnapshotId,
-        canonicalSuccessDetailId: String(snapshot.canonicalSuccessDetailId),
-        sourceItemId: String(snapshot.sourceItemId),
-        orderedRemoteAssetUrls,
-        expectedDetail
-      }, execution.fence));
       await input.audit.append({
         action: "miaoshou.edit.call",
         targetKind: "approval_snapshot",
@@ -120,6 +107,18 @@ export function createMiaoshouEditHandler(input: {
         payload: { imageCount: orderedRemoteAssetUrls.length },
         redacted: true
       });
+      const orderedRemoteAssetUrlSha256 = orderedRemoteAssetUrls.map(sha256Text);
+      const context = createMiaoshouReconciliationContext({
+        jobId: execution.fence.jobId,
+        approvalSnapshotId,
+        canonicalSuccessDetailId: String(snapshot.canonicalSuccessDetailId),
+        sourceItemId: String(snapshot.sourceItemId),
+        approvalSnapshotDigest: stableDigest(snapshot),
+        orderedRemoteAssetUrlSha256,
+        expectedDetail: fingerprintApprovalSnapshot(snapshot, orderedRemoteAssetUrlSha256) as MiaoshouEditExpectation
+      });
+      requireFencedWrite(await input.repository.persistReconciliationContext(context, execution.fence));
+      reconciliationMarker = `canonical:${snapshot.canonicalSuccessDetailId}:ctx:${context.contextDigest}`;
       // Persist only after the pre-call audit succeeds and before the non-transactional
       // external write. Audit failure therefore remains a safe, marker-free retry.
       await execution.persistRemoteTask(reconciliationMarker);
@@ -162,8 +161,10 @@ export function createMiaoshouEditHandler(input: {
     } finally {
       if (staged.length > 0) {
         const remoteUrls = staged.map((asset) => asset.remoteUrl);
+        let released = false;
         try {
           await input.staging.release({ remoteUrls });
+          released = true;
           await input.audit.append({
             action: "miaoshou.edit.staging.release",
             targetKind: "approval_snapshot",
@@ -172,6 +173,18 @@ export function createMiaoshouEditHandler(input: {
             redacted: true
           });
         } catch {
+          if (!released) {
+            await execution.scheduleCompensation({
+              kind: "staging_cleanup",
+              businessKey: `miaoshou-edit:${approvalSnapshotId}:staging-cleanup`,
+              payload: {
+                version: 1,
+                revisionId: String(snapshot.revisionId),
+                protectedRemoteUrls: input.cleanupCodec.protect(remoteUrls)
+              },
+              delayMs: 60_000
+            });
+          }
           try {
             await input.audit.append({
               action: "miaoshou.edit.staging.release",
