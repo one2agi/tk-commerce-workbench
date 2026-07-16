@@ -65,6 +65,23 @@ function validationErrors(response: ApiEnvelope): MiaoshouEditFieldError[] {
   return [];
 }
 
+function hasUnknownWriteResult(response: ApiEnvelope): boolean {
+  const code = String(response.code ?? "").toLowerCase();
+  return new Set(["timeout", "requesttimeout", "gatewaytimeout", "systembusy", "systemerror", "internalerror", "unknown"]).has(code)
+    || /^5\d\d$/.test(code);
+}
+
+function unknownWriteResult(desired: MiaoshouEditableDetail) {
+  return {
+    desired,
+    result: {
+      kind: "needs_reconcile" as const,
+      failure: reconcileRequiredFailure("miaoshou.edit_result_unknown", "Miaoshou edit result is unknown and must be reconciled"),
+      remoteTaskId: null
+    }
+  };
+}
+
 function mergeSkuMap(current: unknown, desired: MiaoshouEditableDetail["skuMap"]): Record<string, unknown> {
   const currentMap = current && typeof current === "object" ? current as Record<string, Record<string, unknown>> : {};
   const merged: Record<string, unknown> = {};
@@ -114,16 +131,18 @@ export function createMiaoshouEditAdapter(deps: MiaoshouEditAdapterDeps): Miaosh
         response = await deps.http.post<ApiEnvelope>(EDIT_PATH, body);
       } catch (error) {
         if (failureLike(error) && error.kind !== "retryable" && error.kind !== "reconcile_required") throw error;
-        pending.set(canonicalId, desired);
-        return {
-          kind: "needs_reconcile",
-          failure: reconcileRequiredFailure("miaoshou.edit_result_unknown", "Miaoshou edit result is unknown and must be reconciled"),
-          remoteTaskId: null
-        };
+        const unknown = unknownWriteResult(desired);
+        pending.set(canonicalId, unknown.desired);
+        return unknown.result;
       }
 
       if (response.result === "success") {
         return { kind: "succeeded", remoteDetailId: canonicalId };
+      }
+      if (hasUnknownWriteResult(response)) {
+        const unknown = unknownWriteResult(desired);
+        pending.set(canonicalId, unknown.desired);
+        return unknown.result;
       }
       const fieldErrors = validationErrors(response);
       if (fieldErrors.length > 0) return { kind: "validation_failed", fieldErrors };
@@ -143,7 +162,7 @@ export function createMiaoshouEditAdapter(deps: MiaoshouEditAdapterDeps): Miaosh
         sourceItemId,
         expectedDetail
       });
-      pending.delete(canonicalSuccessDetailId);
+      if (result.state === "applied") pending.delete(canonicalSuccessDetailId);
       return result;
     }
   };

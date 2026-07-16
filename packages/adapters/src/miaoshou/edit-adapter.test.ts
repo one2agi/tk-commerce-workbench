@@ -67,7 +67,7 @@ describe("Miaoshou common collect-box edit mapper", () => {
       packageHeight: 5,
       imgUrls: remoteUrls
     });
-    expect(mapped.skuMap["SKU-RED-S"]).toMatchObject({
+    expect(mapped.skuMap[";แดง;S;"]).toMatchObject({
       itemNum: "SKU-RED-S",
       price: 80.5,
       stock: 50,
@@ -86,7 +86,7 @@ describe("Miaoshou common collect-box edit mapper", () => {
 
     const mapped = mapApprovalSnapshotToMiaoshouEdit(snapshot, remoteUrls);
     expect(mapped.price).toBe(6);
-    expect(mapped.skuMap["SKU-RED-S"]?.price).toBe(6.5);
+    expect(mapped.skuMap[";แดง;S;"]?.price).toBe(6.5);
   });
 
   it("rejects reordered/missing staged URLs instead of silently changing approval order", () => {
@@ -107,7 +107,7 @@ describe("Miaoshou common collect-box edit adapter", () => {
           commonCollectBoxDetailId: 3799770548,
           title: "旧标题",
           sourceList: [{ source: "1688", sourceItemId: "892408514788" }],
-          skuMap: { "红;S": { itemNum: "SKU-RED-S", price: 6, stock: 60, oriPrice: 8, oriStock: 60, weight: 0.3 } }
+          skuMap: { ";แดง;S;": { itemNum: "SKU-RED-S", price: 6, stock: 60, oriPrice: 8, oriStock: 60, weight: 0.3 } }
         }
       }
     };
@@ -127,7 +127,8 @@ describe("Miaoshou common collect-box edit adapter", () => {
     expect(body.commonCollectBoxDetailId).toBe(3799770548);
     expect(body.ossMd5).toBe("before-md5");
     expect(body.editCommonCollectBoxDetail.sourceList).toEqual(current.data.editCommonCollectBoxDetail.sourceList);
-    expect(body.editCommonCollectBoxDetail.skuMap["红;S"]).toMatchObject({ oriPrice: 8, oriStock: 60, itemNum: "SKU-RED-S", price: 80.5, stock: 50 });
+    expect(body.editCommonCollectBoxDetail.skuMap[";แดง;S;"]).toMatchObject({ oriPrice: 8, oriStock: 60, itemNum: "SKU-RED-S", price: 80.5, stock: 50 });
+    expect(body.editCommonCollectBoxDetail.skuMap[";แดง;S;"]).not.toHaveProperty("attributes");
   });
 
   it("returns stable UI field paths for upstream validation errors", async () => {
@@ -159,9 +160,49 @@ describe("Miaoshou common collect-box edit adapter", () => {
     expect(post).toHaveBeenCalledTimes(2);
   });
 
+  it.each(["timeout", "systemBusy", "500"])("treats HTTP 200 business code %s as an unknown write result", async (code) => {
+    const current = { result: "success", code: "200", data: { ossMd5: "md5", editCommonCollectBoxDetail: { commonCollectBoxDetailId: 3799770548, sourceList: [{ sourceItemId: "892408514788" }] } } };
+    const post = vi.fn().mockResolvedValueOnce(current).mockResolvedValueOnce({ result: "fail", code, message: "upstream status unknown" });
+    const adapter = createMiaoshouEditAdapter({ http: { post } as MiaoshouHttp });
+    const input = { approvalSnapshot: approval(), orderedRemoteAssetUrls: remoteUrls, idempotencyKey: idempotencyKey(`edit:business-${code}`) };
+
+    await expect(adapter.applyEdit(input)).resolves.toMatchObject({
+      kind: "needs_reconcile",
+      failure: { kind: "reconcile_required", code: "miaoshou.edit_result_unknown" }
+    });
+    await expect(adapter.applyEdit(input)).resolves.toMatchObject({ kind: "needs_reconcile", failure: { code: "miaoshou.edit_reconciliation_pending" } });
+    expect(post).toHaveBeenCalledTimes(2);
+  });
+
   it("reconciles by canonical detail/source/item number without issuing another edit", async () => {
     const currentBefore = { result: "success", code: "200", data: { ossMd5: "md5", editCommonCollectBoxDetail: { commonCollectBoxDetailId: 3799770548, sourceList: [{ sourceItemId: "892408514788" }] } } };
-    const currentAfter = { result: "success", code: "200", data: { ossMd5: "new", editCommonCollectBoxDetail: { commonCollectBoxDetailId: 3799770548, sourceList: [{ sourceItemId: "892408514788" }], ...mapApprovalSnapshotToMiaoshouEdit(approval(), remoteUrls) } } };
+    const realDetailFixture = await fixture("detail-3799770548.json");
+    const realDetailShape = realDetailFixture.data.editCommonCollectBoxDetail;
+    const [realSkuKey, realSkuValue] = Object.entries(realDetailShape.skuMap)[0] as [string, Record<string, unknown>];
+    expect(realSkuKey).toMatch(/^;.*;$/);
+    expect(realSkuValue).not.toHaveProperty("attributes");
+    const mapped = mapApprovalSnapshotToMiaoshouEdit(approval(), remoteUrls);
+    const mappedSku = mapped.skuMap[";แดง;S;"]!;
+    const currentAfter = { result: "success", code: "200", data: { ossMd5: "new", editCommonCollectBoxDetail: {
+      ...realDetailShape,
+      commonCollectBoxDetailId: 3799770548,
+      sourceList: [{ source: "1688", sourceItemId: "892408514788" }],
+      title: mapped.title,
+      itemNum: mapped.itemNum,
+      notesText: mapped.notesText,
+      notes: mapped.notes,
+      price: mapped.price,
+      stock: mapped.stock,
+      weight: mapped.weight,
+      packageLength: mapped.packageLength,
+      packageWidth: mapped.packageWidth,
+      packageHeight: mapped.packageHeight,
+      imgUrls: mapped.imgUrls,
+      sourceAttrs: mapped.sourceAttrs,
+      // Real get_common_collect_box_detail shape: the dimension combination is
+      // the key and values do not echo our internal `attributes` object.
+      skuMap: { ";แดง;S;": { price: mappedSku.price, stock: mappedSku.stock } }
+    } } };
     const timeout = Object.freeze({ kind: "retryable", code: "miaoshou.network", safeMessage: "Miaoshou API is temporarily unavailable" });
     const post = vi.fn().mockResolvedValueOnce(currentBefore).mockRejectedValueOnce(timeout).mockResolvedValueOnce(currentAfter);
     const adapter = createMiaoshouEditAdapter({ http: { post } as MiaoshouHttp });
@@ -171,6 +212,23 @@ describe("Miaoshou common collect-box edit adapter", () => {
       .resolves.toEqual({ remoteDetailId: "3799770548", state: "applied" });
     expect(post).toHaveBeenCalledTimes(3);
     expect(post.mock.calls.filter(([path]) => String(path).includes("edit_common_collect_box_detail"))).toHaveLength(1);
+  });
+
+  it.each([
+    ["no_change", { result: "success", code: "200", data: { editCommonCollectBoxDetail: { commonCollectBoxDetailId: 3799770548, itemNum: "old", sourceList: [{ sourceItemId: "892408514788" }] } } }],
+    ["missing", { result: "fail", code: "detail_missing" }]
+  ] as const)("keeps the duplicate-write barrier after reconciliation returns %s", async (state, reconcileResponse) => {
+    const current = { result: "success", code: "200", data: { ossMd5: "md5", editCommonCollectBoxDetail: { commonCollectBoxDetailId: 3799770548, sourceList: [{ sourceItemId: "892408514788" }] } } };
+    const timeout = Object.freeze({ kind: "retryable", code: "miaoshou.network", safeMessage: "Miaoshou API is temporarily unavailable" });
+    const post = vi.fn().mockResolvedValueOnce(current).mockRejectedValueOnce(timeout).mockResolvedValueOnce(reconcileResponse);
+    const adapter = createMiaoshouEditAdapter({ http: { post } as MiaoshouHttp });
+    const input = { approvalSnapshot: approval(), orderedRemoteAssetUrls: remoteUrls, idempotencyKey: idempotencyKey(`edit:barrier-${state}`) };
+    await adapter.applyEdit(input);
+
+    await expect(adapter.reconcileByCanonicalDetailId({ canonicalSuccessDetailId: "3799770548", sourceItemId: sourceItemId("892408514788") }))
+      .resolves.toEqual({ remoteDetailId: "3799770548", state });
+    await expect(adapter.applyEdit(input)).resolves.toMatchObject({ kind: "needs_reconcile", failure: { code: "miaoshou.edit_reconciliation_pending" } });
+    expect(post).toHaveBeenCalledTimes(3);
   });
 
   it("fails closed after restart when the frozen reconcile port has no desired snapshot evidence", async () => {

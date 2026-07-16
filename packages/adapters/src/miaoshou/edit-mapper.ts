@@ -5,7 +5,6 @@ export type MiaoshouEditableSku = Readonly<{
   price: number;
   stock: number;
   weight: number;
-  attributes: Readonly<Record<string, string>>;
   imgUrl?: string;
 }>;
 
@@ -82,17 +81,24 @@ export function mapApprovalSnapshotToMiaoshouEdit(
 
   const urlByAsset = new Map(snapshot.orderedFinalAssetIds.map((id, index) => [String(id), orderedRemoteAssetUrls[index]!]));
   const weight = decimal(snapshot.weightKg, "weight");
-  const skuMap = Object.fromEntries(snapshot.skus.map((sku) => {
+  const skuMap: Record<string, MiaoshouEditableSku> = {};
+  for (const sku of snapshot.skus) {
     const imageUrl = sku.assetIds.map((id) => urlByAsset.get(String(id))).find((url): url is string => Boolean(url));
-    return [sku.skuId, Object.freeze({
+    // Miaoshou's detail API uses the semicolon-wrapped dimension combination
+    // as skuMap key (for example `;Red;S;`), not the internal item number.
+    const dimensionValues = Object.values(sku.attributes);
+    const miaoshouKey = `;${(dimensionValues.length > 0 ? dimensionValues : [sku.skuId]).join(";")};`;
+    if (skuMap[miaoshouKey]) {
+      throw externalFailure("needs_input", "miaoshou.edit_duplicate_sku_dimensions", "Approved SKU dimensions must be unique");
+    }
+    skuMap[miaoshouKey] = Object.freeze({
       itemNum: sku.skuId,
       price: moneyMajor(sku.priceWire.amountMinor, "sku_price"),
       stock: sku.stock,
       weight,
-      attributes: Object.freeze({ ...sku.attributes }),
       ...(imageUrl ? { imgUrl: imageUrl } : {})
-    })];
-  }));
+    });
+  }
   const dimensions = snapshot.dimensions;
 
   return Object.freeze({

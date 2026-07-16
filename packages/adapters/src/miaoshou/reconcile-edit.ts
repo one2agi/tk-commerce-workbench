@@ -82,13 +82,10 @@ function remoteMatchesExpected(remote: Record<string, unknown>, expected: Miaosh
   const remoteSkus = remote.skuMap && typeof remote.skuMap === "object"
     ? remote.skuMap as Record<string, Record<string, unknown>>
     : {};
-  return Object.entries(expected.skuMap).every(([skuId, wanted]) => {
-    const actual = Object.values(remoteSkus).find((sku) => String(sku.itemNum ?? "") === skuId) ?? remoteSkus[skuId];
+  return Object.entries(expected.skuMap).every(([dimensionKey, wanted]) => {
+    const actual = remoteSkus[dimensionKey];
     return actual
       && String(actual.price) === String(wanted.price)
-      && String(actual.stock) === String(wanted.stock)
-      && String(actual.weight) === String(wanted.weight)
-      && String(actual.imgUrl ?? "") === String(wanted.imgUrl ?? "")
-      && JSON.stringify(actual.attributes ?? {}) === JSON.stringify(wanted.attributes);
+      && String(actual.stock) === String(wanted.stock);
   });
 }
