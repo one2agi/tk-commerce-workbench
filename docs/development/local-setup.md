@@ -39,7 +39,7 @@ bash scripts/verify-fresh-install.sh
 | 8 | PASS | `pnpm --filter @tk/adapters exec vitest run src/llm/openai-compatible-adapter.test.ts && pnpm --filter @tk/domain exec vitest run src/listing/generate-listing.test.ts` |
 | 9 | PASS | `pnpm --filter @tk/worker exec vitest run src/handlers/pipeline-handlers.test.ts -t "pauses with needs_input|ready price|provider provenance" && pnpm --filter @tk/db exec vitest run --config vitest.integration.config.ts -t "exchange rate snapshots"` |
 | 10 | PASS | `pnpm --filter @tk/adapters exec vitest run src/canvas/canvas-adapter.test.ts && pnpm --filter @tk/worker exec vitest run src/handlers/pipeline-handlers.test.ts -t "capacity-aware ordered image selection|locally archived Canvas outputs"` |
-| 11 | PASS | `pnpm exec playwright test e2e/worker-recovery.spec.ts` |
+| 11 | PASS | `pnpm exec playwright test e2e/worker-recovery.spec.ts && pnpm --filter @tk/worker exec vitest run --config vitest.integration.config.ts src/runtime/recovery.pg.test.ts` |
 | 12 | PASS | `pnpm exec playwright test e2e/full-mocked-flow.spec.ts -g "勾选采集到当前版本审批" && pnpm --filter @tk/db exec vitest run --config vitest.integration.config.ts -t "transactionally invalidates"` |
 | 13 | PASS | `pnpm exec playwright test e2e/full-mocked-flow.spec.ts -g "勾选采集到当前版本审批"` |
 | 14 | PASS | `pnpm --filter @tk/web exec vitest run src/app/product-safety.test.tsx src/components/products/product-workbench.scan.test.ts` |
