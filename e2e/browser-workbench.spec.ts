@@ -26,6 +26,11 @@ test.beforeAll(async () => {
     VALUES
       ('revision_browser_a', 'product_browser_a', 1, '轻薄防晒男士夹克', '{}', '{}'),
       ('revision_browser_b', 'product_browser_b', 1, '运动短裤', '{}', '{}');
+    INSERT INTO listing_drafts
+      (id, product_id, revision_id, draft_version, target_locale, style, title, description)
+    VALUES
+      ('listing_browser_a', 'product_browser_a', 'revision_browser_a', 1, 'th-TH', 'clean', 'เสื้อแจ็กเก็ตกันแดด', ''),
+      ('listing_browser_b', 'product_browser_b', 'revision_browser_b', 1, 'th-TH', 'clean', 'กางเกงกีฬาขาสั้น', '');
     INSERT INTO assets (id, product_id, revision_id, remote_url, kind, state)
     VALUES
       ('asset_browser_a', 'product_browser_a', 'revision_browser_a', 'https://assets.example/a.jpg', 'main', 'ready'),
@@ -67,6 +72,10 @@ test("真实桌面页面保留高密度工作台布局、筛选勾选与抽屉�
 
   const drawer = page.getByRole("dialog", { name: "商品详情" });
   await expect(drawer).toBeVisible();
+  await expect(drawer.getByRole("heading", { name: "轻薄防晒男士夹克" })).toBeVisible();
+  await expect(drawer.getByText("product_browser_a", { exact: true })).toBeVisible();
+  await expect(drawer.getByText("เสื้อแจ็กเก็ตกันแดด", { exact: true })).toBeVisible();
+  await expect(drawer.getByRole("button", { name: "开始处理 product_browser_a" })).toBeEnabled();
   await expect(page.getByRole("button", { name: "关闭详情" })).toBeFocused();
   const tableBox = await page.getByRole("region", { name: "待处理商品表（2/2）" }).boundingBox();
   const drawerBox = await drawer.boundingBox();
@@ -79,6 +88,19 @@ test("真实桌面页面保留高密度工作台布局、筛选勾选与抽屉�
   await expect(opener).toBeFocused();
   await expect(page.getByRole("checkbox", { name: "选择商品 product_browser_a" })).toBeChecked();
   await expect(page.getByRole("button", { name: "待处理" })).toHaveAttribute("aria-pressed", "true");
+
+  await database.pool.query(
+    "UPDATE product_revisions SET source_title = '轻薄防晒男士夹克（已刷新）' WHERE id = 'revision_browser_a'"
+  );
+  await page.reload();
+  await page.getByRole("button", { name: "待处理" }).click();
+  await page.getByRole("button", { name: "查看详情 product_browser_a" }).click();
+  await expect(drawer.getByRole("heading", { name: "轻薄防晒男士夹克（已刷新）" })).toBeVisible();
+  await expect(drawer.getByText("product_browser_a", { exact: true })).toBeVisible();
+  await expect(drawer.getByText("เสื้อแจ็กเก็ตกันแดด", { exact: true })).toBeVisible();
+  await expect(drawer.getByRole("button", { name: "开始处理 product_browser_a" })).toBeEnabled();
+  await expect(drawer.getByText("product_browser_b", { exact: true })).toHaveCount(0);
+  await page.keyboard.press("Escape");
 
   const startedRevisionIds: string[] = [];
   await page.route("**/api/v1/automation-runs", async (route) => {
@@ -93,6 +115,7 @@ test("真实桌面页面保留高密度工作台布局、筛选勾选与抽屉�
     });
   });
   await page.getByRole("checkbox", { name: "选择商品 product_browser_b" }).check();
+  await page.getByRole("checkbox", { name: "选择商品 product_browser_a" }).check();
   await page.getByRole("button", { name: "批量开始处理（2）" }).click();
   await expect.poll(() => startedRevisionIds.length).toBe(2);
   expect(startedRevisionIds.sort()).toEqual(["revision_browser_a", "revision_browser_b"]);

@@ -30,21 +30,21 @@ bash scripts/verify-fresh-install.sh
 | # | 验收结果 | 精确命令或测试 |
 |---|---|---|
 | 1 | PASS | `bash scripts/verify-fresh-install.sh` |
-| 2 | PASS | `pnpm exec playwright test e2e/full-mocked-flow.spec.ts -g "勾选采集到当前版本审批"` |
+| 2 | PASS | `pnpm --filter @tk/extension exec vitest run src/selected-ingest-flow.test.ts && pnpm exec playwright test e2e/collection-to-product-pool.spec.ts` |
 | 3 | PASS | `pnpm exec playwright test e2e/collection-to-product-pool.spec.ts` |
-| 4 | PASS | `pnpm exec playwright test e2e/collection-to-product-pool.spec.ts` |
+| 4 | PASS | `pnpm exec playwright test e2e/collection-to-product-pool.spec.ts -g "sample 1688 URL converges duplicate collection"` |
 | 5 | PASS | `pnpm exec playwright test e2e/collection-to-product-pool.spec.ts && pnpm exec playwright test e2e/full-mocked-flow.spec.ts -g "勾选采集到当前版本审批"` |
 | 6 | PASS | `pnpm exec playwright test e2e/browser-workbench.spec.ts && pnpm --filter @tk/db exec vitest run --config vitest.integration.config.ts -t "concurrent createOrReuseAndEnqueue|records every repeated human start" && pnpm exec playwright test e2e/full-mocked-flow.spec.ts -g "勾选采集到当前版本审批"` |
 | 7 | PASS | `pnpm --filter @tk/db exec vitest run --config vitest.integration.config.ts -t "two revisions|same remote URL independently attached"` |
 | 8 | PASS | `pnpm --filter @tk/adapters exec vitest run src/llm/openai-compatible-adapter.test.ts && pnpm --filter @tk/domain exec vitest run src/listing/generate-listing.test.ts` |
-| 9 | PASS | `pnpm --filter @tk/worker exec vitest run src/handlers/pipeline-handlers.test.ts -t "pauses with needs_input|ready price|provider provenance" && pnpm --filter @tk/db exec vitest run --config vitest.integration.config.ts -t "exchange rate snapshots"` |
+| 9 | PASS | `pnpm --filter @tk/worker exec vitest run src/handlers/pipeline-handlers.test.ts -t "pauses with needs_input when (weightKg|sourceCostCny|exchangeRate) is absent" && pnpm --filter @tk/worker exec vitest run src/handlers/pipeline-handlers.test.ts -t "persists a reproducible ready price" && pnpm --filter @tk/db exec vitest run --config vitest.integration.config.ts -t "exchange rate snapshots"` |
 | 10 | PASS | `pnpm --filter @tk/adapters exec vitest run src/canvas/canvas-adapter.test.ts && pnpm --filter @tk/worker exec vitest run src/handlers/pipeline-handlers.test.ts -t "capacity-aware ordered image selection|locally archived Canvas outputs"` |
 | 11 | PASS | `pnpm exec playwright test e2e/worker-recovery.spec.ts` |
 | 12 | PASS | `pnpm exec playwright test e2e/full-mocked-flow.spec.ts -g "勾选采集到当前版本审批" && pnpm --filter @tk/db exec vitest run --config vitest.integration.config.ts -t "transactionally invalidates"` |
 | 13 | PASS | `pnpm exec playwright test e2e/full-mocked-flow.spec.ts -g "勾选采集到当前版本审批"` |
 | 14 | PASS | `pnpm --filter @tk/web exec vitest run src/app/product-safety.test.tsx src/components/products/product-workbench.scan.test.ts` |
 | 15 | PASS | `pnpm lint && pnpm typecheck && pnpm test && pnpm test:integration && pnpm test:e2e && pnpm build` |
-| 16 | PASS | `pnpm exec playwright test e2e/browser-workbench.spec.ts e2e/ui-context.spec.ts` |
+| 16 | PASS | `pnpm exec playwright test e2e/browser-workbench.spec.ts && pnpm exec playwright test e2e/ui-context.spec.ts` |
 | 17 | PASS | `pnpm exec playwright test e2e/browser-workbench.spec.ts && pnpm --filter @tk/web exec vitest run src/components/products/product-workbench.projection.test.ts src/components/products/product-workbench.scan.test.ts` |
 
 真实妙手仅允许只读合同检查；真实 Canvas 生图必须由操作者单独批准，且一次验收最多执行一轮。本表没有声称执行这两类外部写入。
