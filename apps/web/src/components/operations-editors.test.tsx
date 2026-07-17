@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 
-import { saveSettings } from "./settings/settings-editor";
+import { saveSettings } from "./settings/settings-api";
 import { saveTemplate } from "./templates/template-manager";
 
 describe("continuous operations edits", () => {
