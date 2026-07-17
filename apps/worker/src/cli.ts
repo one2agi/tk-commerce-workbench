@@ -1,4 +1,5 @@
 import { pathToFileURL } from "node:url";
+import { rename, unlink, writeFile } from "node:fs/promises";
 
 import type { LiveCommandContext } from "@tk/adapters";
 
@@ -11,6 +12,29 @@ export interface RunWorkerProcessInput {
   pollIntervalMs?: number;
   maxJobsPerCycle?: number;
   maxCycles?: number;
+}
+
+async function writeReadyProof(env: NodeJS.ProcessEnv): Promise<void> {
+  const launchId = env.TK_RUNTIME_LAUNCH_ID?.trim();
+  const readyPath = env.TK_WORKER_READY_PATH?.trim();
+  if (!launchId && !readyPath) return;
+  if (!launchId || !readyPath) {
+    throw new Error("worker process: launch id and ready path must be configured together");
+  }
+  const temporaryPath = `${readyPath}.${process.pid}.tmp`;
+  try {
+    await writeFile(
+      temporaryPath,
+      `${JSON.stringify({ launchId, pid: process.pid })}\n`,
+      { flag: "wx", mode: 0o600 }
+    );
+    await rename(temporaryPath, readyPath);
+  } catch (error) {
+    await unlink(temporaryPath).catch((cleanupError: NodeJS.ErrnoException) => {
+      if (cleanupError.code !== "ENOENT") throw cleanupError;
+    });
+    throw error;
+  }
 }
 
 function liveCommandContext(env: NodeJS.ProcessEnv): LiveCommandContext | undefined {
@@ -47,9 +71,14 @@ export async function runWorkerProcess(input: RunWorkerProcessInput = {}): Promi
   const maxJobsPerCycle = input.maxJobsPerCycle ?? 100;
   const maxCycles = input.maxCycles ?? Number.POSITIVE_INFINITY;
   let cycles = 0;
+  let readinessWritten = false;
   try {
     while (!input.signal?.aborted && cycles < maxCycles) {
       const result = await application.run({ maxJobs: maxJobsPerCycle });
+      if (!readinessWritten) {
+        await writeReadyProof(env);
+        readinessWritten = true;
+      }
       cycles += 1;
       if (cycles < maxCycles && !input.signal?.aborted && result.processed === 0) {
         await waitForNextPoll(pollIntervalMs, input.signal);

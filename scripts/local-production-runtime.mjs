@@ -109,7 +109,11 @@ export async function processIsManaged(pid, marker) {
   if (typeof pid === "object" && pid !== null) {
     const expected = pid;
     try {
-      const actual = await captureProcessIdentity(expected.pid, expected.marker);
+      const actual = await captureProcessIdentity(
+        expected.pid,
+        expected.marker,
+        expected.launchId
+      );
       return actual.pgid === expected.pgid && actual.startTimeTicks === expected.startTimeTicks;
     } catch {
       return false;
@@ -129,15 +133,46 @@ async function readLinuxProcessState(pid) {
   const commandEnd = statText.lastIndexOf(")");
   if (commandEnd < 0) throw new Error(`invalid /proc/${pid}/stat`);
   const fields = statText.slice(commandEnd + 2).trim().split(/\s+/);
+  const state = fields[0];
   const pgid = Number(fields[2]);
   const startTimeTicks = fields[19];
   if (!Number.isSafeInteger(pgid) || pgid < 2 || !/^\d+$/.test(startTimeTicks ?? "")) {
     throw new Error(`invalid /proc/${pid}/stat identity`);
   }
-  return { pgid, startTimeTicks };
+  return { pgid, startTimeTicks, state };
 }
 
-export async function captureProcessIdentity(pid, marker) {
+async function processHasLaunchId(pid, launchId) {
+  try {
+    const entries = (await readFile(`/proc/${pid}/environ`, "utf8")).split("\0");
+    return entries.includes(`TK_RUNTIME_LAUNCH_ID=${launchId}`);
+  } catch {
+    return false;
+  }
+}
+
+async function ownedGroupMembers(pgid, launchId) {
+  const entries = await readdir("/proc", { withFileTypes: true });
+  const members = [];
+  for (const entry of entries) {
+    if (!entry.isDirectory() || !/^\d+$/.test(entry.name)) continue;
+    const pid = Number(entry.name);
+    try {
+      const state = await readLinuxProcessState(pid);
+      if (state.pgid !== pgid || state.state === "Z") continue;
+      if (!(await processHasLaunchId(pid, launchId))) {
+        throw new Error(`refusing reused process group ${pgid}: member ${pid} lacks launch id`);
+      }
+      members.push(pid);
+    } catch (error) {
+      if (/refusing reused process group/.test(error.message)) throw error;
+      // Processes can exit while /proc is being scanned.
+    }
+  }
+  return members;
+}
+
+export async function captureProcessIdentity(pid, marker, launchId) {
   if (!Number.isSafeInteger(pid) || pid < 2 || typeof marker !== "string" || !marker) {
     throw new Error("invalid process identity request");
   }
@@ -145,7 +180,11 @@ export async function captureProcessIdentity(pid, marker) {
     .split("\0")
     .join(" ");
   if (!commandLine.includes(marker)) throw new Error(`PID ${pid} does not contain marker`);
-  return { pid, ...(await readLinuxProcessState(pid)), marker };
+  if (launchId && !(await processHasLaunchId(pid, launchId))) {
+    throw new Error(`PID ${pid} does not contain launch id`);
+  }
+  const { pgid, startTimeTicks } = await readLinuxProcessState(pid);
+  return { pid, pgid, startTimeTicks, marker, ...(launchId ? { launchId } : {}) };
 }
 
 export async function groupExists(pgid) {
@@ -176,12 +215,16 @@ export async function stopManagedProcess({
   pgid,
   startTimeTicks,
   marker,
+  launchId,
   waitMs = 10_000
 }) {
+  if (typeof launchId !== "string" || !launchId) {
+    throw new Error("managed process launch id is required");
+  }
   const identity = { pid, pgid, startTimeTicks, marker };
   let leaderExists = true;
   try {
-    const actual = await captureProcessIdentity(pid, marker);
+    const actual = await captureProcessIdentity(pid, marker, launchId);
     if (actual.pgid !== pgid || actual.startTimeTicks !== startTimeTicks) {
       throw new Error(`refusing unmanaged PID ${pid}`);
     }
@@ -195,11 +238,12 @@ export async function stopManagedProcess({
     if (leaderExists) throw new Error(`refusing unmanaged PID ${pid}`);
   }
 
-  if (!(await groupExists(pgid))) return;
+  if ((await ownedGroupMembers(pgid, launchId)).length === 0) return;
   process.kill(-identity.pgid, "SIGTERM");
-  if (await waitForGroupExit(pgid, waitMs)) return;
+  if (await waitForGroupExit(pgid, launchId, waitMs)) return;
+  await ownedGroupMembers(pgid, launchId);
   process.kill(-identity.pgid, "SIGKILL");
-  if (await waitForGroupExit(pgid, waitMs)) return;
+  if (await waitForGroupExit(pgid, launchId, waitMs)) return;
   throw new Error(`process group ${pgid} survived SIGKILL`);
 }
 
@@ -207,9 +251,10 @@ export async function cleanupProvisionalProcess({
   pid,
   pgid,
   marker,
+  launchId,
   waitMs = 10_000
 }) {
-  if (!Number.isSafeInteger(pid) || pid < 2 || pid !== pgid || !marker) {
+  if (!Number.isSafeInteger(pid) || pid < 2 || pid !== pgid || !marker || !launchId) {
     throw new Error("invalid provisional process metadata: PID must equal PGID");
   }
   try {
@@ -221,11 +266,12 @@ export async function cleanupProvisionalProcess({
   } catch (error) {
     if (error?.code !== "ENOENT") throw error;
   }
-  if (!(await groupExists(pgid))) return;
+  if ((await ownedGroupMembers(pgid, launchId)).length === 0) return;
   process.kill(-pgid, "SIGTERM");
-  if (await waitForGroupExit(pgid, waitMs)) return;
+  if (await waitForGroupExit(pgid, launchId, waitMs)) return;
+  await ownedGroupMembers(pgid, launchId);
   process.kill(-pgid, "SIGKILL");
-  if (await waitForGroupExit(pgid, waitMs)) return;
+  if (await waitForGroupExit(pgid, launchId, waitMs)) return;
   throw new Error(`provisional process group ${pgid} survived SIGKILL`);
 }
 
@@ -236,7 +282,9 @@ function validateRecoveryRecord(record) {
     record.pid < 2 ||
     record.pid !== record.pgid ||
     typeof record.marker !== "string" ||
-    !record.marker
+    !record.marker ||
+    typeof record.launchId !== "string" ||
+    !record.launchId
   ) {
     throw new Error("invalid recovery metadata: PID must equal PGID");
   }
@@ -247,12 +295,13 @@ function validateRecoveryRecord(record) {
     throw new Error("invalid recovery process start time");
   }
   return record.startTimeTicks === undefined
-    ? { pid: record.pid, pgid: record.pgid, marker: record.marker }
+    ? { pid: record.pid, pgid: record.pgid, marker: record.marker, launchId: record.launchId }
     : {
         pid: record.pid,
         pgid: record.pgid,
         startTimeTicks: record.startTimeTicks,
-        marker: record.marker
+        marker: record.marker,
+        launchId: record.launchId
       };
 }
 
@@ -280,6 +329,7 @@ export async function cleanupSpawnFailure({
       await writeProcessMetadata(metadataPath, {
         version: 1,
         state: "recovery",
+        launchId: failedRecords[0].launchId,
         records: failedRecords
       });
     } catch (metadataError) {
@@ -293,20 +343,70 @@ export async function cleanupSpawnFailure({
   throw originalError;
 }
 
-async function waitForGroupExit(pgid, waitMs) {
+async function waitForGroupExit(pgid, launchId, waitMs) {
   const deadline = Date.now() + Math.max(0, waitMs);
   do {
-    if (!(await groupExists(pgid))) return true;
+    if ((await ownedGroupMembers(pgid, launchId)).length === 0) return true;
     await new Promise((resolve) => setTimeout(resolve, Math.min(50, Math.max(1, waitMs))));
   } while (Date.now() < deadline);
-  return !(await groupExists(pgid));
+  return (await ownedGroupMembers(pgid, launchId)).length === 0;
 }
 
 function metadataPathFor(repoRoot) {
   return join(repoRoot, "data/runtime/processes.json");
 }
 
-function validateProcessRecord(value, label) {
+function workerReadyPathFor(repoRoot, launchId) {
+  if (!/^[A-Za-z0-9_-]+$/.test(launchId)) throw new Error("invalid runtime launch id");
+  return join(repoRoot, `data/runtime/worker-ready-${launchId}.json`);
+}
+
+export async function acquireStartLock(runtimeRoot, launchId) {
+  const lockPath = join(runtimeRoot, "start.lock");
+  let handle;
+  let created = false;
+  try {
+    handle = await open(lockPath, "wx", 0o600);
+    created = true;
+    await handle.writeFile(`${JSON.stringify({ launchId, pid: process.pid })}\n`);
+  } catch (error) {
+    const cleanupErrors = [];
+    await handle?.close().catch((cleanupError) => cleanupErrors.push(cleanupError));
+    if (created) {
+      await unlink(lockPath).catch((cleanupError) => cleanupErrors.push(cleanupError));
+    }
+    if (error?.code === "EEXIST") {
+      throw new Error("local production start is already in progress (start lock exists)");
+    }
+    if (cleanupErrors.length > 0) {
+      throw new AggregateError(
+        [error, ...cleanupErrors],
+        [error, ...cleanupErrors].map((item) => item.message).join("; ")
+      );
+    }
+    throw error;
+  }
+  let released = false;
+  return {
+    async release() {
+      if (released) return;
+      released = true;
+      let closeError;
+      try {
+        await handle.close();
+      } catch (error) {
+        closeError = error;
+      } finally {
+        await unlink(lockPath).catch((error) => {
+          if (error?.code !== "ENOENT") throw error;
+        });
+      }
+      if (closeError) throw closeError;
+    }
+  };
+}
+
+function validateProcessRecord(value, label, launchId) {
   if (
     !value ||
     !Number.isSafeInteger(value.pid) ||
@@ -316,7 +416,8 @@ function validateProcessRecord(value, label) {
     typeof value.startTimeTicks !== "string" ||
     !/^\d+$/.test(value.startTimeTicks) ||
     typeof value.marker !== "string" ||
-    value.marker.length === 0
+    value.marker.length === 0 ||
+    value.launchId !== launchId
   ) {
     throw new Error(`invalid ${label} process metadata`);
   }
@@ -327,7 +428,8 @@ function validateProcessRecord(value, label) {
     pid: value.pid,
     pgid: value.pgid,
     startTimeTicks: value.startTimeTicks,
-    marker: value.marker
+    marker: value.marker,
+    launchId: value.launchId
   };
 }
 
@@ -347,9 +449,16 @@ async function readProcessMetadata(repoRoot) {
     if (!Array.isArray(metadata.records) || metadata.records.length === 0) {
       throw new Error("invalid recovery process metadata");
     }
+    if (typeof metadata.launchId !== "string" || !metadata.launchId) {
+      throw new Error("invalid recovery launch id metadata");
+    }
+    if (metadata.records.some((record) => record?.launchId !== metadata.launchId)) {
+      throw new Error("recovery records do not match launch id");
+    }
     return {
       version: 1,
       state: "recovery",
+      launchId: metadata.launchId,
       records: metadata.records.map(validateRecoveryRecord)
     };
   }
@@ -365,9 +474,9 @@ async function readProcessMetadata(repoRoot) {
   return {
     version: 1,
     launchId: metadata.launchId,
-    web: validateProcessRecord(metadata.web, "web"),
+    web: validateProcessRecord(metadata.web, "web", metadata.launchId),
     worker: {
-      ...validateProcessRecord(metadata.worker, "worker"),
+      ...validateProcessRecord(metadata.worker, "worker", metadata.launchId),
       baselineBackendPids: [...new Set(metadata.worker.baselineBackendPids)]
     }
   };
@@ -415,12 +524,12 @@ function spawnDetached(command, args, options) {
   });
 }
 
-async function waitForProcessIdentity(pid, marker, waitMs = 2_000) {
+async function waitForProcessIdentity(pid, marker, waitMs = 2_000, launchId) {
   const deadline = Date.now() + waitMs;
   let lastError;
   do {
     try {
-      return await captureProcessIdentity(pid, marker);
+      return await captureProcessIdentity(pid, marker, launchId);
     } catch (error) {
       lastError = error;
     }
@@ -516,12 +625,14 @@ async function queryWorkerBackendPids(repoRoot, connectionString) {
   }
 }
 
-async function workerIsReady(repoRoot, connectionString, baselineBackendPids) {
+async function workerIsReady(repoRoot, launchId, worker) {
   try {
-    return hasNewWorkerBackend(
-      baselineBackendPids,
-      await queryWorkerBackendPids(repoRoot, connectionString)
-    );
+    const proof = JSON.parse(await readFile(workerReadyPathFor(repoRoot, launchId), "utf8"));
+    if (proof?.launchId !== launchId || !Number.isSafeInteger(proof.pid) || proof.pid < 2) {
+      return false;
+    }
+    const state = await readLinuxProcessState(proof.pid);
+    return state.pgid === worker.pgid && await processHasLaunchId(proof.pid, launchId);
   } catch {
     return false;
   }
@@ -545,6 +656,9 @@ async function inspectLogsOrStop(metadata, repoRoot, env) {
     try {
       await stopBoth(metadata, 10_000);
       await unlink(metadataPathFor(repoRoot));
+      await unlink(workerReadyPathFor(repoRoot, metadata.launchId)).catch((unlinkError) => {
+        if (unlinkError?.code !== "ENOENT") throw unlinkError;
+      });
     } catch (caught) {
       stopError = caught;
     }
@@ -573,7 +687,7 @@ export async function statusLocalProduction({ repoRoot, waitMs = 60_000 }) {
     await assertBothProcessesManaged(metadata);
     const [webReady, workerReady] = await Promise.all([
       webIsReady(metadata.launchId),
-      workerIsReady(repoRoot, env.DATABASE_URL, metadata.worker.baselineBackendPids)
+      workerIsReady(repoRoot, metadata.launchId, metadata.worker)
     ]);
     if (webReady && workerReady) {
       await inspectLogsOrStop(metadata, repoRoot, childEnv);
@@ -645,10 +759,16 @@ export async function stopLocalProduction({ repoRoot, waitMs = 10_000 }) {
       throw new AggregateError(errors, errors.map((error) => error.message).join("; "));
     }
     await unlink(metadataPathFor(repoRoot));
+    await unlink(workerReadyPathFor(repoRoot, metadata.launchId)).catch((error) => {
+      if (error?.code !== "ENOENT") throw error;
+    });
     return { running: false, recovered: true };
   }
   await stopBoth(metadata, waitMs);
   await unlink(metadataPathFor(repoRoot));
+  await unlink(workerReadyPathFor(repoRoot, metadata.launchId)).catch((error) => {
+    if (error?.code !== "ENOENT") throw error;
+  });
   return { running: false };
 }
 
@@ -660,22 +780,14 @@ export async function startLocalProduction({ repoRoot, waitMs = 60_000 }) {
   const runtimeRoot = join(repoRoot, "data/runtime");
   const metadataPath = metadataPathFor(repoRoot);
   await mkdir(runtimeRoot, { recursive: true, mode: 0o700 });
-  try {
-    const existing = await readProcessMetadata(repoRoot);
-    if (existing.state === "recovery") {
-      throw new Error("startup recovery metadata requires manual cleanup");
-    }
-    await assertBothProcessesManaged(existing);
-    throw new Error("local production is already running");
-  } catch (error) {
-    if (!/process metadata is required/.test(error.message)) throw error;
-  }
-
   const launchId = randomBytes(24).toString("base64url");
-  const childEnv = buildChildEnvironment(env, { launchId });
-  const baselineBackendPids = await queryWorkerBackendPids(repoRoot, env.DATABASE_URL);
-  const webLog = await open(join(runtimeRoot, "web.log"), "a", 0o600);
-  const workerLog = await open(join(runtimeRoot, "worker.log"), "a", 0o600);
+  const startLock = await acquireStartLock(runtimeRoot, launchId);
+  const childEnv = {
+    ...buildChildEnvironment(env, { launchId }),
+    TK_WORKER_READY_PATH: workerReadyPathFor(repoRoot, launchId)
+  };
+  let webLog;
+  let workerLog;
   let web;
   let worker;
   let webIdentity;
@@ -683,12 +795,25 @@ export async function startLocalProduction({ repoRoot, waitMs = 60_000 }) {
   let metadata;
   let metadataWritten = false;
   try {
+    try {
+      const existing = await readProcessMetadata(repoRoot);
+      if (existing.state === "recovery") {
+        throw new Error("startup recovery metadata requires manual cleanup");
+      }
+      await assertBothProcessesManaged(existing);
+      throw new Error("local production is already running");
+    } catch (error) {
+      if (!/process metadata is required/.test(error.message)) throw error;
+    }
+    const baselineBackendPids = await queryWorkerBackendPids(repoRoot, env.DATABASE_URL);
+    webLog = await open(join(runtimeRoot, "web.log"), "a", 0o600);
+    workerLog = await open(join(runtimeRoot, "worker.log"), "a", 0o600);
     web = await spawnDetached("pnpm", ["--filter", "@tk/web", "start"], {
       cwd: repoRoot,
       env: childEnv,
       stdio: ["ignore", webLog.fd, webLog.fd]
     });
-    webIdentity = await waitForProcessIdentity(web.pid, WEB_MARKER);
+    webIdentity = await waitForProcessIdentity(web.pid, WEB_MARKER, 2_000, launchId);
     const workerCommand = buildWorkerCommand();
     worker = await spawnDetached(
       workerCommand.command,
@@ -699,7 +824,7 @@ export async function startLocalProduction({ repoRoot, waitMs = 60_000 }) {
         stdio: ["ignore", workerLog.fd, workerLog.fd]
       }
     );
-    workerIdentity = await waitForProcessIdentity(worker.pid, WORKER_MARKER);
+    workerIdentity = await waitForProcessIdentity(worker.pid, WORKER_MARKER, 2_000, launchId);
     metadata = {
       version: 1,
       launchId,
@@ -714,8 +839,18 @@ export async function startLocalProduction({ repoRoot, waitMs = 60_000 }) {
       return await cleanupFailedStart({ metadata, metadataPath, originalError: error });
     }
     const recoveryRecords = [
-      worker && (workerIdentity ?? { pid: worker.pid, pgid: worker.pid, marker: WORKER_MARKER }),
-      web && (webIdentity ?? { pid: web.pid, pgid: web.pid, marker: WEB_MARKER })
+      worker && (workerIdentity ?? {
+        pid: worker.pid,
+        pgid: worker.pid,
+        marker: WORKER_MARKER,
+        launchId
+      }),
+      web && (webIdentity ?? {
+        pid: web.pid,
+        pgid: web.pid,
+        marker: WEB_MARKER,
+        launchId
+      })
     ].filter(Boolean);
     if (recoveryRecords.length === 0) throw error;
     return await cleanupSpawnFailure({
@@ -724,7 +859,11 @@ export async function startLocalProduction({ repoRoot, waitMs = 60_000 }) {
       originalError: error
     });
   } finally {
-    await Promise.all([webLog.close(), workerLog.close()]);
+    await Promise.all([
+      webLog?.close(),
+      workerLog?.close(),
+      startLock.release()
+    ]);
   }
 }
 
