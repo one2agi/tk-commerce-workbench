@@ -14,11 +14,17 @@ import { createRuntimeHealthHandler } from "../../apps/web/src/app/api/runtime-h
 
 import {
   buildChildEnvironment,
+  buildWorkerCommand,
+  buildWorkerProbeClientConfig,
   captureProcessIdentity,
   cleanupFailedStart,
+  cleanupProvisionalProcess,
+  cleanupSpawnFailure,
   groupExists,
+  hasNewWorkerBackend,
   processIsManaged,
   readEnvFile,
+  secretNeedles,
   startLocalProduction,
   statusLocalProduction,
   stopLocalProduction,
@@ -35,20 +41,13 @@ async function waitForManagedProcess(pid, marker) {
   throw new Error(`dummy process ${pid} did not expose marker ${marker}`);
 }
 
-test("runtime health endpoint returns the launch token only to a matching probe", async () => {
-  const handler = createRuntimeHealthHandler({ healthToken: "launch-token" });
-  const unauthorized = await handler(
+test("runtime health endpoint exposes a non-secret launch id without authentication", async () => {
+  const handler = createRuntimeHealthHandler({ launchId: "launch-123" });
+  const response = await handler(
     new Request("http://127.0.0.1/api/runtime-health")
   );
-  assert.equal(unauthorized.status, 404);
-
-  const authorized = await handler(
-    new Request("http://127.0.0.1/api/runtime-health", {
-      headers: { "x-tk-runtime-health-token": "launch-token" }
-    })
-  );
-  assert.equal(authorized.status, 200);
-  assert.deepEqual(await authorized.json(), { token: "launch-token" });
+  assert.equal(response.status, 200);
+  assert.deepEqual(await response.json(), { launchId: "launch-123" });
 });
 
 async function spawnManagedDummy(marker) {
@@ -101,7 +100,7 @@ test("child environment inherits only an allowlist plus the env file", () => {
   const childEnv = buildChildEnvironment(
     { DATABASE_URL: "postgresql://local", APP_SECRET: "configured-secret" },
     {
-      runtimeToken: "runtime-token",
+      launchId: "launch-123",
       hostEnv: {
         PATH: "/usr/bin",
         HOME: "/tmp/home",
@@ -119,7 +118,42 @@ test("child environment inherits only an allowlist plus the env file", () => {
     DATABASE_URL: "postgresql://local",
     APP_SECRET: "configured-secret",
     NODE_ENV: "production",
-    TK_RUNTIME_HEALTH_TOKEN: "runtime-token"
+    TK_RUNTIME_LAUNCH_ID: "launch-123"
+  });
+});
+
+test("launch id is not classified as a secret", () => {
+  const childEnv = buildChildEnvironment(
+    { APP_SECRET: "real-secret" },
+    { launchId: "visible-launch-id", hostEnv: {} }
+  );
+  assert.equal(secretNeedles(childEnv).includes("visible-launch-id"), false);
+  assert.equal(secretNeedles(childEnv).includes("real-secret"), true);
+});
+
+test("worker command keeps the exact fixed PGAPPNAME contract", () => {
+  assert.deepEqual(buildWorkerCommand(), {
+    command: "env",
+    args: [
+      "PGAPPNAME=tk-workbench-local-worker",
+      "pnpm",
+      "--filter",
+      "@tk/worker",
+      "start"
+    ]
+  });
+});
+
+test("worker readiness requires a backend PID outside the startup baseline", () => {
+  assert.equal(hasNewWorkerBackend([101, 102], [101, 102]), false);
+  assert.equal(hasNewWorkerBackend([101, 102], [101, 102, 103]), true);
+});
+
+test("worker baseline probe cannot masquerade as the worker session", () => {
+  assert.deepEqual(buildWorkerProbeClientConfig("postgresql://local/db"), {
+    connectionString: "postgresql://local/db",
+    connectionTimeoutMillis: 1_000,
+    application_name: "tk-workbench-local-runtime-probe"
   });
 });
 
@@ -128,14 +162,14 @@ test("process metadata uses exclusive creation", async () => {
   const metadataPath = join(repoRoot, "processes.json");
   const metadata = {
     version: 1,
-    healthToken: "health-token",
+    launchId: "launch-123",
     web: { pid: 101, pgid: 101, startTimeTicks: "1001", marker: "web-marker" },
     worker: {
       pid: 202,
       pgid: 202,
       startTimeTicks: "2002",
       marker: "worker-marker",
-      applicationName: "worker-unique"
+      baselineBackendPids: []
     }
   };
 
@@ -226,6 +260,71 @@ test("stop polls for group exit after escalating to SIGKILL", async () => {
   }
 });
 
+test("provisional cleanup removes same-PGID children after the leader exits before identity capture", async () => {
+  const marker = `tk-runtime-provisional-${process.pid}-${Date.now()}`;
+  const leader = spawn(
+    process.execPath,
+    [
+      "-e",
+      `const { spawn } = require("node:child_process");
+       const child = spawn(process.execPath, ["-e", "setInterval(() => {}, 1000)", process.argv[1]], { stdio: "ignore" });
+       child.unref();
+       setTimeout(() => process.exit(0), 50);`,
+      marker
+    ],
+    { detached: true, stdio: "ignore" }
+  );
+  leader.unref();
+  const deadline = Date.now() + 2_000;
+  while (await processIsManaged(leader.pid, marker)) {
+    if (Date.now() >= deadline) throw new Error("provisional leader did not exit");
+    await new Promise((resolve) => setTimeout(resolve, 20));
+  }
+  assert.equal(await groupExists(leader.pid), true);
+
+  try {
+    await cleanupProvisionalProcess({
+      pid: leader.pid,
+      pgid: leader.pid,
+      marker,
+      waitMs: 500
+    });
+    assert.equal(await groupExists(leader.pid), false);
+  } finally {
+    await forceStopGroup(leader.pid);
+  }
+});
+
+test("failed provisional cleanup preserves validated recovery metadata", async () => {
+  const repoRoot = await mkdtemp(join(tmpdir(), "tk-runtime-recovery-"));
+  const metadataPath = join(repoRoot, "data/runtime/processes.json");
+  await mkdir(join(repoRoot, "data/runtime"), { recursive: true });
+  const record = { pid: 4242, pgid: 4242, marker: "provisional-marker" };
+
+  await assert.rejects(
+    () => cleanupSpawnFailure({
+      records: [record],
+      metadataPath,
+      originalError: new Error("identity capture failed"),
+      stopRecord: async () => {
+        throw new Error("provisional group survived SIGKILL");
+      }
+    }),
+    /identity capture failed.*survived SIGKILL/s
+  );
+  assert.deepEqual(JSON.parse(await readFile(metadataPath, "utf8")), {
+    version: 1,
+    state: "recovery",
+    records: [record]
+  });
+
+  await assert.rejects(
+    () => stopLocalProduction({ repoRoot, waitMs: 20 }),
+    /unverified provisional PGID.*manual cleanup required/i
+  );
+  assert.equal(JSON.parse(await readFile(metadataPath, "utf8")).state, "recovery");
+});
+
 test("start rejects a missing env before spawning anything", async () => {
   const repoRoot = await mkdtemp(join(tmpdir(), "tk-runtime-no-env-"));
   await assert.rejects(() => startLocalProduction({ repoRoot }), /\.env.*required/i);
@@ -243,7 +342,7 @@ test("status rejects stale process metadata", async () => {
     join(runtimeRoot, "processes.json"),
     JSON.stringify({
       version: 1,
-      healthToken: "health-token",
+      launchId: "launch-123",
       web: {
         pid: 2 ** 31 - 1,
         pgid: 2 ** 31 - 1,
@@ -255,7 +354,7 @@ test("status rejects stale process metadata", async () => {
         pgid: 2 ** 31 - 2,
         startTimeTicks: "2002",
         marker: "stale-worker",
-        applicationName: "worker-unique"
+        baselineBackendPids: []
       }
     })
   );
@@ -269,7 +368,8 @@ test("status rejects stale process metadata", async () => {
 test("status rejects a reused PID even when its command marker matches", async () => {
   const repoRoot = await mkdtemp(join(tmpdir(), "tk-runtime-reused-pid-"));
   const runtimeRoot = join(repoRoot, "data/runtime");
-  const actual = await captureProcessIdentity(process.pid, "node");
+  const marker = `tk-runtime-reused-${process.pid}-${Date.now()}`;
+  const actual = await spawnManagedDummyIdentity(marker);
   const stale = {
     ...actual,
     startTimeTicks: String(BigInt(actual.startTimeTicks) + 1n)
@@ -283,22 +383,55 @@ test("status rejects a reused PID even when its command marker matches", async (
     join(runtimeRoot, "processes.json"),
     JSON.stringify({
       version: 1,
-      healthToken: "health-token",
+      launchId: "launch-123",
       web: stale,
-      worker: { ...stale, applicationName: "worker-unique" }
+      worker: { ...stale, baselineBackendPids: [] }
+    })
+  );
+
+  try {
+    await assert.rejects(
+      () => statusLocalProduction({ repoRoot, waitMs: 20 }),
+      /stale|not managed/i
+    );
+  } finally {
+    await forceStopGroup(actual.pgid);
+  }
+});
+
+test("metadata rejects a process record whose PID differs from PGID", async () => {
+  const repoRoot = await mkdtemp(join(tmpdir(), "tk-runtime-pid-pgid-"));
+  const runtimeRoot = join(repoRoot, "data/runtime");
+  const identity = await captureProcessIdentity(process.pid, "node");
+  await mkdir(runtimeRoot, { recursive: true });
+  await writeFile(
+    join(repoRoot, ".env"),
+    "EXTERNAL_ADAPTER_MODE=mock\nALLOW_LAN=false\nDATABASE_URL=postgresql://postgres:password@127.0.0.1/db\n"
+  );
+  await writeFile(
+    join(runtimeRoot, "processes.json"),
+    JSON.stringify({
+      version: 1,
+      launchId: "launch-123",
+      web: { ...identity, pgid: identity.pgid + 1 },
+      worker: {
+        ...identity,
+        baselineBackendPids: []
+      }
     })
   );
 
   await assert.rejects(
     () => statusLocalProduction({ repoRoot, waitMs: 20 }),
-    /stale|not managed/i
+    /PID.*PGID|pid.*pgid/i
   );
 });
 
 test("status redacts a leak before reporting stale identity and retains metadata when stop fails", async () => {
   const repoRoot = await mkdtemp(join(tmpdir(), "tk-runtime-stale-leak-"));
   const runtimeRoot = join(repoRoot, "data/runtime");
-  const actual = await captureProcessIdentity(process.pid, "node");
+  const marker = `tk-runtime-stale-leak-${process.pid}-${Date.now()}`;
+  const actual = await spawnManagedDummyIdentity(marker);
   const stale = {
     ...actual,
     startTimeTicks: String(BigInt(actual.startTimeTicks) + 1n)
@@ -313,23 +446,27 @@ test("status redacts a leak before reporting stale identity and retains metadata
     metadataPath,
     JSON.stringify({
       version: 1,
-      healthToken: "health-token",
+      launchId: "launch-123",
       web: stale,
-      worker: { ...stale, applicationName: "worker-unique" }
+      worker: { ...stale, baselineBackendPids: [] }
     })
   );
   await writeFile(join(runtimeRoot, "web.log"), "credential=leaked-value\n");
   await writeFile(join(runtimeRoot, "worker.log"), "healthy\n");
 
-  await assert.rejects(
-    () => statusLocalProduction({ repoRoot, waitMs: 20 }),
-    /sensitive value detected.*refusing unmanaged PID/s
-  );
-  assert.doesNotMatch(
-    await readFile(join(runtimeRoot, "web.log"), "utf8"),
-    /leaked-value/
-  );
-  assert.equal(JSON.parse(await readFile(metadataPath, "utf8")).version, 1);
+  try {
+    await assert.rejects(
+      () => statusLocalProduction({ repoRoot, waitMs: 20 }),
+      /sensitive value detected.*refusing unmanaged PID/s
+    );
+    assert.doesNotMatch(
+      await readFile(join(runtimeRoot, "web.log"), "utf8"),
+      /leaked-value/
+    );
+    assert.equal(JSON.parse(await readFile(metadataPath, "utf8")).version, 1);
+  } finally {
+    await forceStopGroup(actual.pgid);
+  }
 });
 
 test("stop preserves metadata when either process is unmanaged", async () => {
@@ -337,26 +474,31 @@ test("stop preserves metadata when either process is unmanaged", async () => {
   const runtimeRoot = join(repoRoot, "data/runtime");
   const metadataPath = join(runtimeRoot, "processes.json");
   await mkdir(runtimeRoot, { recursive: true });
-  const actual = await captureProcessIdentity(process.pid, "node");
+  const marker = `tk-runtime-unmanaged-${process.pid}-${Date.now()}`;
+  const actual = await spawnManagedDummyIdentity(marker);
   await writeFile(
     metadataPath,
     JSON.stringify({
       version: 1,
-      healthToken: "health-token",
+      launchId: "launch-123",
       web: { ...actual, marker: "wrong-web-marker" },
       worker: {
         ...actual,
         marker: "wrong-worker-marker",
-        applicationName: "worker-unique"
+        baselineBackendPids: []
       }
     })
   );
 
-  await assert.rejects(
-    () => stopLocalProduction({ repoRoot, waitMs: 50 }),
-    /refusing unmanaged PID/
-  );
-  assert.equal(JSON.parse(await readFile(metadataPath, "utf8")).version, 1);
+  try {
+    await assert.rejects(
+      () => stopLocalProduction({ repoRoot, waitMs: 50 }),
+      /refusing unmanaged PID/
+    );
+    assert.equal(JSON.parse(await readFile(metadataPath, "utf8")).version, 1);
+  } finally {
+    await forceStopGroup(actual.pgid);
+  }
 });
 
 test("failed start reports stop errors and preserves metadata", async () => {
@@ -401,12 +543,12 @@ test("status stops both process groups and redacts logs on a secret match", asyn
     join(runtimeRoot, "processes.json"),
     JSON.stringify({
       version: 1,
-      healthToken: "health-token",
+      launchId: "launch-123",
       web: webIdentity,
-      worker: { ...workerIdentity, applicationName: "worker-unique" }
+      worker: { ...workerIdentity, baselineBackendPids: [] }
     })
   );
-  await writeFile(join(runtimeRoot, "web.log"), "health-token\n");
+  await writeFile(join(runtimeRoot, "web.log"), "runtime-secret-token\n");
   await writeFile(join(runtimeRoot, "worker.log"), "healthy\n");
 
   try {
@@ -417,7 +559,7 @@ test("status stops both process groups and redacts logs on a secret match", asyn
     assert.equal(await processIsManaged(webPid, webMarker), false);
     assert.equal(await processIsManaged(workerPid, workerMarker), false);
     await assert.rejects(() => readFile(join(runtimeRoot, "processes.json")), /ENOENT/);
-    assert.doesNotMatch(await readFile(join(runtimeRoot, "web.log"), "utf8"), /health-token/);
+    assert.doesNotMatch(await readFile(join(runtimeRoot, "web.log"), "utf8"), /runtime-secret-token/);
   } finally {
     await forceStopGroup(webPid);
     await forceStopGroup(workerPid);

@@ -16,6 +16,7 @@ import { fileURLToPath } from "node:url";
 const WEB_URL = "http://127.0.0.1:3000/";
 const WEB_MARKER = "pnpm --filter @tk/web start";
 const WORKER_MARKER = "pnpm --filter @tk/worker start";
+const WORKER_APPLICATION_NAME = "tk-workbench-local-worker";
 const INHERITED_ENV_ALLOWLIST = [
   "PATH",
   "HOME",
@@ -50,7 +51,7 @@ export function readEnvFile(text) {
 
 export function buildChildEnvironment(
   env,
-  { runtimeToken, hostEnv = process.env }
+  { launchId, hostEnv = process.env }
 ) {
   const inherited = {};
   for (const key of INHERITED_ENV_ALLOWLIST) {
@@ -60,7 +61,33 @@ export function buildChildEnvironment(
     ...inherited,
     ...env,
     NODE_ENV: "production",
-    TK_RUNTIME_HEALTH_TOKEN: runtimeToken
+    TK_RUNTIME_LAUNCH_ID: launchId
+  };
+}
+
+export function buildWorkerCommand() {
+  return {
+    command: "env",
+    args: [
+      `PGAPPNAME=${WORKER_APPLICATION_NAME}`,
+      "pnpm",
+      "--filter",
+      "@tk/worker",
+      "start"
+    ]
+  };
+}
+
+export function hasNewWorkerBackend(baselineBackendPids, currentBackendPids) {
+  const baseline = new Set(baselineBackendPids);
+  return currentBackendPids.some((pid) => !baseline.has(pid));
+}
+
+export function buildWorkerProbeClientConfig(connectionString) {
+  return {
+    connectionString,
+    connectionTimeoutMillis: 1_000,
+    application_name: "tk-workbench-local-runtime-probe"
   };
 }
 
@@ -176,6 +203,96 @@ export async function stopManagedProcess({
   throw new Error(`process group ${pgid} survived SIGKILL`);
 }
 
+export async function cleanupProvisionalProcess({
+  pid,
+  pgid,
+  marker,
+  waitMs = 10_000
+}) {
+  if (!Number.isSafeInteger(pid) || pid < 2 || pid !== pgid || !marker) {
+    throw new Error("invalid provisional process metadata: PID must equal PGID");
+  }
+  try {
+    await stat(`/proc/${pid}`);
+    const commandLine = (await readFile(`/proc/${pid}/cmdline`, "utf8"))
+      .split("\0")
+      .join(" ");
+    if (!commandLine.includes(marker)) throw new Error(`refusing unmanaged PID ${pid}`);
+  } catch (error) {
+    if (error?.code !== "ENOENT") throw error;
+  }
+  if (!(await groupExists(pgid))) return;
+  process.kill(-pgid, "SIGTERM");
+  if (await waitForGroupExit(pgid, waitMs)) return;
+  process.kill(-pgid, "SIGKILL");
+  if (await waitForGroupExit(pgid, waitMs)) return;
+  throw new Error(`provisional process group ${pgid} survived SIGKILL`);
+}
+
+function validateRecoveryRecord(record) {
+  if (
+    !record ||
+    !Number.isSafeInteger(record.pid) ||
+    record.pid < 2 ||
+    record.pid !== record.pgid ||
+    typeof record.marker !== "string" ||
+    !record.marker
+  ) {
+    throw new Error("invalid recovery metadata: PID must equal PGID");
+  }
+  if (
+    record.startTimeTicks !== undefined &&
+    (typeof record.startTimeTicks !== "string" || !/^\d+$/.test(record.startTimeTicks))
+  ) {
+    throw new Error("invalid recovery process start time");
+  }
+  return record.startTimeTicks === undefined
+    ? { pid: record.pid, pgid: record.pgid, marker: record.marker }
+    : {
+        pid: record.pid,
+        pgid: record.pgid,
+        startTimeTicks: record.startTimeTicks,
+        marker: record.marker
+      };
+}
+
+export async function cleanupSpawnFailure({
+  records,
+  metadataPath,
+  originalError,
+  stopRecord = async (record) => record.startTimeTicks === undefined
+    ? cleanupProvisionalProcess(record)
+    : stopManagedProcess(record)
+}) {
+  const failedRecords = [];
+  const cleanupErrors = [];
+  for (const rawRecord of records) {
+    const record = validateRecoveryRecord(rawRecord);
+    try {
+      await stopRecord(record);
+    } catch (error) {
+      failedRecords.push(record);
+      cleanupErrors.push(error);
+    }
+  }
+  if (failedRecords.length > 0) {
+    try {
+      await writeProcessMetadata(metadataPath, {
+        version: 1,
+        state: "recovery",
+        records: failedRecords
+      });
+    } catch (metadataError) {
+      cleanupErrors.push(metadataError);
+    }
+    throw new AggregateError(
+      [originalError, ...cleanupErrors],
+      [originalError, ...cleanupErrors].map((error) => error.message).join("; ")
+    );
+  }
+  throw originalError;
+}
+
 async function waitForGroupExit(pgid, waitMs) {
   const deadline = Date.now() + Math.max(0, waitMs);
   do {
@@ -203,6 +320,9 @@ function validateProcessRecord(value, label) {
   ) {
     throw new Error(`invalid ${label} process metadata`);
   }
+  if (value.pid !== value.pgid) {
+    throw new Error(`invalid ${label} process metadata: PID must equal PGID`);
+  }
   return {
     pid: value.pid,
     pgid: value.pgid,
@@ -223,19 +343,32 @@ async function readProcessMetadata(repoRoot) {
     throw new Error(`invalid process metadata: ${error.message}`);
   }
   if (metadata?.version !== 1) throw new Error("unsupported process metadata version");
-  if (typeof metadata.healthToken !== "string" || !metadata.healthToken) {
-    throw new Error("invalid runtime health token metadata");
+  if (metadata.state === "recovery") {
+    if (!Array.isArray(metadata.records) || metadata.records.length === 0) {
+      throw new Error("invalid recovery process metadata");
+    }
+    return {
+      version: 1,
+      state: "recovery",
+      records: metadata.records.map(validateRecoveryRecord)
+    };
   }
-  if (typeof metadata.worker?.applicationName !== "string" || !metadata.worker.applicationName) {
-    throw new Error("invalid worker application name metadata");
+  if (typeof metadata.launchId !== "string" || !metadata.launchId) {
+    throw new Error("invalid runtime launch id metadata");
+  }
+  if (
+    !Array.isArray(metadata.worker?.baselineBackendPids) ||
+    metadata.worker.baselineBackendPids.some((pid) => !Number.isSafeInteger(pid) || pid < 1)
+  ) {
+    throw new Error("invalid worker baseline backend PID metadata");
   }
   return {
     version: 1,
-    healthToken: metadata.healthToken,
+    launchId: metadata.launchId,
     web: validateProcessRecord(metadata.web, "web"),
     worker: {
       ...validateProcessRecord(metadata.worker, "worker"),
-      applicationName: metadata.worker.applicationName
+      baselineBackendPids: [...new Set(metadata.worker.baselineBackendPids)]
     }
   };
 }
@@ -296,7 +429,7 @@ async function waitForProcessIdentity(pid, marker, waitMs = 2_000) {
   throw new Error(`PID ${pid} did not expose its runtime marker: ${lastError?.message}`);
 }
 
-function secretNeedles(env) {
+export function secretNeedles(env) {
   const values = Object.entries(env)
     .filter(([key, value]) =>
       /SECRET|TOKEN|PASSWORD|PASS_PHRASE|API[_-]?KEY|PRIVATE[_-]?KEY|CREDENTIAL|AUTH/i.test(key) && value
@@ -351,38 +484,46 @@ async function redactSensitiveLogs(repoRoot, env) {
   }
 }
 
-async function webIsReady(healthToken) {
+async function webIsReady(launchId) {
   try {
     const rootResponse = await fetch(WEB_URL, { signal: AbortSignal.timeout(1_000) });
     await rootResponse.body?.cancel();
     if (rootResponse.status < 200 || rootResponse.status >= 300) return false;
     const healthResponse = await fetch(`${WEB_URL}api/runtime-health`, {
-      headers: { "x-tk-runtime-health-token": healthToken },
       signal: AbortSignal.timeout(1_000)
     });
     if (!healthResponse.ok) return false;
-    return (await healthResponse.json()).token === healthToken;
+    return (await healthResponse.json()).launchId === launchId;
   } catch {
     return false;
   }
 }
 
-async function workerIsReady(repoRoot, connectionString, applicationName) {
+async function queryWorkerBackendPids(repoRoot, connectionString) {
   let client;
   try {
     const requireFromDb = createRequire(join(repoRoot, "packages/db/package.json"));
     const { Client } = requireFromDb("pg");
-    client = new Client({ connectionString, connectionTimeoutMillis: 1_000 });
+    client = new Client(buildWorkerProbeClientConfig(connectionString));
     await client.connect();
     const result = await client.query(
-      "SELECT count(*)::integer AS count FROM pg_stat_activity WHERE application_name = $1",
-      [applicationName]
+      "SELECT pid FROM pg_stat_activity WHERE application_name = $1",
+      [WORKER_APPLICATION_NAME]
     );
-    return Number(result.rows[0]?.count ?? 0) > 0;
-  } catch {
-    return false;
+    return result.rows.map((row) => Number(row.pid)).filter(Number.isSafeInteger);
   } finally {
     await client?.end().catch(() => {});
+  }
+}
+
+async function workerIsReady(repoRoot, connectionString, baselineBackendPids) {
+  try {
+    return hasNewWorkerBackend(
+      baselineBackendPids,
+      await queryWorkerBackendPids(repoRoot, connectionString)
+    );
+  } catch {
+    return false;
   }
 }
 
@@ -417,9 +558,12 @@ async function inspectLogsOrStop(metadata, repoRoot, env) {
 
 export async function statusLocalProduction({ repoRoot, waitMs = 60_000 }) {
   const metadata = await readProcessMetadata(repoRoot);
+  if (metadata.state === "recovery") {
+    throw new Error("startup recovery metadata requires manual cleanup");
+  }
   const env = await readRequiredEnv(repoRoot);
   assertSafeRuntimeEnv(env);
-  const childEnv = buildChildEnvironment(env, { runtimeToken: metadata.healthToken });
+  const childEnv = buildChildEnvironment(env, { launchId: metadata.launchId });
   await inspectLogsOrStop(metadata, repoRoot, childEnv);
   await assertBothProcessesManaged(metadata);
 
@@ -428,8 +572,8 @@ export async function statusLocalProduction({ repoRoot, waitMs = 60_000 }) {
     await inspectLogsOrStop(metadata, repoRoot, childEnv);
     await assertBothProcessesManaged(metadata);
     const [webReady, workerReady] = await Promise.all([
-      webIsReady(metadata.healthToken),
-      workerIsReady(repoRoot, env.DATABASE_URL, metadata.worker.applicationName)
+      webIsReady(metadata.launchId),
+      workerIsReady(repoRoot, env.DATABASE_URL, metadata.worker.baselineBackendPids)
     ]);
     if (webReady && workerReady) {
       await inspectLogsOrStop(metadata, repoRoot, childEnv);
@@ -485,6 +629,24 @@ export async function cleanupFailedStart({
 
 export async function stopLocalProduction({ repoRoot, waitMs = 10_000 }) {
   const metadata = await readProcessMetadata(repoRoot);
+  if (metadata.state === "recovery") {
+    if (metadata.records.some((record) => record.startTimeTicks === undefined)) {
+      throw new Error("unverified provisional PGID: manual cleanup required");
+    }
+    const errors = [];
+    for (const record of metadata.records) {
+      try {
+        await stopManagedProcess({ ...record, waitMs });
+      } catch (error) {
+        errors.push(error);
+      }
+    }
+    if (errors.length > 0) {
+      throw new AggregateError(errors, errors.map((error) => error.message).join("; "));
+    }
+    await unlink(metadataPathFor(repoRoot));
+    return { running: false, recovered: true };
+  }
   await stopBoth(metadata, waitMs);
   await unlink(metadataPathFor(repoRoot));
   return { running: false };
@@ -500,17 +662,20 @@ export async function startLocalProduction({ repoRoot, waitMs = 60_000 }) {
   await mkdir(runtimeRoot, { recursive: true, mode: 0o700 });
   try {
     const existing = await readProcessMetadata(repoRoot);
+    if (existing.state === "recovery") {
+      throw new Error("startup recovery metadata requires manual cleanup");
+    }
     await assertBothProcessesManaged(existing);
     throw new Error("local production is already running");
   } catch (error) {
     if (!/process metadata is required/.test(error.message)) throw error;
   }
 
+  const launchId = randomBytes(24).toString("base64url");
+  const childEnv = buildChildEnvironment(env, { launchId });
+  const baselineBackendPids = await queryWorkerBackendPids(repoRoot, env.DATABASE_URL);
   const webLog = await open(join(runtimeRoot, "web.log"), "a", 0o600);
   const workerLog = await open(join(runtimeRoot, "worker.log"), "a", 0o600);
-  const healthToken = randomBytes(24).toString("base64url");
-  const applicationName = `tk-workbench-local-worker-${healthToken.slice(0, 16)}`;
-  const childEnv = buildChildEnvironment(env, { runtimeToken: healthToken });
   let web;
   let worker;
   let webIdentity;
@@ -524,9 +689,10 @@ export async function startLocalProduction({ repoRoot, waitMs = 60_000 }) {
       stdio: ["ignore", webLog.fd, webLog.fd]
     });
     webIdentity = await waitForProcessIdentity(web.pid, WEB_MARKER);
+    const workerCommand = buildWorkerCommand();
     worker = await spawnDetached(
-      "env",
-      [`PGAPPNAME=${applicationName}`, "pnpm", "--filter", "@tk/worker", "start"],
+      workerCommand.command,
+      workerCommand.args,
       {
         cwd: repoRoot,
         env: childEnv,
@@ -536,9 +702,9 @@ export async function startLocalProduction({ repoRoot, waitMs = 60_000 }) {
     workerIdentity = await waitForProcessIdentity(worker.pid, WORKER_MARKER);
     metadata = {
       version: 1,
-      healthToken,
+      launchId,
       web: webIdentity,
-      worker: { ...workerIdentity, applicationName }
+      worker: { ...workerIdentity, baselineBackendPids }
     };
     await writeProcessMetadata(metadataPath, metadata);
     metadataWritten = true;
@@ -547,33 +713,16 @@ export async function startLocalProduction({ repoRoot, waitMs = 60_000 }) {
     if (metadataWritten) {
       return await cleanupFailedStart({ metadata, metadataPath, originalError: error });
     }
-    const cleanupErrors = [];
-    if (metadata) {
-      try {
-        await stopBoth(metadata, 10_000);
-      } catch (cleanupError) {
-        cleanupErrors.push(cleanupError);
-      }
-    } else {
-      for (const [child, identity, marker] of [
-        [worker, workerIdentity, WORKER_MARKER],
-        [web, webIdentity, WEB_MARKER]
-      ]) {
-        if (!child) continue;
-        try {
-          await stopManagedProcess(identity ?? await captureProcessIdentity(child.pid, marker));
-        } catch (cleanupError) {
-          if (await groupExists(child.pid)) cleanupErrors.push(cleanupError);
-        }
-      }
-    }
-    if (cleanupErrors.length > 0) {
-      throw new AggregateError(
-        [error, ...cleanupErrors],
-        [error, ...cleanupErrors].map((caught) => caught.message).join("; ")
-      );
-    }
-    throw error;
+    const recoveryRecords = [
+      worker && (workerIdentity ?? { pid: worker.pid, pgid: worker.pid, marker: WORKER_MARKER }),
+      web && (webIdentity ?? { pid: web.pid, pgid: web.pid, marker: WEB_MARKER })
+    ].filter(Boolean);
+    if (recoveryRecords.length === 0) throw error;
+    return await cleanupSpawnFailure({
+      records: recoveryRecords,
+      metadataPath,
+      originalError: error
+    });
   } finally {
     await Promise.all([webLog.close(), workerLog.close()]);
   }
