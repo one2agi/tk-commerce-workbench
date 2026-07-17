@@ -4,6 +4,7 @@ import { rename, unlink, writeFile } from "node:fs/promises";
 import type { LiveCommandContext } from "@tk/adapters";
 
 import { createWorkerApplication, type WorkerApplication } from "./entry.js";
+import { log } from "./log.js";
 
 export interface RunWorkerProcessInput {
   application?: WorkerApplication;
@@ -90,6 +91,21 @@ export async function runWorkerProcess(input: RunWorkerProcessInput = {}): Promi
 }
 
 async function main(): Promise<void> {
+  // Catch-net for any DB-termination or adapter error that escapes the
+  // runWorkerProcess loop. The handler logs a single static line — never the
+  // Error object itself, which would dump the connection string and adapter
+  // config into the runtime's stderr (and trip the sensitive-log fuse on
+  // startup). Application-level close() runs in the finally block of
+  // runWorkerProcess; here we just exit non-zero so the runtime manager
+  // observes a clean process exit and runs its own stopBoth on the group.
+  const onUnhandled = (kind: "rejection" | "exception") => {
+    log.error("worker: unhandled error", { kind });
+    process.exitCode = 1;
+    setImmediate(() => process.exit(1));
+  };
+  process.on("unhandledRejection", () => onUnhandled("rejection"));
+  process.on("uncaughtException", () => onUnhandled("exception"));
+
   const controller = new AbortController();
   const stop = () => controller.abort();
   process.once("SIGINT", stop);
@@ -99,6 +115,8 @@ async function main(): Promise<void> {
   } finally {
     process.removeListener("SIGINT", stop);
     process.removeListener("SIGTERM", stop);
+    process.removeListener("unhandledRejection", onUnhandled);
+    process.removeListener("uncaughtException", onUnhandled);
   }
 }
 
@@ -107,7 +125,7 @@ if (import.meta.url === executable) {
   void main().catch(() => {
     // Keep startup errors secret-safe: detailed configuration values and adapter
     // payloads are deliberately not written to stdout/stderr.
-    console.error("worker process stopped during startup or polling");
+    log.error("worker process stopped during startup or polling");
     process.exitCode = 1;
   });
 }

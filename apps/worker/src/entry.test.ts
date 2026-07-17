@@ -56,7 +56,7 @@ describe("worker entry", () => {
       processKind: "app",
       commandContext: { kind: "worker_command", commandId: "command_123", idempotencyKey: "stable:key:123" },
       dependencies: {
-        createPool: vi.fn(() => ({ query: vi.fn(), connect: vi.fn(), end }) as never),
+        createPool: vi.fn(() => ({ query: vi.fn(), connect: vi.fn(), end, on: vi.fn() }) as never),
         createMiaoshou: createMiaoshou as never,
         createMiaoshouEdit: createMiaoshouEdit as never,
         createLiveFetch
@@ -123,7 +123,7 @@ describe("worker entry", () => {
       processKind: "app",
       commandContext: { kind: "worker_command", commandId: "command_123", idempotencyKey: "stable:key:123" },
       dependencies: {
-        createPool: vi.fn(() => ({ query: vi.fn(), connect: vi.fn(), end }) as never),
+        createPool: vi.fn(() => ({ query: vi.fn(), connect: vi.fn(), end, on: vi.fn() }) as never),
         createLiveFetch: vi.fn(() => Object.assign(vi.fn(), { close: closeFetch }) as never),
         createMiaoshou: vi.fn(() => ({ fetchItem: vi.fn() }) as never),
         createMiaoshouEdit: vi.fn(() => ({ applyEdit: vi.fn(), reconcile: vi.fn() }) as never)

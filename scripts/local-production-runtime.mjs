@@ -10,12 +10,32 @@ import {
   unlink,
   writeFile
 } from "node:fs/promises";
+import { homedir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const WEB_URL = "http://127.0.0.1:3000/";
-const WEB_MARKER = "pnpm --filter @tk/web start";
-const WORKER_MARKER = "pnpm --filter @tk/worker start";
+
+// Storage location for .env, data/assets, data/runtime.
+// Defaults to a Linux-native path under the user's home directory so that
+// `chmod 0o600` / `0o700` actually persist on filesystems that ignore POSIX
+// mode bits (e.g. WSL2's 9p/DrvFs mount of /mnt/d). Override via
+// TK_WORKBENCH_STORAGE_DIR for tests or alternate layouts.
+export function resolveStorageDir() {
+  const override = process.env.TK_WORKBENCH_STORAGE_DIR;
+  if (override && override.trim()) return resolve(override);
+  return resolve(homedir(), ".local", "share", "tk-commerce-workbench");
+}
+
+export function envPathFor() {
+  return join(resolveStorageDir(), ".env");
+}
+
+export function runtimeDirFor() {
+  return join(resolveStorageDir(), "data", "runtime");
+}
+export const WEB_MARKER = "pnpm --filter @tk/web start";
+export const WORKER_MARKER = "pnpm --filter @tk/worker start";
 const WORKER_APPLICATION_NAME = "tk-workbench-local-worker";
 const INHERITED_ENV_ALLOWLIST = [
   "PATH",
@@ -352,13 +372,13 @@ async function waitForGroupExit(pgid, launchId, waitMs) {
   return (await ownedGroupMembers(pgid, launchId)).length === 0;
 }
 
-function metadataPathFor(repoRoot) {
-  return join(repoRoot, "data/runtime/processes.json");
+function metadataPathFor() {
+  return join(runtimeDirFor(), "processes.json");
 }
 
-function workerReadyPathFor(repoRoot, launchId) {
+function workerReadyPathFor(launchId) {
   if (!/^[A-Za-z0-9_-]+$/.test(launchId)) throw new Error("invalid runtime launch id");
-  return join(repoRoot, `data/runtime/worker-ready-${launchId}.json`);
+  return join(runtimeDirFor(), `worker-ready-${launchId}.json`);
 }
 
 export async function acquireStartLock(runtimeRoot, launchId) {
@@ -433,8 +453,8 @@ function validateProcessRecord(value, label, launchId) {
   };
 }
 
-async function readProcessMetadata(repoRoot) {
-  const metadataPath = metadataPathFor(repoRoot);
+async function readProcessMetadata() {
+  const metadataPath = metadataPathFor();
   let metadata;
   try {
     metadata = JSON.parse(await readFile(metadataPath, "utf8"));
@@ -482,8 +502,8 @@ async function readProcessMetadata(repoRoot) {
   };
 }
 
-async function readRequiredEnv(repoRoot) {
-  const envPath = join(repoRoot, ".env");
+async function readRequiredEnv() {
+  const envPath = envPathFor();
   try {
     return readEnvFile(await readFile(envPath, "utf8"));
   } catch (error) {
@@ -544,17 +564,26 @@ export function secretNeedles(env) {
       /SECRET|TOKEN|PASSWORD|PASS_PHRASE|API[_-]?KEY|PRIVATE[_-]?KEY|CREDENTIAL|AUTH/i.test(key) && value
     )
     .map(([, value]) => value);
-  try {
-    const password = new URL(env.DATABASE_URL).password;
-    if (password) values.push(decodeURIComponent(password));
-  } catch {
-    // PostgreSQL reports malformed connection strings during the readiness check.
+  if (typeof env.DATABASE_URL === "string" && env.DATABASE_URL) {
+    try {
+      const url = new URL(env.DATABASE_URL);
+      if (url.password) {
+        // Match the full userinfo segment (`scheme://user:password@`) rather than
+        // the bare password. Bare passwords collide with incidental mentions of
+        // common words (e.g. "postgres" appears in pg error messages unrelated
+        // to secrets) and false-positive the sensitive-log fuse.
+        const userinfo = `${url.username}:${decodeURIComponent(url.password)}`;
+        values.push(`${url.protocol}//${userinfo}@`);
+      }
+    } catch {
+      // PostgreSQL reports malformed connection strings during the readiness check.
+    }
   }
   return [...new Set(["Authorization", "APP Secret", ...values])];
 }
 
-async function assertLogsAreRedacted(repoRoot, env) {
-  const runtimeRoot = join(repoRoot, "data/runtime");
+export async function assertLogsAreRedacted(env) {
+  const runtimeRoot = runtimeDirFor();
   const needles = secretNeedles(env);
   for (const name of ["web.log", "worker.log"]) {
     let contents;
@@ -573,8 +602,8 @@ async function assertLogsAreRedacted(repoRoot, env) {
   }
 }
 
-async function redactSensitiveLogs(repoRoot, env) {
-  const runtimeRoot = join(repoRoot, "data/runtime");
+async function redactSensitiveLogs(env) {
+  const runtimeRoot = runtimeDirFor();
   const needles = secretNeedles(env);
   for (const name of ["web.log", "worker.log"]) {
     const logPath = join(runtimeRoot, name);
@@ -625,9 +654,9 @@ async function queryWorkerBackendPids(repoRoot, connectionString) {
   }
 }
 
-async function workerIsReady(repoRoot, launchId, worker) {
+async function workerIsReady(launchId, worker) {
   try {
-    const proof = JSON.parse(await readFile(workerReadyPathFor(repoRoot, launchId), "utf8"));
+    const proof = JSON.parse(await readFile(workerReadyPathFor(launchId), "utf8"));
     if (proof?.launchId !== launchId || !Number.isSafeInteger(proof.pid) || proof.pid < 2) {
       return false;
     }
@@ -647,22 +676,33 @@ async function assertBothProcessesManaged(metadata) {
   }
 }
 
-async function inspectLogsOrStop(metadata, repoRoot, env) {
+async function inspectLogsOrStop(metadata, env) {
   try {
-    await assertLogsAreRedacted(repoRoot, env);
+    await assertLogsAreRedacted(env);
   } catch (error) {
     if (error?.code !== "SENSITIVE_LOG") throw error;
     let stopError;
     try {
       await stopBoth(metadata, 10_000);
-      await unlink(metadataPathFor(repoRoot));
-      await unlink(workerReadyPathFor(repoRoot, metadata.launchId)).catch((unlinkError) => {
+      await unlink(metadataPathFor());
+      await unlink(workerReadyPathFor(metadata.launchId)).catch((unlinkError) => {
         if (unlinkError?.code !== "ENOENT") throw unlinkError;
       });
     } catch (caught) {
       stopError = caught;
     }
-    await redactSensitiveLogs(repoRoot, env);
+    await redactSensitiveLogs(env);
+    // Delete the log files entirely after redaction. Subsequent `status` calls
+    // must not re-fire the fuse on residual content from a previous launch;
+    // `start` recreates both files via `open(..., "a", 0o600)`.
+    const runtimeRoot = runtimeDirFor();
+    await Promise.all(
+      ["web.log", "worker.log"].map((name) =>
+        unlink(join(runtimeRoot, name)).catch((unlinkError) => {
+          if (unlinkError?.code !== "ENOENT") throw unlinkError;
+        })
+      )
+    );
     if (stopError) {
       throw new AggregateError([error, stopError], `${error.message}; ${stopError.message}`);
     }
@@ -670,27 +710,27 @@ async function inspectLogsOrStop(metadata, repoRoot, env) {
   }
 }
 
-export async function statusLocalProduction({ repoRoot, waitMs = 60_000 }) {
-  const metadata = await readProcessMetadata(repoRoot);
+export async function statusLocalProduction({ waitMs = 60_000 } = {}) {
+  const metadata = await readProcessMetadata();
   if (metadata.state === "recovery") {
     throw new Error("startup recovery metadata requires manual cleanup");
   }
-  const env = await readRequiredEnv(repoRoot);
+  const env = await readRequiredEnv();
   assertSafeRuntimeEnv(env);
   const childEnv = buildChildEnvironment(env, { launchId: metadata.launchId });
-  await inspectLogsOrStop(metadata, repoRoot, childEnv);
+  await inspectLogsOrStop(metadata, childEnv);
   await assertBothProcessesManaged(metadata);
 
   const deadline = Date.now() + waitMs;
   while (true) {
-    await inspectLogsOrStop(metadata, repoRoot, childEnv);
+    await inspectLogsOrStop(metadata, childEnv);
     await assertBothProcessesManaged(metadata);
     const [webReady, workerReady] = await Promise.all([
       webIsReady(metadata.launchId),
-      workerIsReady(repoRoot, metadata.launchId, metadata.worker)
+      workerIsReady(metadata.launchId, metadata.worker)
     ]);
     if (webReady && workerReady) {
-      await inspectLogsOrStop(metadata, repoRoot, childEnv);
+      await inspectLogsOrStop(metadata, childEnv);
       await assertBothProcessesManaged(metadata);
       return { running: true, webUrl: WEB_URL, web: metadata.web, worker: metadata.worker };
     }
@@ -741,8 +781,18 @@ export async function cleanupFailedStart({
   throw originalError;
 }
 
-export async function stopLocalProduction({ repoRoot, waitMs = 10_000 }) {
-  const metadata = await readProcessMetadata(repoRoot);
+export async function stopLocalProduction({ waitMs = 10_000 } = {}) {
+  let metadata;
+  try {
+    metadata = await readProcessMetadata();
+  } catch (error) {
+    // Stop is idempotent: after a sensitive-log fuse (or any prior stop),
+    // the metadata file is gone. Return cleanly rather than erroring.
+    if (error?.code === "ENOENT" || /process metadata is required/.test(error.message)) {
+      return { running: false };
+    }
+    throw error;
+  }
   if (metadata.state === "recovery") {
     if (metadata.records.some((record) => record.startTimeTicks === undefined)) {
       throw new Error("unverified provisional PGID: manual cleanup required");
@@ -758,33 +808,33 @@ export async function stopLocalProduction({ repoRoot, waitMs = 10_000 }) {
     if (errors.length > 0) {
       throw new AggregateError(errors, errors.map((error) => error.message).join("; "));
     }
-    await unlink(metadataPathFor(repoRoot));
-    await unlink(workerReadyPathFor(repoRoot, metadata.launchId)).catch((error) => {
+    await unlink(metadataPathFor());
+    await unlink(workerReadyPathFor(metadata.launchId)).catch((error) => {
       if (error?.code !== "ENOENT") throw error;
     });
     return { running: false, recovered: true };
   }
   await stopBoth(metadata, waitMs);
-  await unlink(metadataPathFor(repoRoot));
-  await unlink(workerReadyPathFor(repoRoot, metadata.launchId)).catch((error) => {
+  await unlink(metadataPathFor());
+  await unlink(workerReadyPathFor(metadata.launchId)).catch((error) => {
     if (error?.code !== "ENOENT") throw error;
   });
   return { running: false };
 }
 
 export async function startLocalProduction({ repoRoot, waitMs = 60_000 }) {
-  const env = await readRequiredEnv(repoRoot);
+  const env = await readRequiredEnv();
   assertSafeRuntimeEnv(env);
   await assertProductionBuild(repoRoot);
 
-  const runtimeRoot = join(repoRoot, "data/runtime");
-  const metadataPath = metadataPathFor(repoRoot);
+  const runtimeRoot = runtimeDirFor();
+  const metadataPath = metadataPathFor();
   await mkdir(runtimeRoot, { recursive: true, mode: 0o700 });
   const launchId = randomBytes(24).toString("base64url");
   const startLock = await acquireStartLock(runtimeRoot, launchId);
   const childEnv = {
     ...buildChildEnvironment(env, { launchId }),
-    TK_WORKER_READY_PATH: workerReadyPathFor(repoRoot, launchId)
+    TK_WORKER_READY_PATH: workerReadyPathFor(launchId)
   };
   let webLog;
   let workerLog;
@@ -796,7 +846,7 @@ export async function startLocalProduction({ repoRoot, waitMs = 60_000 }) {
   let metadataWritten = false;
   try {
     try {
-      const existing = await readProcessMetadata(repoRoot);
+      const existing = await readProcessMetadata();
       if (existing.state === "recovery") {
         throw new Error("startup recovery metadata requires manual cleanup");
       }
@@ -833,7 +883,7 @@ export async function startLocalProduction({ repoRoot, waitMs = 60_000 }) {
     };
     await writeProcessMetadata(metadataPath, metadata);
     metadataWritten = true;
-    return await statusLocalProduction({ repoRoot, waitMs });
+    return await statusLocalProduction({ waitMs });
   } catch (error) {
     if (metadataWritten) {
       return await cleanupFailedStart({ metadata, metadataPath, originalError: error });
@@ -872,8 +922,8 @@ async function main() {
   const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
   let result;
   if (command === "start") result = await startLocalProduction({ repoRoot });
-  else if (command === "status") result = await statusLocalProduction({ repoRoot });
-  else if (command === "stop") result = await stopLocalProduction({ repoRoot });
+  else if (command === "status") result = await statusLocalProduction({});
+  else if (command === "stop") result = await stopLocalProduction({});
   else throw new Error("usage: node scripts/local-production-runtime.mjs <start|status|stop>");
   process.stdout.write(`${JSON.stringify(result)}\n`);
 }

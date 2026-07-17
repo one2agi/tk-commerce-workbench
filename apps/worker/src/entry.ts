@@ -2,6 +2,8 @@ import { createHash } from "node:crypto";
 import { promises as dns } from "node:dns";
 import { readFile } from "node:fs/promises";
 
+import { log } from "./log.js";
+
 import {
   MIAOSHOU_DEFAULT_BASE_URL,
   createMiaoshouEditAdapter,
@@ -191,6 +193,16 @@ export function createWorkerApplication(input: CreateWorkerApplicationInput = {}
       : config.databaseUrl;
     const pool = (dependencies.createPool ?? ((url) => new pg.Pool({ connectionString: url })))(connectionString);
     acquiredPool = pool;
+    // pg.Pool emits "error" for idle-client disconnects and pool-level issues
+    // (notably: postgres server termination while a client is checked out).
+    // Without a listener Node treats this as an uncaughtException and may
+    // dump the offending Error — which contains the connection string — to
+    // stderr. The runtime's secret-fuse would then trip on the URL prefix in
+    // the log. Log a single static line so the message is grep-friendly and
+    // never embeds the connection string, the password, or any env value.
+    pool.on("error", () => {
+      log.error("database pool error");
+    });
 
   let miaoshou = input.miaoshou;
   if (!miaoshou) {
