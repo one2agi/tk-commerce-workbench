@@ -1,8 +1,10 @@
 import { spawn } from "node:child_process";
+import { randomBytes } from "node:crypto";
 import { createRequire } from "node:module";
 import {
   mkdir,
   open,
+  readdir,
   readFile,
   stat,
   unlink,
@@ -12,9 +14,22 @@ import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const WEB_URL = "http://127.0.0.1:3000/";
-const WORKER_APPLICATION_NAME = "tk-workbench-local-worker";
 const WEB_MARKER = "pnpm --filter @tk/web start";
 const WORKER_MARKER = "pnpm --filter @tk/worker start";
+const INHERITED_ENV_ALLOWLIST = [
+  "PATH",
+  "HOME",
+  "USER",
+  "LOGNAME",
+  "SHELL",
+  "TMPDIR",
+  "TMP",
+  "TEMP",
+  "LANG",
+  "LC_ALL",
+  "LC_CTYPE",
+  "TERM"
+];
 
 export function readEnvFile(text) {
   const result = {};
@@ -33,6 +48,22 @@ export function readEnvFile(text) {
   return result;
 }
 
+export function buildChildEnvironment(
+  env,
+  { runtimeToken, hostEnv = process.env }
+) {
+  const inherited = {};
+  for (const key of INHERITED_ENV_ALLOWLIST) {
+    if (hostEnv[key] !== undefined) inherited[key] = hostEnv[key];
+  }
+  return {
+    ...inherited,
+    ...env,
+    NODE_ENV: "production",
+    TK_RUNTIME_HEALTH_TOKEN: runtimeToken
+  };
+}
+
 export async function writeProcessMetadata(metadataPath, metadata) {
   try {
     await writeFile(metadataPath, `${JSON.stringify(metadata, null, 2)}\n`, {
@@ -48,6 +79,15 @@ export async function writeProcessMetadata(metadataPath, metadata) {
 }
 
 export async function processIsManaged(pid, marker) {
+  if (typeof pid === "object" && pid !== null) {
+    const expected = pid;
+    try {
+      const actual = await captureProcessIdentity(expected.pid, expected.marker);
+      return actual.pgid === expected.pgid && actual.startTimeTicks === expected.startTimeTicks;
+    } catch {
+      return false;
+    }
+  }
   if (!Number.isSafeInteger(pid) || pid < 2) return false;
   try {
     const commandLine = await readFile(`/proc/${pid}/cmdline`, "utf8");
@@ -57,16 +97,92 @@ export async function processIsManaged(pid, marker) {
   }
 }
 
-export async function stopManagedProcess({ pid, marker, waitMs = 10_000 }) {
-  if (!(await processIsManaged(pid, marker))) throw new Error(`refusing unmanaged PID ${pid}`);
-  process.kill(-pid, "SIGTERM");
-  const deadline = Date.now() + waitMs;
-  while (Date.now() < deadline) {
-    if (!(await processIsManaged(pid, marker))) return;
-    await new Promise((resolve) => setTimeout(resolve, 100));
+async function readLinuxProcessState(pid) {
+  const statText = await readFile(`/proc/${pid}/stat`, "utf8");
+  const commandEnd = statText.lastIndexOf(")");
+  if (commandEnd < 0) throw new Error(`invalid /proc/${pid}/stat`);
+  const fields = statText.slice(commandEnd + 2).trim().split(/\s+/);
+  const pgid = Number(fields[2]);
+  const startTimeTicks = fields[19];
+  if (!Number.isSafeInteger(pgid) || pgid < 2 || !/^\d+$/.test(startTimeTicks ?? "")) {
+    throw new Error(`invalid /proc/${pid}/stat identity`);
   }
-  process.kill(-pid, "SIGKILL");
-  if (await processIsManaged(pid, marker)) throw new Error(`process group ${pid} survived SIGKILL`);
+  return { pgid, startTimeTicks };
+}
+
+export async function captureProcessIdentity(pid, marker) {
+  if (!Number.isSafeInteger(pid) || pid < 2 || typeof marker !== "string" || !marker) {
+    throw new Error("invalid process identity request");
+  }
+  const commandLine = (await readFile(`/proc/${pid}/cmdline`, "utf8"))
+    .split("\0")
+    .join(" ");
+  if (!commandLine.includes(marker)) throw new Error(`PID ${pid} does not contain marker`);
+  return { pid, ...(await readLinuxProcessState(pid)), marker };
+}
+
+export async function groupExists(pgid) {
+  if (!Number.isSafeInteger(pgid) || pgid < 2) return false;
+  try {
+    const entries = await readdir("/proc", { withFileTypes: true });
+    for (const entry of entries) {
+      if (!entry.isDirectory() || !/^\d+$/.test(entry.name)) continue;
+      try {
+        if ((await readLinuxProcessState(Number(entry.name))).pgid === pgid) return true;
+      } catch {
+        // Processes can exit while /proc is being scanned.
+      }
+    }
+    return false;
+  } catch {
+    try {
+      process.kill(-pgid, 0);
+      return true;
+    } catch (error) {
+      return error?.code === "EPERM";
+    }
+  }
+}
+
+export async function stopManagedProcess({
+  pid,
+  pgid,
+  startTimeTicks,
+  marker,
+  waitMs = 10_000
+}) {
+  const identity = { pid, pgid, startTimeTicks, marker };
+  let leaderExists = true;
+  try {
+    const actual = await captureProcessIdentity(pid, marker);
+    if (actual.pgid !== pgid || actual.startTimeTicks !== startTimeTicks) {
+      throw new Error(`refusing unmanaged PID ${pid}`);
+    }
+  } catch (error) {
+    try {
+      await stat(`/proc/${pid}`);
+    } catch (statError) {
+      if (statError?.code === "ENOENT") leaderExists = false;
+      else throw error;
+    }
+    if (leaderExists) throw new Error(`refusing unmanaged PID ${pid}`);
+  }
+
+  if (!(await groupExists(pgid))) return;
+  process.kill(-identity.pgid, "SIGTERM");
+  if (await waitForGroupExit(pgid, waitMs)) return;
+  process.kill(-identity.pgid, "SIGKILL");
+  if (await waitForGroupExit(pgid, waitMs)) return;
+  throw new Error(`process group ${pgid} survived SIGKILL`);
+}
+
+async function waitForGroupExit(pgid, waitMs) {
+  const deadline = Date.now() + Math.max(0, waitMs);
+  do {
+    if (!(await groupExists(pgid))) return true;
+    await new Promise((resolve) => setTimeout(resolve, Math.min(50, Math.max(1, waitMs))));
+  } while (Date.now() < deadline);
+  return !(await groupExists(pgid));
 }
 
 function metadataPathFor(repoRoot) {
@@ -78,12 +194,21 @@ function validateProcessRecord(value, label) {
     !value ||
     !Number.isSafeInteger(value.pid) ||
     value.pid < 2 ||
+    !Number.isSafeInteger(value.pgid) ||
+    value.pgid < 2 ||
+    typeof value.startTimeTicks !== "string" ||
+    !/^\d+$/.test(value.startTimeTicks) ||
     typeof value.marker !== "string" ||
     value.marker.length === 0
   ) {
     throw new Error(`invalid ${label} process metadata`);
   }
-  return { pid: value.pid, marker: value.marker };
+  return {
+    pid: value.pid,
+    pgid: value.pgid,
+    startTimeTicks: value.startTimeTicks,
+    marker: value.marker
+  };
 }
 
 async function readProcessMetadata(repoRoot) {
@@ -98,10 +223,20 @@ async function readProcessMetadata(repoRoot) {
     throw new Error(`invalid process metadata: ${error.message}`);
   }
   if (metadata?.version !== 1) throw new Error("unsupported process metadata version");
+  if (typeof metadata.healthToken !== "string" || !metadata.healthToken) {
+    throw new Error("invalid runtime health token metadata");
+  }
+  if (typeof metadata.worker?.applicationName !== "string" || !metadata.worker.applicationName) {
+    throw new Error("invalid worker application name metadata");
+  }
   return {
     version: 1,
+    healthToken: metadata.healthToken,
     web: validateProcessRecord(metadata.web, "web"),
-    worker: validateProcessRecord(metadata.worker, "worker")
+    worker: {
+      ...validateProcessRecord(metadata.worker, "worker"),
+      applicationName: metadata.worker.applicationName
+    }
   };
 }
 
@@ -147,9 +282,25 @@ function spawnDetached(command, args, options) {
   });
 }
 
+async function waitForProcessIdentity(pid, marker, waitMs = 2_000) {
+  const deadline = Date.now() + waitMs;
+  let lastError;
+  do {
+    try {
+      return await captureProcessIdentity(pid, marker);
+    } catch (error) {
+      lastError = error;
+    }
+    await new Promise((resolveWait) => setTimeout(resolveWait, 20));
+  } while (Date.now() < deadline);
+  throw new Error(`PID ${pid} did not expose its runtime marker: ${lastError?.message}`);
+}
+
 function secretNeedles(env) {
   const values = Object.entries(env)
-    .filter(([key, value]) => /(?:SECRET|TOKEN|PASSWORD|API_KEY)$/.test(key) && value)
+    .filter(([key, value]) =>
+      /SECRET|TOKEN|PASSWORD|PASS_PHRASE|API[_-]?KEY|PRIVATE[_-]?KEY|CREDENTIAL|AUTH/i.test(key) && value
+    )
     .map(([, value]) => value);
   try {
     const password = new URL(env.DATABASE_URL).password;
@@ -200,17 +351,23 @@ async function redactSensitiveLogs(repoRoot, env) {
   }
 }
 
-async function webIsReady() {
+async function webIsReady(healthToken) {
   try {
-    const response = await fetch(WEB_URL, { signal: AbortSignal.timeout(1_000) });
-    await response.body?.cancel();
-    return response.status >= 200 && response.status < 300;
+    const rootResponse = await fetch(WEB_URL, { signal: AbortSignal.timeout(1_000) });
+    await rootResponse.body?.cancel();
+    if (rootResponse.status < 200 || rootResponse.status >= 300) return false;
+    const healthResponse = await fetch(`${WEB_URL}api/runtime-health`, {
+      headers: { "x-tk-runtime-health-token": healthToken },
+      signal: AbortSignal.timeout(1_000)
+    });
+    if (!healthResponse.ok) return false;
+    return (await healthResponse.json()).token === healthToken;
   } catch {
     return false;
   }
 }
 
-async function workerIsReady(repoRoot, connectionString) {
+async function workerIsReady(repoRoot, connectionString, applicationName) {
   let client;
   try {
     const requireFromDb = createRequire(join(repoRoot, "packages/db/package.json"));
@@ -219,7 +376,7 @@ async function workerIsReady(repoRoot, connectionString) {
     await client.connect();
     const result = await client.query(
       "SELECT count(*)::integer AS count FROM pg_stat_activity WHERE application_name = $1",
-      [WORKER_APPLICATION_NAME]
+      [applicationName]
     );
     return Number(result.rows[0]?.count ?? 0) > 0;
   } catch {
@@ -230,45 +387,53 @@ async function workerIsReady(repoRoot, connectionString) {
 }
 
 async function assertBothProcessesManaged(metadata) {
-  if (!(await processIsManaged(metadata.web.pid, metadata.web.marker))) {
+  if (!(await processIsManaged(metadata.web))) {
     throw new Error(`web PID ${metadata.web.pid} is stale or not managed`);
   }
-  if (!(await processIsManaged(metadata.worker.pid, metadata.worker.marker))) {
+  if (!(await processIsManaged(metadata.worker))) {
     throw new Error(`worker PID ${metadata.worker.pid} is stale or not managed`);
+  }
+}
+
+async function inspectLogsOrStop(metadata, repoRoot, env) {
+  try {
+    await assertLogsAreRedacted(repoRoot, env);
+  } catch (error) {
+    if (error?.code !== "SENSITIVE_LOG") throw error;
+    let stopError;
+    try {
+      await stopBoth(metadata, 10_000);
+      await unlink(metadataPathFor(repoRoot));
+    } catch (caught) {
+      stopError = caught;
+    }
+    await redactSensitiveLogs(repoRoot, env);
+    if (stopError) {
+      throw new AggregateError([error, stopError], `${error.message}; ${stopError.message}`);
+    }
+    throw error;
   }
 }
 
 export async function statusLocalProduction({ repoRoot, waitMs = 60_000 }) {
   const metadata = await readProcessMetadata(repoRoot);
-  await assertBothProcessesManaged(metadata);
   const env = await readRequiredEnv(repoRoot);
   assertSafeRuntimeEnv(env);
+  const childEnv = buildChildEnvironment(env, { runtimeToken: metadata.healthToken });
+  await inspectLogsOrStop(metadata, repoRoot, childEnv);
+  await assertBothProcessesManaged(metadata);
 
   const deadline = Date.now() + waitMs;
   while (true) {
+    await inspectLogsOrStop(metadata, repoRoot, childEnv);
     await assertBothProcessesManaged(metadata);
-    try {
-      await assertLogsAreRedacted(repoRoot, env);
-    } catch (error) {
-      if (error?.code !== "SENSITIVE_LOG") throw error;
-      let stopError;
-      try {
-        await stopBoth(metadata, 10_000);
-        await unlink(metadataPathFor(repoRoot));
-      } catch (caught) {
-        stopError = caught;
-      }
-      await redactSensitiveLogs(repoRoot, env);
-      if (stopError) {
-        throw new AggregateError([error, stopError], `${error.message}; ${stopError.message}`);
-      }
-      throw error;
-    }
     const [webReady, workerReady] = await Promise.all([
-      webIsReady(),
-      workerIsReady(repoRoot, env.DATABASE_URL)
+      webIsReady(metadata.healthToken),
+      workerIsReady(repoRoot, env.DATABASE_URL, metadata.worker.applicationName)
     ]);
     if (webReady && workerReady) {
+      await inspectLogsOrStop(metadata, repoRoot, childEnv);
+      await assertBothProcessesManaged(metadata);
       return { running: true, webUrl: WEB_URL, web: metadata.web, worker: metadata.worker };
     }
     if (Date.now() >= deadline) {
@@ -288,6 +453,34 @@ async function stopBoth(metadata, waitMs) {
     }
   }
   if (errors.length > 0) throw new AggregateError(errors, errors.map((error) => error.message).join("; "));
+}
+
+export async function cleanupFailedStart({
+  metadata,
+  metadataPath,
+  originalError,
+  stopProcesses = (records) => stopBoth(records, 10_000),
+  removeMetadata = unlink
+}) {
+  try {
+    await stopProcesses(metadata);
+  } catch (stopError) {
+    throw new AggregateError(
+      [originalError, stopError],
+      `${originalError.message}; ${stopError.message}`
+    );
+  }
+  try {
+    await removeMetadata(metadataPath);
+  } catch (removeError) {
+    if (removeError?.code !== "ENOENT") {
+      throw new AggregateError(
+        [originalError, removeError],
+        `${originalError.message}; ${removeError.message}`
+      );
+    }
+  }
+  throw originalError;
 }
 
 export async function stopLocalProduction({ repoRoot, waitMs = 10_000 }) {
@@ -315,43 +508,71 @@ export async function startLocalProduction({ repoRoot, waitMs = 60_000 }) {
 
   const webLog = await open(join(runtimeRoot, "web.log"), "a", 0o600);
   const workerLog = await open(join(runtimeRoot, "worker.log"), "a", 0o600);
+  const healthToken = randomBytes(24).toString("base64url");
+  const applicationName = `tk-workbench-local-worker-${healthToken.slice(0, 16)}`;
+  const childEnv = buildChildEnvironment(env, { runtimeToken: healthToken });
   let web;
   let worker;
+  let webIdentity;
+  let workerIdentity;
+  let metadata;
   let metadataWritten = false;
   try {
     web = await spawnDetached("pnpm", ["--filter", "@tk/web", "start"], {
       cwd: repoRoot,
-      env: { ...process.env, ...env },
+      env: childEnv,
       stdio: ["ignore", webLog.fd, webLog.fd]
     });
+    webIdentity = await waitForProcessIdentity(web.pid, WEB_MARKER);
     worker = await spawnDetached(
       "env",
-      ["PGAPPNAME=tk-workbench-local-worker", "pnpm", "--filter", "@tk/worker", "start"],
+      [`PGAPPNAME=${applicationName}`, "pnpm", "--filter", "@tk/worker", "start"],
       {
         cwd: repoRoot,
-        env: { ...process.env, ...env },
+        env: childEnv,
         stdio: ["ignore", workerLog.fd, workerLog.fd]
       }
     );
-    const metadata = {
+    workerIdentity = await waitForProcessIdentity(worker.pid, WORKER_MARKER);
+    metadata = {
       version: 1,
-      web: { pid: web.pid, marker: WEB_MARKER },
-      worker: { pid: worker.pid, marker: WORKER_MARKER }
+      healthToken,
+      web: webIdentity,
+      worker: { ...workerIdentity, applicationName }
     };
     await writeProcessMetadata(metadataPath, metadata);
     metadataWritten = true;
     return await statusLocalProduction({ repoRoot, waitMs });
   } catch (error) {
-    const records = [
-      worker && { pid: worker.pid, marker: WORKER_MARKER },
-      web && { pid: web.pid, marker: WEB_MARKER }
-    ].filter(Boolean);
-    for (const record of records) {
-      if (await processIsManaged(record.pid, record.marker)) {
-        await stopManagedProcess({ ...record }).catch(() => {});
+    if (metadataWritten) {
+      return await cleanupFailedStart({ metadata, metadataPath, originalError: error });
+    }
+    const cleanupErrors = [];
+    if (metadata) {
+      try {
+        await stopBoth(metadata, 10_000);
+      } catch (cleanupError) {
+        cleanupErrors.push(cleanupError);
+      }
+    } else {
+      for (const [child, identity, marker] of [
+        [worker, workerIdentity, WORKER_MARKER],
+        [web, webIdentity, WEB_MARKER]
+      ]) {
+        if (!child) continue;
+        try {
+          await stopManagedProcess(identity ?? await captureProcessIdentity(child.pid, marker));
+        } catch (cleanupError) {
+          if (await groupExists(child.pid)) cleanupErrors.push(cleanupError);
+        }
       }
     }
-    if (metadataWritten) await unlink(metadataPath).catch(() => {});
+    if (cleanupErrors.length > 0) {
+      throw new AggregateError(
+        [error, ...cleanupErrors],
+        [error, ...cleanupErrors].map((caught) => caught.message).join("; ")
+      );
+    }
     throw error;
   } finally {
     await Promise.all([webLog.close(), workerLog.close()]);
