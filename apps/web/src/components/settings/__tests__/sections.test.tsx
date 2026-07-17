@@ -1,7 +1,13 @@
-/** @vitest-environment jsdom */
+/**
+ * @vitest-environment jsdom
+ *
+ * Uses within(container) to scope queries to each render, avoiding DOM pollution
+ * from previous renders in the same test file when using vmForks pool.
+ */
 import "@testing-library/jest-dom/vitest";
-import { render, screen } from "@testing-library/react";
-import { describe, expect, it } from "vitest";
+import { fireEvent, render, screen, within } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
+import { describe, expect, it, vi } from "vitest";
 
 import type { WorkspaceSettingsView } from "../../../server/services/settings-service";
 import { BasicSettingsSection } from "../sections/basic-settings-section";
@@ -38,96 +44,105 @@ function viewFixture(overrides: Partial<WorkspaceSettingsView> = {}): WorkspaceS
 
 describe("BasicSettingsSection", () => {
   it("renders all six controls with values from draft", () => {
-    render(
+    const { container } = render(
       <BasicSettingsSection
         draft={viewFixture()}
         dirtyFields={new Set()}
         onFieldChange={() => {}}
       />
     );
-    expect(screen.getAllByDisplayValue("zh-CN")[0]).toBeInTheDocument();
-    expect(screen.getAllByDisplayValue("CNY")[0]).toBeInTheDocument();
-    expect(screen.getAllByDisplayValue("mock")[0]).toBeInTheDocument();
-    expect(screen.getAllByDisplayValue("4")[0]).toBeInTheDocument();
-    expect(screen.getAllByDisplayValue("50")[0]).toBeInTheDocument();
-    expect(screen.getAllByDisplayValue("/tmp/assets")[0]).toBeInTheDocument();
+    const ctx = within(container);
+    expect(ctx.getAllByDisplayValue("zh-CN")[0]).toBeInTheDocument();
+    expect(ctx.getAllByDisplayValue("CNY")[0]).toBeInTheDocument();
+    expect(ctx.getAllByDisplayValue("mock")[0]).toBeInTheDocument();
+    expect(ctx.getAllByDisplayValue("4")[0]).toBeInTheDocument();
+    expect(ctx.getAllByDisplayValue("50")[0]).toBeInTheDocument();
+    expect(ctx.getAllByDisplayValue("/tmp/assets")[0]).toBeInTheDocument();
   });
 
-  it("calls onFieldChange with dotted key when defaultLocale changes", () => {
-    render(
+  it("calls onFieldChange with dotted key when defaultLocale changes", async () => {
+    const user = userEvent.setup();
+    const onFieldChange = vi.fn();
+    const { container } = render(
       <BasicSettingsSection
         draft={viewFixture()}
         dirtyFields={new Set()}
-        onFieldChange={() => {}}
+        onFieldChange={onFieldChange}
       />
     );
-    // BasicSettingsSection has 3 selects in grid order: locale(0), currency(1), mode(2)
-    const selects = screen.getAllByRole("combobox");
-    expect(selects[0]).toBeInTheDocument();
-    expect(selects[0]).toHaveValue("zh-CN");
+    // Use within to scope query to current render's container
+    const ctx = within(container);
+    const selects = ctx.getAllByRole("combobox");
+    await user.selectOptions(selects[0], "th-TH");
+    expect(onFieldChange).toHaveBeenCalledWith("defaultLocale", "th-TH");
   });
 });
 
 describe("PricingFormulaSection", () => {
   it("renders all seven pricing fields", () => {
-    render(
+    const { container } = render(
       <PricingFormulaSection
         draft={viewFixture()}
         dirtyFields={new Set()}
         onFieldChange={() => {}}
       />
     );
-    expect(screen.getAllByDisplayValue("8.50")[0]).toBeInTheDocument();
-    expect(screen.getAllByDisplayValue("35.00")[0]).toBeInTheDocument();
-    expect(screen.getAllByDisplayValue("10.00")[0]).toBeInTheDocument();
-    expect(screen.getAllByDisplayValue("0.050")[0]).toBeInTheDocument();
-    expect(screen.getAllByDisplayValue("0.006")[0]).toBeInTheDocument();
-    expect(screen.getAllByDisplayValue("0.20")[0]).toBeInTheDocument();
-    expect(screen.getAllByDisplayValue("9")[0]).toBeInTheDocument();
+    const ctx = within(container);
+    expect(ctx.getAllByDisplayValue("8.50")[0]).toBeInTheDocument();
+    expect(ctx.getAllByDisplayValue("35.00")[0]).toBeInTheDocument();
+    expect(ctx.getAllByDisplayValue("10.00")[0]).toBeInTheDocument();
+    expect(ctx.getAllByDisplayValue("0.050")[0]).toBeInTheDocument();
+    expect(ctx.getAllByDisplayValue("0.006")[0]).toBeInTheDocument();
+    expect(ctx.getAllByDisplayValue("0.20")[0]).toBeInTheDocument();
+    expect(ctx.getAllByDisplayValue("9")[0]).toBeInTheDocument();
   });
 
   it("calls onFieldChange with nested key when ending changes", () => {
-    render(
+    const onFieldChange = vi.fn();
+    const { container } = render(
       <PricingFormulaSection
         draft={viewFixture()}
         dirtyFields={new Set()}
-        onFieldChange={() => {}}
+        onFieldChange={onFieldChange}
       />
     );
-    // Verify the ending field exists - it has min=0 (unique among pricing spinbuttons)
-    const spinbuttons = screen.getAllByRole("spinbutton");
-    const endingInput = spinbuttons.find(el => el.getAttribute("min") === "0");
-    expect(endingInput).toBeInTheDocument();
-    expect(endingInput).toHaveValue(9);
+    // The ending field is the spinbutton with min=0 (unique among pricing spinbuttons)
+    const ctx = within(container);
+    const spinbuttons = ctx.getAllByRole("spinbutton");
+    const endingInput = spinbuttons.find(el => el.getAttribute("min") === "0")!;
+    fireEvent.change(endingInput, { target: { value: "5" } });
+    expect(onFieldChange).toHaveBeenCalledWith("pricingDefaults.ending", "5");
   });
 });
 
 describe("ProviderOptionsSection", () => {
   it("renders three provider fields", () => {
-    render(
+    const { container } = render(
       <ProviderOptionsSection
         draft={viewFixture()}
         dirtyFields={new Set()}
         onFieldChange={() => {}}
       />
     );
-    expect(screen.getByDisplayValue("miaoshou")).toBeInTheDocument();
-    expect(screen.getByDisplayValue("v3")).toBeInTheDocument();
-    expect(screen.getByDisplayValue("wf-1")).toBeInTheDocument();
+    const ctx = within(container);
+    expect(ctx.getByDisplayValue("miaoshou")).toBeInTheDocument();
+    expect(ctx.getByDisplayValue("v3")).toBeInTheDocument();
+    expect(ctx.getByDisplayValue("wf-1")).toBeInTheDocument();
   });
 });
 
 describe("RetryPolicySection", () => {
   it("renders maxAttempts and initialDelaySeconds", () => {
-    render(
+    const { container } = render(
       <RetryPolicySection
         draft={viewFixture()}
         dirtyFields={new Set()}
         onFieldChange={() => {}}
       />
     );
-    expect(screen.getByDisplayValue("5")).toBeInTheDocument();
-    expect(screen.getByDisplayValue("30")).toBeInTheDocument();
+    const ctx = within(container);
+    expect(ctx.getByDisplayValue("5")).toBeInTheDocument();
+    expect(ctx.getByDisplayValue("30")).toBeInTheDocument();
   });
 });
 
