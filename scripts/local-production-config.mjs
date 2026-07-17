@@ -30,6 +30,10 @@ export async function initializeLocalProduction({
   credentialFile,
   outputFile
 }) {
+  if (resolve(outputFile) !== resolve(repoRoot, ".env")) {
+    throw new Error("Output file must be the repository .env");
+  }
+
   const credentials = parseMiaoshouCredentials(
     await readFile(credentialFile, "utf8")
   );

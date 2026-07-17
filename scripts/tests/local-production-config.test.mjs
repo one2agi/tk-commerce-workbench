@@ -31,8 +31,12 @@ test("rejects credential values that are unsafe to render in an env file", () =>
   }
 });
 
-test("creates an ignored mock-only env without exposing secret values", async () => {
-  const repoRoot = await mkdtemp(join(tmpdir(), "tk-local-production-"));
+test("creates a private mock-only env and runtime directories", async () => {
+  const permissionCapableTempRoot =
+    process.platform === "linux" ? "/tmp" : tmpdir();
+  const repoRoot = await mkdtemp(
+    join(permissionCapableTempRoot, "tk-local-production-")
+  );
   const credentialFile = join(repoRoot, "credentials.txt");
   await writeFile(
     credentialFile,
@@ -48,7 +52,27 @@ test("creates an ignored mock-only env without exposing secret values", async ()
   assert.match(env, /^ALLOW_LAN=false$/m);
   assert.match(env, /^MIAOSHOU_APP_KEY=demo-id$/m);
   assert.match(env, /^EXTENSION_TOKEN=[A-Za-z0-9_-]{43}$/m);
-  assert.equal((await stat(join(repoRoot, "data/assets"))).isDirectory(), true);
+  const assetDirectory = await stat(join(repoRoot, "data/assets"));
+  const runtimeDirectory = await stat(join(repoRoot, "data/runtime"));
+  assert.equal(assetDirectory.isDirectory(), true);
+  assert.equal(runtimeDirectory.isDirectory(), true);
+
+  if (process.platform !== "win32") {
+    assert.equal(assetDirectory.mode & 0o777, 0o700);
+    assert.equal(runtimeDirectory.mode & 0o777, 0o700);
+    assert.equal((await stat(join(repoRoot, ".env"))).mode & 0o777, 0o600);
+  }
+});
+
+test("rejects a non-repository env path before reading credentials", async () => {
+  const repoRoot = await mkdtemp(join(tmpdir(), "tk-local-production-path-"));
+  const credentialFile = join(repoRoot, "missing-credentials.txt");
+  const outputFile = join(repoRoot, ".env.local");
+
+  await assert.rejects(
+    () => initializeLocalProduction({ repoRoot, credentialFile, outputFile }),
+    /output.*repository.*\.env/i
+  );
 });
 
 test("refuses to overwrite an existing env", async () => {
