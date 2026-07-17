@@ -13,6 +13,7 @@ import test from "node:test";
 import { createRuntimeHealthHandler } from "../../apps/web/src/app/api/runtime-health/route.js";
 
 import {
+  assertLogsAreRedacted,
   buildChildEnvironment,
   buildWorkerCommand,
   buildWorkerProbeClientConfig,
@@ -21,17 +22,42 @@ import {
   cleanupProvisionalProcess,
   cleanupSpawnFailure,
   acquireStartLock,
+  envPathFor,
   groupExists,
   hasNewWorkerBackend,
   processIsManaged,
   readEnvFile,
+  resolveStorageDir,
+  runtimeDirFor,
   secretNeedles,
   startLocalProduction,
   statusLocalProduction,
   stopLocalProduction,
   stopManagedProcess,
+  WEB_MARKER,
+  WORKER_MARKER,
   writeProcessMetadata
 } from "../local-production-runtime.mjs";
+
+// Redirect storage to a per-test tmpdir so tests never touch the real
+// ~/.local/share/tk-commerce-workbench path. The override is restored in
+// afterEach via the snapshot in the test runner.
+const ORIGINAL_STORAGE_DIR = process.env.TK_WORKBENCH_STORAGE_DIR;
+
+async function withTestStorageDir(callback) {
+  const storageDir = await mkdtemp(join(tmpdir(), "tk-runtime-storage-"));
+  process.env.TK_WORKBENCH_STORAGE_DIR = storageDir;
+  try {
+    await mkdir(runtimeDirFor(), { recursive: true });
+    await callback(storageDir);
+  } finally {
+    if (ORIGINAL_STORAGE_DIR === undefined) {
+      delete process.env.TK_WORKBENCH_STORAGE_DIR;
+    } else {
+      process.env.TK_WORKBENCH_STORAGE_DIR = ORIGINAL_STORAGE_DIR;
+    }
+  }
+}
 
 async function waitForManagedProcess(pid, marker) {
   const deadline = Date.now() + 2_000;
@@ -325,215 +351,216 @@ test("provisional cleanup removes same-PGID children after the leader exits befo
 });
 
 test("failed provisional cleanup preserves validated recovery metadata", async () => {
-  const repoRoot = await mkdtemp(join(tmpdir(), "tk-runtime-recovery-"));
-  const metadataPath = join(repoRoot, "data/runtime/processes.json");
-  await mkdir(join(repoRoot, "data/runtime"), { recursive: true });
-  const record = {
-    pid: 4242,
-    pgid: 4242,
-    marker: "provisional-marker",
-    launchId: "recovery-launch"
-  };
+  await withTestStorageDir(async () => {
+    const metadataPath = join(runtimeDirFor(), "processes.json");
+    const record = {
+      pid: 4242,
+      pgid: 4242,
+      marker: "provisional-marker",
+      launchId: "recovery-launch"
+    };
 
-  await assert.rejects(
-    () => cleanupSpawnFailure({
-      records: [record],
-      metadataPath,
-      originalError: new Error("identity capture failed"),
-      stopRecord: async () => {
-        throw new Error("provisional group survived SIGKILL");
-      }
-    }),
-    /identity capture failed.*survived SIGKILL/s
-  );
-  assert.deepEqual(JSON.parse(await readFile(metadataPath, "utf8")), {
-    version: 1,
-    state: "recovery",
-    launchId: "recovery-launch",
-    records: [record]
+    await assert.rejects(
+      () => cleanupSpawnFailure({
+        records: [record],
+        metadataPath,
+        originalError: new Error("identity capture failed"),
+        stopRecord: async () => {
+          throw new Error("provisional group survived SIGKILL");
+        }
+      }),
+      /identity capture failed.*survived SIGKILL/s
+    );
+    assert.deepEqual(JSON.parse(await readFile(metadataPath, "utf8")), {
+      version: 1,
+      state: "recovery",
+      launchId: "recovery-launch",
+      records: [record]
+    });
+
+    await assert.rejects(
+      () => stopLocalProduction({ waitMs: 20 }),
+      /unverified provisional PGID.*manual cleanup required/i
+    );
+    assert.equal(JSON.parse(await readFile(metadataPath, "utf8")).state, "recovery");
   });
-
-  await assert.rejects(
-    () => stopLocalProduction({ repoRoot, waitMs: 20 }),
-    /unverified provisional PGID.*manual cleanup required/i
-  );
-  assert.equal(JSON.parse(await readFile(metadataPath, "utf8")).state, "recovery");
 });
 
 test("start rejects a missing env before spawning anything", async () => {
-  const repoRoot = await mkdtemp(join(tmpdir(), "tk-runtime-no-env-"));
-  await assert.rejects(() => startLocalProduction({ repoRoot }), /\.env.*required/i);
+  await withTestStorageDir(async () => {
+    await assert.rejects(
+      () => startLocalProduction({ repoRoot: "/nonexistent" }),
+      /\.env.*required/i
+    );
+  });
 });
 
 test("status rejects stale process metadata", async () => {
-  const repoRoot = await mkdtemp(join(tmpdir(), "tk-runtime-status-"));
-  const runtimeRoot = join(repoRoot, "data/runtime");
-  await mkdir(runtimeRoot, { recursive: true });
-  await writeFile(
-    join(repoRoot, ".env"),
-    "EXTERNAL_ADAPTER_MODE=mock\nALLOW_LAN=false\nDATABASE_URL=postgresql://postgres:password@127.0.0.1/db\n"
-  );
-  await writeFile(
-    join(runtimeRoot, "processes.json"),
-    JSON.stringify({
-      version: 1,
-      launchId: "launch-123",
-      web: {
-        pid: 2 ** 31 - 1,
-        pgid: 2 ** 31 - 1,
-        startTimeTicks: "1001",
-        marker: "stale-web",
-        launchId: "launch-123"
-      },
-      worker: {
-        pid: 2 ** 31 - 2,
-        pgid: 2 ** 31 - 2,
-        startTimeTicks: "2002",
-        marker: "stale-worker",
+  await withTestStorageDir(async () => {
+    const runtimeRoot = runtimeDirFor();
+    await writeFile(
+      envPathFor(),
+      "EXTERNAL_ADAPTER_MODE=mock\nALLOW_LAN=false\nDATABASE_URL=postgresql://fixture-user:fixture-password@127.0.0.1/db\n"
+    );
+    await writeFile(
+      join(runtimeRoot, "processes.json"),
+      JSON.stringify({
+        version: 1,
         launchId: "launch-123",
-        baselineBackendPids: []
-      }
-    })
-  );
+        web: {
+          pid: 2 ** 31 - 1,
+          pgid: 2 ** 31 - 1,
+          startTimeTicks: "1001",
+          marker: "stale-web",
+          launchId: "launch-123"
+        },
+        worker: {
+          pid: 2 ** 31 - 2,
+          pgid: 2 ** 31 - 2,
+          startTimeTicks: "2002",
+          marker: "stale-worker",
+          launchId: "launch-123",
+          baselineBackendPids: []
+        }
+      })
+    );
 
-  await assert.rejects(
-    () => statusLocalProduction({ repoRoot, waitMs: 50 }),
-    /stale|not managed/i
-  );
+    await assert.rejects(
+      () => statusLocalProduction({ waitMs: 50 }),
+      /stale|not managed/i
+    );
+  });
 });
 
 test("status rejects a reused PID even when its command marker matches", async () => {
-  const repoRoot = await mkdtemp(join(tmpdir(), "tk-runtime-reused-pid-"));
-  const runtimeRoot = join(repoRoot, "data/runtime");
   const marker = `tk-runtime-reused-${process.pid}-${Date.now()}`;
   const actual = await spawnManagedDummyIdentity(marker);
   const stale = {
     ...actual,
     startTimeTicks: String(BigInt(actual.startTimeTicks) + 1n)
   };
-  await mkdir(runtimeRoot, { recursive: true });
-  await writeFile(
-    join(repoRoot, ".env"),
-    "EXTERNAL_ADAPTER_MODE=mock\nALLOW_LAN=false\nDATABASE_URL=postgresql://postgres:password@127.0.0.1/db\n"
-  );
-  await writeFile(
-    join(runtimeRoot, "processes.json"),
-    JSON.stringify({
-      version: 1,
-      launchId: actual.launchId,
-      web: stale,
-      worker: { ...stale, baselineBackendPids: [] }
-    })
-  );
-
   try {
-    await assert.rejects(
-      () => statusLocalProduction({ repoRoot, waitMs: 20 }),
-      /stale|not managed/i
-    );
+    await withTestStorageDir(async () => {
+      const runtimeRoot = runtimeDirFor();
+      await writeFile(
+        envPathFor(),
+        "EXTERNAL_ADAPTER_MODE=mock\nALLOW_LAN=false\nDATABASE_URL=postgresql://fixture-user:fixture-password@127.0.0.1/db\n"
+      );
+      await writeFile(
+        join(runtimeRoot, "processes.json"),
+        JSON.stringify({
+          version: 1,
+          launchId: actual.launchId,
+          web: stale,
+          worker: { ...stale, baselineBackendPids: [] }
+        })
+      );
+
+      await assert.rejects(
+        () => statusLocalProduction({ waitMs: 20 }),
+        /stale|not managed/i
+      );
+    });
   } finally {
     await forceStopGroup(actual.pgid);
   }
 });
 
 test("metadata rejects a process record whose PID differs from PGID", async () => {
-  const repoRoot = await mkdtemp(join(tmpdir(), "tk-runtime-pid-pgid-"));
-  const runtimeRoot = join(repoRoot, "data/runtime");
   const identity = await captureProcessIdentity(process.pid, "node");
-  await mkdir(runtimeRoot, { recursive: true });
-  await writeFile(
-    join(repoRoot, ".env"),
-    "EXTERNAL_ADAPTER_MODE=mock\nALLOW_LAN=false\nDATABASE_URL=postgresql://postgres:password@127.0.0.1/db\n"
-  );
-  await writeFile(
-    join(runtimeRoot, "processes.json"),
-    JSON.stringify({
-      version: 1,
-      launchId: "launch-123",
-      web: { ...identity, pgid: identity.pgid + 1, launchId: "launch-123" },
-      worker: {
-        ...identity,
+  await withTestStorageDir(async () => {
+    const runtimeRoot = runtimeDirFor();
+    await writeFile(
+      envPathFor(),
+      "EXTERNAL_ADAPTER_MODE=mock\nALLOW_LAN=false\nDATABASE_URL=postgresql://fixture-user:fixture-password@127.0.0.1/db\n"
+    );
+    await writeFile(
+      join(runtimeRoot, "processes.json"),
+      JSON.stringify({
+        version: 1,
         launchId: "launch-123",
-        baselineBackendPids: []
-      }
-    })
-  );
+        web: { ...identity, pgid: identity.pgid + 1, launchId: "launch-123" },
+        worker: {
+          ...identity,
+          launchId: "launch-123",
+          baselineBackendPids: []
+        }
+      })
+    );
 
-  await assert.rejects(
-    () => statusLocalProduction({ repoRoot, waitMs: 20 }),
-    /PID.*PGID|pid.*pgid/i
-  );
+    await assert.rejects(
+      () => statusLocalProduction({ waitMs: 20 }),
+      /PID.*PGID|pid.*pgid/i
+    );
+  });
 });
 
 test("status redacts a leak before reporting stale identity and retains metadata when stop fails", async () => {
-  const repoRoot = await mkdtemp(join(tmpdir(), "tk-runtime-stale-leak-"));
-  const runtimeRoot = join(repoRoot, "data/runtime");
   const marker = `tk-runtime-stale-leak-${process.pid}-${Date.now()}`;
   const actual = await spawnManagedDummyIdentity(marker);
   const stale = {
     ...actual,
     startTimeTicks: String(BigInt(actual.startTimeTicks) + 1n)
   };
-  const metadataPath = join(runtimeRoot, "processes.json");
-  await mkdir(runtimeRoot, { recursive: true });
-  await writeFile(
-    join(repoRoot, ".env"),
-    "EXTERNAL_ADAPTER_MODE=mock\nALLOW_LAN=false\nDATABASE_URL=postgresql://postgres:password@127.0.0.1/db\nAWS_SECRET_ACCESS_KEY=leaked-value\n"
-  );
-  await writeFile(
-    metadataPath,
-    JSON.stringify({
-      version: 1,
-      launchId: actual.launchId,
-      web: stale,
-      worker: { ...stale, baselineBackendPids: [] }
-    })
-  );
-  await writeFile(join(runtimeRoot, "web.log"), "credential=leaked-value\n");
-  await writeFile(join(runtimeRoot, "worker.log"), "healthy\n");
-
   try {
-    await assert.rejects(
-      () => statusLocalProduction({ repoRoot, waitMs: 20 }),
-      /sensitive value detected.*refusing unmanaged PID/s
-    );
-    assert.doesNotMatch(
-      await readFile(join(runtimeRoot, "web.log"), "utf8"),
-      /leaked-value/
-    );
-    assert.equal(JSON.parse(await readFile(metadataPath, "utf8")).version, 1);
+    await withTestStorageDir(async () => {
+      const runtimeRoot = runtimeDirFor();
+      const metadataPath = join(runtimeRoot, "processes.json");
+      await writeFile(
+        envPathFor(),
+        "EXTERNAL_ADAPTER_MODE=mock\nALLOW_LAN=false\nDATABASE_URL=postgresql://fixture-user:fixture-password@127.0.0.1/db\nAWS_SECRET_ACCESS_KEY=leaked-value\n"
+      );
+      await writeFile(
+        metadataPath,
+        JSON.stringify({
+          version: 1,
+          launchId: actual.launchId,
+          web: stale,
+          worker: { ...stale, baselineBackendPids: [] }
+        })
+      );
+      await writeFile(join(runtimeRoot, "web.log"), "credential=leaked-value\n");
+      await writeFile(join(runtimeRoot, "worker.log"), "healthy\n");
+
+      await assert.rejects(
+        () => statusLocalProduction({ waitMs: 20 }),
+        /sensitive value detected.*refusing unmanaged PID/s
+      );
+      await assert.rejects(() => readFile(join(runtimeRoot, "web.log")), /ENOENT/);
+      assert.equal(JSON.parse(await readFile(metadataPath, "utf8")).version, 1);
+    });
   } finally {
     await forceStopGroup(actual.pgid);
   }
 });
 
 test("stop preserves metadata when either process is unmanaged", async () => {
-  const repoRoot = await mkdtemp(join(tmpdir(), "tk-runtime-refuse-"));
-  const runtimeRoot = join(repoRoot, "data/runtime");
-  const metadataPath = join(runtimeRoot, "processes.json");
-  await mkdir(runtimeRoot, { recursive: true });
   const marker = `tk-runtime-unmanaged-${process.pid}-${Date.now()}`;
   const actual = await spawnManagedDummyIdentity(marker);
-  await writeFile(
-    metadataPath,
-    JSON.stringify({
-      version: 1,
-      launchId: actual.launchId,
-      web: { ...actual, marker: "wrong-web-marker" },
-      worker: {
-        ...actual,
-        marker: "wrong-worker-marker",
-        baselineBackendPids: []
-      }
-    })
-  );
-
   try {
-    await assert.rejects(
-      () => stopLocalProduction({ repoRoot, waitMs: 50 }),
-      /refusing unmanaged PID/
-    );
-    assert.equal(JSON.parse(await readFile(metadataPath, "utf8")).version, 1);
+    await withTestStorageDir(async () => {
+      const runtimeRoot = runtimeDirFor();
+      const metadataPath = join(runtimeRoot, "processes.json");
+      await writeFile(
+        metadataPath,
+        JSON.stringify({
+          version: 1,
+          launchId: actual.launchId,
+          web: { ...actual, marker: "wrong-web-marker" },
+          worker: {
+            ...actual,
+            marker: "wrong-worker-marker",
+            baselineBackendPids: []
+          }
+        })
+      );
+
+      await assert.rejects(
+        () => stopLocalProduction({ waitMs: 50 }),
+        /refusing unmanaged PID/
+      );
+      assert.equal(JSON.parse(await readFile(metadataPath, "utf8")).version, 1);
+    });
   } finally {
     await forceStopGroup(actual.pgid);
   }
@@ -559,8 +586,6 @@ test("failed start reports stop errors and preserves metadata", async () => {
 });
 
 test("status stops both process groups and redacts logs on a secret match", async () => {
-  const repoRoot = await mkdtemp(join(tmpdir(), "tk-runtime-leak-"));
-  const runtimeRoot = join(repoRoot, "data/runtime");
   const webMarker = `tk-runtime-leak-web-${process.pid}-${Date.now()}`;
   const workerMarker = `tk-runtime-leak-worker-${process.pid}-${Date.now()}`;
   const launchId = `launch-${process.pid}-${Date.now()}`;
@@ -570,40 +595,43 @@ test("status stops both process groups and redacts logs on a secret match", asyn
   const workerPid = worker.pid;
   const webIdentity = { ...(await captureProcessIdentity(webPid, webMarker)), launchId };
   const workerIdentity = { ...(await captureProcessIdentity(workerPid, workerMarker)), launchId };
-  await mkdir(runtimeRoot, { recursive: true });
-  await writeFile(
-    join(repoRoot, ".env"),
-    [
-      "EXTERNAL_ADAPTER_MODE=mock",
-      "ALLOW_LAN=false",
-      "DATABASE_URL=postgresql://postgres:runtime-password@127.0.0.1:5432/tk_workbench",
-      "EXTENSION_TOKEN=runtime-secret-token"
-    ].join("\n")
-  );
-  await writeFile(
-    join(runtimeRoot, "processes.json"),
-    JSON.stringify({
-      version: 1,
-      launchId,
-      web: webIdentity,
-      worker: { ...workerIdentity, baselineBackendPids: [] }
-    })
-  );
-  await writeFile(join(runtimeRoot, "web.log"), "runtime-secret-token\n");
-  await writeFile(join(runtimeRoot, "worker.log"), "healthy\n");
-  const readyPath = join(runtimeRoot, `worker-ready-${launchId}.json`);
-  await writeFile(readyPath, JSON.stringify({ launchId, pid: workerPid }));
-
   try {
-    await assert.rejects(
-      () => statusLocalProduction({ repoRoot, waitMs: 50 }),
-      /sensitive value detected/
-    );
-    assert.equal(await processIsManaged(webPid, webMarker), false);
-    assert.equal(await processIsManaged(workerPid, workerMarker), false);
-    await assert.rejects(() => readFile(join(runtimeRoot, "processes.json")), /ENOENT/);
-    await assert.rejects(() => readFile(readyPath), /ENOENT/);
-    assert.doesNotMatch(await readFile(join(runtimeRoot, "web.log"), "utf8"), /runtime-secret-token/);
+    await withTestStorageDir(async () => {
+      const runtimeRoot = runtimeDirFor();
+      await writeFile(
+        envPathFor(),
+        [
+          "EXTERNAL_ADAPTER_MODE=mock",
+          "ALLOW_LAN=false",
+          "DATABASE_URL=postgresql://fixture-user:fixture-password@127.0.0.1:5432/tk_workbench_test",
+          "EXTENSION_TOKEN=test-fixture-extension-token-value"
+        ].join("\n")
+      );
+      await writeFile(
+        join(runtimeRoot, "processes.json"),
+        JSON.stringify({
+          version: 1,
+          launchId,
+          web: webIdentity,
+          worker: { ...workerIdentity, baselineBackendPids: [] }
+        })
+      );
+      await writeFile(join(runtimeRoot, "web.log"), "test-fixture-extension-token-value\n");
+      await writeFile(join(runtimeRoot, "worker.log"), "healthy\n");
+      const readyPath = join(runtimeRoot, `worker-ready-${launchId}.json`);
+      await writeFile(readyPath, JSON.stringify({ launchId, pid: workerPid }));
+
+      await assert.rejects(
+        () => statusLocalProduction({ waitMs: 50 }),
+        /sensitive value detected/
+      );
+      assert.equal(await processIsManaged(webPid, webMarker), false);
+      assert.equal(await processIsManaged(workerPid, workerMarker), false);
+      await assert.rejects(() => readFile(join(runtimeRoot, "processes.json")), /ENOENT/);
+      await assert.rejects(() => readFile(readyPath), /ENOENT/);
+      await assert.rejects(() => readFile(join(runtimeRoot, "web.log")), /ENOENT/);
+      await assert.rejects(() => readFile(join(runtimeRoot, "worker.log")), /ENOENT/);
+    });
   } finally {
     await forceStopGroup(webPid);
     await forceStopGroup(workerPid);
@@ -643,4 +671,235 @@ test("start lock is exclusive and can be safely released", async () => {
   await first.release();
   const second = await acquireStartLock(runtimeRoot, "launch-two");
   await second.release();
+});
+
+// --- Part C: needle tightening ---
+
+test("secretNeedles emits the DATABASE_URL userinfo segment, not the bare password", () => {
+  const fixtureUrl = "postgresql://fixture-user:fixture-password@127.0.0.1:5432/tk_workbench_test";
+  const needles = secretNeedles({ DATABASE_URL: fixtureUrl });
+  assert.ok(
+    needles.includes("postgresql://fixture-user:fixture-password@"),
+    `expected userinfo prefix in needles, got: ${JSON.stringify(needles)}`
+  );
+  assert.equal(
+    needles.includes("fixture-password"),
+    false,
+    "bare password must not be a needle — it false-positives on incidental mentions"
+  );
+  assert.equal(
+    needles.includes("fixture-user"),
+    false,
+    "bare username must not be a needle — only the userinfo segment is secret"
+  );
+});
+
+test("bare credential substrings in a log do not trigger the sensitive-log fuse", async () => {
+  await withTestStorageDir(async () => {
+    const runtimeRoot = runtimeDirFor();
+    await writeFile(
+      envPathFor(),
+      [
+        "EXTERNAL_ADAPTER_MODE=mock",
+        "ALLOW_LAN=false",
+        "DATABASE_URL=postgresql://fixture-user:fixture-password@127.0.0.1:5432/tk_workbench_test"
+      ].join("\n")
+    );
+    await writeFile(join(runtimeRoot, "web.log"), "ok\n");
+    await writeFile(
+      join(runtimeRoot, "worker.log"),
+      [
+        "worker: database pool error",
+        "pool says: connection refused",
+        "log lines mention fixture-user and fixture-password in isolation",
+        "and the word postgres in pg error text",
+        "but the full userinfo segment never appears whole"
+      ].join("\n") + "\n"
+    );
+    const env = readEnvFile(await readFile(envPathFor(), "utf8"));
+    await assert.doesNotReject(() => assertLogsAreRedacted(env));
+  });
+});
+
+test("full DATABASE_URL userinfo segment in a log DOES trigger the sensitive-log fuse", async () => {
+  await withTestStorageDir(async () => {
+    const runtimeRoot = runtimeDirFor();
+    await writeFile(
+      envPathFor(),
+      [
+        "EXTERNAL_ADAPTER_MODE=mock",
+        "ALLOW_LAN=false",
+        "DATABASE_URL=postgresql://fixture-user:fixture-password@127.0.0.1:5432/tk_workbench_test"
+      ].join("\n")
+    );
+    await writeFile(
+      join(runtimeRoot, "worker.log"),
+      "connection refused for postgresql://fixture-user:fixture-password@127.0.0.1:5432/x\n"
+    );
+    const env = readEnvFile(await readFile(envPathFor(), "utf8"));
+    await assert.rejects(
+      () => assertLogsAreRedacted(env),
+      (error) => {
+        assert.equal(error.code, "SENSITIVE_LOG");
+        assert.match(error.message, /worker\.log/);
+        return true;
+      }
+    );
+  });
+});
+
+// --- Part D: recovery flow ---
+
+test("stopLocalProduction is idempotent: returns cleanly when no metadata exists", async () => {
+  await withTestStorageDir(async () => {
+    const result = await stopLocalProduction({});
+    assert.deepEqual(result, { running: false });
+  });
+});
+
+test("status fuse deletes web.log and worker.log so subsequent status cannot re-fire", async () => {
+  const webMarker = `tk-runtime-logdel-web-${process.pid}-${Date.now()}`;
+  const workerMarker = `tk-runtime-logdel-worker-${process.pid}-${Date.now()}`;
+  const launchId = `launch-${process.pid}-${Date.now()}`;
+  const web = await spawnManagedDummy(webMarker, launchId);
+  const worker = await spawnManagedDummy(workerMarker, launchId);
+  const webIdentity = { ...(await captureProcessIdentity(web.pid, webMarker)), launchId };
+  const workerIdentity = { ...(await captureProcessIdentity(worker.pid, workerMarker)), launchId };
+  try {
+    await withTestStorageDir(async () => {
+      const runtimeRoot = runtimeDirFor();
+      await writeFile(
+        envPathFor(),
+        [
+          "EXTERNAL_ADAPTER_MODE=mock",
+          "ALLOW_LAN=false",
+          "DATABASE_URL=postgresql://fixture-user:fixture-password@127.0.0.1:5432/tk_workbench_test",
+          "EXTENSION_TOKEN=test-fixture-extension-token-value"
+        ].join("\n")
+      );
+      await writeFile(
+        join(runtimeRoot, "processes.json"),
+        JSON.stringify({
+          version: 1,
+          launchId,
+          web: webIdentity,
+          worker: { ...workerIdentity, baselineBackendPids: [] }
+        })
+      );
+      await writeFile(join(runtimeRoot, "web.log"), "test-fixture-extension-token-value\n");
+      await writeFile(join(runtimeRoot, "worker.log"), "healthy\n");
+      const readyPath = join(runtimeRoot, `worker-ready-${launchId}.json`);
+      await writeFile(readyPath, JSON.stringify({ launchId, pid: worker.pid }));
+
+      await assert.rejects(
+        () => statusLocalProduction({ waitMs: 50 }),
+        /sensitive value detected/
+      );
+      await assert.rejects(() => readFile(join(runtimeRoot, "web.log")), /ENOENT/);
+      await assert.rejects(() => readFile(join(runtimeRoot, "worker.log")), /ENOENT/);
+      await assert.rejects(() => readFile(join(runtimeRoot, "processes.json")), /ENOENT/);
+      await assert.rejects(() => readFile(readyPath), /ENOENT/);
+    });
+  } finally {
+    await forceStopGroup(web.pid);
+    await forceStopGroup(worker.pid);
+  }
+});
+
+test("status → stop → start → status completes without re-firing the fuse", async () => {
+  const webMarker = `tk-runtime-cycle-web-${process.pid}-${Date.now()}`;
+  const workerMarker = `tk-runtime-cycle-worker-${process.pid}-${Date.now()}`;
+  const launchId = `launch-cycle-${process.pid}-${Date.now()}`;
+  const web = await spawnManagedDummy(webMarker, launchId);
+  const worker = await spawnManagedDummy(workerMarker, launchId);
+  const webIdentity = { ...(await captureProcessIdentity(web.pid, webMarker)), launchId };
+  const workerIdentity = { ...(await captureProcessIdentity(worker.pid, workerMarker)), launchId };
+
+  let web2;
+  let worker2;
+  try {
+    await withTestStorageDir(async () => {
+      const runtimeRoot = runtimeDirFor();
+      await writeFile(
+        envPathFor(),
+        [
+          "EXTERNAL_ADAPTER_MODE=mock",
+          "ALLOW_LAN=false",
+          "DATABASE_URL=postgresql://fixture-user:fixture-password@127.0.0.1:5432/tk_workbench_test",
+          "EXTENSION_TOKEN=test-fixture-extension-token-value"
+        ].join("\n")
+      );
+      await writeFile(
+        join(runtimeRoot, "processes.json"),
+        JSON.stringify({
+          version: 1,
+          launchId,
+          web: webIdentity,
+          worker: { ...workerIdentity, baselineBackendPids: [] }
+        })
+      );
+      await writeFile(join(runtimeRoot, "web.log"), "test-fixture-extension-token-value\n");
+      await writeFile(join(runtimeRoot, "worker.log"), "healthy\n");
+      const readyPath = join(runtimeRoot, `worker-ready-${launchId}.json`);
+      await writeFile(readyPath, JSON.stringify({ launchId, pid: worker.pid }));
+
+      // Step 1: a `status` call detects the leak, fires the fuse, and tears down.
+      await assert.rejects(
+        () => statusLocalProduction({ waitMs: 50 }),
+        /sensitive value detected/
+      );
+
+      // Step 2: `stop` after a fuse is idempotent — it does not throw.
+      const stopResult = await stopLocalProduction({});
+      assert.deepEqual(stopResult, { running: false });
+
+      // Step 3: a fresh launch. Simulate it without invoking the real
+      // startLocalProduction (which would require a live pg dependency) by
+      // writing fresh metadata + readiness + clean logs.
+      const launchId2 = `launch-cycle2-${process.pid}-${Date.now()}`;
+      web2 = await spawnManagedDummy(WEB_MARKER, launchId2);
+      worker2 = await spawnManagedDummy(WORKER_MARKER, launchId2);
+      const webIdentity2 = { ...(await captureProcessIdentity(web2.pid, WEB_MARKER)), launchId: launchId2 };
+      const workerIdentity2 = { ...(await captureProcessIdentity(worker2.pid, WORKER_MARKER)), launchId: launchId2 };
+      await writeFile(
+        join(runtimeRoot, "processes.json"),
+        JSON.stringify({
+          version: 1,
+          launchId: launchId2,
+          web: webIdentity2,
+          worker: { ...workerIdentity2, baselineBackendPids: [] }
+        })
+      );
+      await writeFile(
+        join(runtimeRoot, `worker-ready-${launchId2}.json`),
+        JSON.stringify({ launchId: launchId2, pid: worker2.pid })
+      );
+      await writeFile(join(runtimeRoot, "web.log"), "ok-2\n");
+      await writeFile(join(runtimeRoot, "worker.log"), "ok-2\n");
+
+      // Step 4: `status` on the fresh launch must not re-fire the fuse.
+      // The dummies in this test do not actually serve HTTP or hold a pg
+      // session, so the readiness loop will time out. What matters is that
+      // the timeout error is NOT a sensitive-log fuse — i.e. the residual
+      // content from the first launch was successfully cleaned up.
+      const statusTwo = await statusLocalProduction({ waitMs: 50 }).catch(
+        (error) => ({ stage: "status-2", message: error?.message, code: error?.code, name: error?.name })
+      );
+      assert.notEqual(
+        statusTwo?.code,
+        "SENSITIVE_LOG",
+        `second status must not re-fire the sensitive-log fuse; got: ${JSON.stringify(statusTwo)}`
+      );
+      assert.doesNotMatch(
+        statusTwo?.message ?? "",
+        /sensitive value detected/,
+        `second status error must not mention sensitive value; got: ${JSON.stringify(statusTwo)}`
+      );
+    });
+  } finally {
+    await forceStopGroup(web.pid);
+    await forceStopGroup(worker.pid);
+    if (web2) await forceStopGroup(web2.pid);
+    if (worker2) await forceStopGroup(worker2.pid);
+  }
 });
