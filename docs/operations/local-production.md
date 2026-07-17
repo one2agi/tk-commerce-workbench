@@ -33,7 +33,7 @@ node scripts/local-production-config.mjs /mnt/d/project/TKcaiji/TKskill/env.txt
 - 生成随机的 `EXTENSION_TOKEN`（如 secrets 文件未提供）。
 - 强制 `EXTERNAL_ADAPTER_MODE=mock`、`ALLOW_LAN=false`，不覆盖用户原值。
 
-写入后请手工核对键名、文件权限（`.env` 必须 `0600`、数据目录必须 `0700`），确认 `.env` 与 `data/` 已在 `.gitignore`。**不要**把 secrets 文件内容 `cat` 或 `source` 到 shell。
+写入后请手工核对键名、文件权限（`.env` 必须 `0600`、数据目录必须 `0700`），确认 `.env` 与 `data/` 已在 `.gitignore`。**不要**把 secrets 文件内容 `cat` 或 `source` 到 shell；初始化完成后建议 `shred -u /mnt/d/project/TKcaiji/TKskill/env.txt`（或同等安全删除）以免明文留在磁盘上。
 
 ## 构建扩展（首次或升级后）
 
@@ -66,13 +66,31 @@ node scripts/local-production-runtime.mjs stop
 - 任何子进程日志命中“Authorization / APP Secret / 任一已注册 secret 名 / 数据库密码”时，停止两个进程组、删除 metadata、redact 日志并返回非零。
 - 失败时把未成功清理的进程记录到 `data/runtime/processes.json` 的 `state: "recovery"`，下次启动会提示手工清理（避免误杀被 Linux 复用的 PGID）。
 
-`status` 输出形如：
+`status` 在完全就绪时输出形如：
 
 ```json
-{ "running": true, "launchId": "<base64url>", "web": "ready", "worker": "ready", "db": "ready" }
+{
+  "running": true,
+  "webUrl": "http://127.0.0.1:3000/",
+  "web": {
+    "pid": 1234,
+    "pgid": 1234,
+    "startTimeTicks": "1234567",
+    "marker": "tk-workbench-local-web",
+    "launchId": "<base64url>"
+  },
+  "worker": {
+    "pid": 1235,
+    "pgid": 1235,
+    "startTimeTicks": "1234568",
+    "marker": "tk-workbench-local-worker",
+    "launchId": "<base64url>",
+    "baselineBackendPids": []
+  }
+}
 ```
 
-字段集合固定，不出现任何 secrets、URL 中的密码或扩展 token。
+未就绪时返回 `{ "running": false }`（无 metadata）或 `{ "running": false, "recovered": true }`（存在 recovery metadata，待手工清理）。字段集合固定，不出现任何 secrets、URL 中的密码或扩展 token。
 
 ## 用户可见入口
 
