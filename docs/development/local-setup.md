@@ -15,7 +15,11 @@ pnpm db:migrate
 pnpm dev
 ```
 
-Web 只监听 `127.0.0.1`。素材默认永久保存在 `ASSET_ROOT`，不要把 `data/` 加入 Git。一次性验证全新环境使用：
+Web 只监听 `127.0.0.1`。素材默认永久保存在 `ASSET_ROOT`，不要把 `data/` 加入 Git。
+
+需要把工作台作为“本地生产”跑起来（浏览器扩展 → 本机 Web/Worker，外部适配器全部 mock）时，参见 [本地生产单人单机](../operations/local-production.md)。
+
+一次性验证全新环境使用：
 
 ```bash
 bash scripts/verify-fresh-install.sh
