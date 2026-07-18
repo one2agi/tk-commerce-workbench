@@ -214,16 +214,25 @@ describe("operational pages", () => {
       retryPolicy: { maxAttempts: 3, initialDelaySeconds: 30 },
       applicationNote: "保存为工作区默认值"
     }));
+    // SettingsWorkspace renders 5 cards with these titles
+    expect(settingsHtml).toContain("基础设置");
+    expect(settingsHtml).toContain("定价公式");
+    expect(settingsHtml).toContain("Provider 默认值");
+    expect(settingsHtml).toContain("重试策略");
+    expect(settingsHtml).toContain("密钥配置状态");
+    // InfoBanner is always rendered
+    expect(settingsHtml).toContain("修改这些值只更新工作区默认值");
+    // StatusPill shows env-var name in .tk-pill__env
     expect(settingsHtml).toContain("MIAOSHOU_APP_KEY / MIAOSHOU_APP_SECRET");
-    expect(settingsHtml).toContain("已配置");
-    expect(settingsHtml).toContain("未配置");
+    // Configured/unconfigured state via CSS class (BEM class, not text "已配置"/"未配置")
+    expect(settingsHtml).toContain("tk-pill is-ok");
+    expect(settingsHtml).toContain("tk-pill is-warn");
+    // No password inputs (security boundary preserved)
     expect(settingsHtml).not.toContain("type=\"password\"");
-    expect(settingsHtml).toContain("定价公式默认值");
-    expect(settingsHtml).toContain("name=\"platformFeeRate\"");
-    expect(settingsHtml).toContain("name=\"paymentFeeRate\"");
-    expect(settingsHtml).toContain("name=\"targetProfitRate\"");
-    expect(settingsHtml).toContain("name=\"ending\"");
-    expect(settingsHtml).toContain("保存非敏感设置");
+    // No SaveBar at idle (rendered only when dirty)
+    expect(settingsHtml).not.toContain("tk-save-bar");
+    // Pricing card hint
+    expect(settingsHtml).toContain("影响每个商品的售价建议");
   });
 });
 
