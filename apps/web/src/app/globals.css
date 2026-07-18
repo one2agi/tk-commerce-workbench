@@ -263,6 +263,68 @@ button:disabled {
   font-weight: 650;
 }
 
+.tk-product-list-table {
+  /* Mirrors workbench table chrome so the read-only list blends in. */
+}
+
+.tk-product-list-table table {
+  /* Override the fixed table-layout used by the workbench for list view
+     so wider columns get the breathing room they need. */
+  table-layout: auto;
+  min-width: 720px;
+}
+
+.tk-product-list-table th:nth-child(1),
+.tk-product-list-table td:nth-child(1) {
+  width: 28%;
+}
+
+.tk-product-list-table th:nth-child(3),
+.tk-product-list-table td:nth-child(3),
+.tk-product-list-table th:nth-child(4),
+.tk-product-list-table td:nth-child(4),
+.tk-product-list-table th:nth-child(5),
+.tk-product-list-table td:nth-child(5),
+.tk-product-list-table th:nth-child(6),
+.tk-product-list-table td:nth-child(6) {
+  width: auto;
+}
+
+.tk-product-list-table__empty-row td {
+  border-bottom: 0;
+}
+
+.tk-product-list-table__empty {
+  padding: 56px 24px !important;
+  text-align: center;
+  color: #64748b;
+}
+
+.tk-product-list-table__empty-title {
+  display: block;
+  font-size: 15px;
+  font-weight: 650;
+  color: #475569;
+  letter-spacing: 0.01em;
+}
+
+.tk-product-list-table__empty-hint {
+  display: block;
+  margin-top: 10px;
+  font-size: 13px;
+  color: #94a3b8;
+}
+
+.tk-product-list-table__empty-hint a {
+  color: #2563eb;
+  font-weight: 600;
+  text-decoration: none;
+}
+
+.tk-product-list-table__empty-hint a:hover {
+  text-decoration: underline;
+}
+
 .tk-product-drawer {
   flex: 0 0 clamp(320px, 29vw, 380px);
   min-width: 320px;

@@ -71,10 +71,26 @@ describe("product list page", () => {
     expect(html).toContain("—");
   });
 
-  it("renders an empty-state when ProductService returns no items", () => {
+  it("renders an empty state that keeps the table skeleton (no log-style alert)", () => {
     const html = renderToStaticMarkup(renderProductsPage({ items: [] }));
+    const normalized = html.toLowerCase();
+    // Page heading still present
     expect(html).toContain("商品列表");
     expect(html).toContain("0 个商品");
-    expect(html).toContain("还没有商品");
+
+    // Thead is ALWAYS rendered — table skeleton should remain even when empty.
+    expect(html).toContain("<th");
+    expect(html).toContain("源标题");
+    expect(html).toContain("目标标题");
+
+    // Empty row uses colspan and gentle copy, not a log/alert sentence.
+    expect(html).toContain("tk-product-list-table__empty");
+    expect(normalized).toContain('colspan="7"');
+    expect(html).toContain("暂无商品");
+    expect(html).toContain("商品工作台");
+    expect(html).toContain('href="/"');
+
+    // It does NOT look like the old log-style alert.
+    expect(html).not.toContain("还没有商品");
   });
 });
