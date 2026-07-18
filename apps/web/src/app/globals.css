@@ -325,6 +325,170 @@ button:disabled {
   text-decoration: underline;
 }
 
+/* KPI strip — top-of-page summary tiles */
+.tk-kpi-strip {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 12px;
+  margin: 0 0 16px;
+}
+
+@media (max-width: 760px) {
+  .tk-kpi-strip {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+.tk-kpi-tile {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  grid-template-rows: auto auto;
+  align-items: baseline;
+  gap: 4px 14px;
+  padding: 14px 16px;
+  border: 1px solid #d9e0e9;
+  border-radius: 12px;
+  background: #fff;
+  box-shadow: 0 4px 14px rgb(15 23 42 / 4%);
+}
+
+.tk-kpi-tile__count {
+  grid-row: 1 / 3;
+  font-size: 28px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  color: #1f2937;
+  letter-spacing: -0.01em;
+}
+
+.tk-kpi-tile__label {
+  font-size: 13px;
+  font-weight: 650;
+  color: #334155;
+}
+
+.tk-kpi-tile__hint {
+  font-size: 12px;
+  color: #94a3b8;
+}
+
+/* Status tone utilities — applied to KPI tiles and pills */
+.tk-kpi-tile.is-tone-info    { border-left: 3px solid #2563eb; }
+.tk-kpi-tile.is-tone-success { border-left: 3px solid #16a34a; }
+.tk-kpi-tile.is-tone-amber   { border-left: 3px solid #d97706; }
+.tk-kpi-tile.is-tone-warning { border-left: 3px solid #ea580c; }
+.tk-kpi-tile.is-tone-danger  { border-left: 3px solid #dc2626; }
+.tk-kpi-tile.is-tone-muted   { border-left: 3px solid #94a3b8; }
+
+/* Pill (status chip inside the table cell) */
+.tk-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 9px;
+  border-radius: 999px;
+  font-size: 12px;
+  font-weight: 650;
+  letter-spacing: 0.01em;
+  white-space: nowrap;
+  background: #f1f5f9;
+  color: #475569;
+  border: 1px solid #e2e8f0;
+}
+
+.tk-pill--status.is-tone-info    { background: #eff6ff; color: #1d4ed8; border-color: #dbeafe; }
+.tk-pill--status.is-tone-success { background: #ecfdf5; color: #15803d; border-color: #d1fae5; }
+.tk-pill--status.is-tone-amber   { background: #fffbeb; color: #b45309; border-color: #fde68a; }
+.tk-pill--status.is-tone-warning { background: #fff7ed; color: #c2410c; border-color: #fed7aa; }
+.tk-pill--status.is-tone-danger  { background: #fef2f2; color: #b91c1c; border-color: #fecaca; }
+.tk-pill--status.is-tone-muted   { background: #f1f5f9; color: #475569; border-color: #e2e8f0; }
+
+/* Task table — was a no-op (.tk-task-table had no CSS) */
+.tk-task-table table {
+  min-width: 720px;
+  table-layout: auto;
+}
+
+.tk-task-table th:nth-child(2),
+.tk-task-table td:nth-child(2) {
+  width: 14%;
+}
+
+.tk-task-table th:nth-child(3),
+.tk-task-table td:nth-child(3) {
+  width: 13%;
+}
+
+.tk-task-table th:nth-child(4),
+.tk-task-table td:nth-child(4) {
+  width: 9%;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+.tk-task-table th:nth-child(5),
+.tk-task-table td:nth-child(5) {
+  width: 16%;
+  font-variant-numeric: tabular-nums;
+}
+
+.tk-task-table th:nth-child(6),
+.tk-task-table td:nth-child(6) {
+  width: 24%;
+}
+
+.tk-task-table__scroll {
+  max-width: 100%;
+  overflow-x: auto;
+  scrollbar-color: #aeb9c8 transparent;
+}
+
+.tk-task-attempts {
+  display: inline-block;
+  font-variant-numeric: tabular-nums;
+}
+
+.tk-task-table__pause-reason {
+  color: #475569;
+}
+
+.tk-task-table__pause-reason--error {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 2px 8px;
+  border-radius: 6px;
+  background: #fef2f2;
+  color: #b91c1c;
+  font-weight: 600;
+  font-size: 12px;
+  border: 1px solid #fecaca;
+}
+
+.tk-task-table__empty-row td {
+  border-bottom: 0;
+}
+
+.tk-task-table__empty {
+  padding: 56px 24px !important;
+  text-align: center;
+  color: #64748b;
+}
+
+.tk-task-table__empty-title {
+  display: block;
+  font-size: 15px;
+  font-weight: 650;
+  color: #475569;
+}
+
+.tk-task-table__empty-hint {
+  display: block;
+  margin-top: 8px;
+  font-size: 13px;
+  color: #94a3b8;
+}
+
 .tk-product-drawer {
   flex: 0 0 clamp(320px, 29vw, 380px);
   min-width: 320px;
