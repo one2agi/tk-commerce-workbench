@@ -95,7 +95,7 @@ describe("SettingsWorkspace", () => {
 
   it("PATCH on save returns 200 → bar hides, version updates, toast appears", async () => {
     const user = userEvent.setup();
-    const fetcher = vi.fn(async () => Response.json({ ...baseline(), version: 13 })) as unknown as typeof fetch;
+    const fetcher = vi.fn(async () => Response.json({ ...baseline(), defaultLocale: "th-TH", version: 13 })) as unknown as typeof fetch;
     const { container } = render(<SettingsWorkspace initial={baseline()} fetcher={fetcher} />);
     const ctx = within(container);
     const localeSelect = ctx.getAllByRole("combobox")[0];
@@ -107,11 +107,12 @@ describe("SettingsWorkspace", () => {
     });
     expect(fetcher).toHaveBeenCalledTimes(1);
     expect(ctx.getByText(/已保存/)).toBeInTheDocument();
+    expect(ctx.getByText(/v13/)).toBeInTheDocument(); // server-returned version, not draft.version (12)
   });
 
   it("PATCH 409 keeps the save bar visible and shows conflict copy", async () => {
     const user = userEvent.setup();
-    const fetcher = vi.fn(async () => Response.json({ version: 7 }, { status: 409 })) as unknown as typeof fetch;
+    const fetcher = vi.fn(async () => Response.json({ actualVersion: 7 }, { status: 409 })) as unknown as typeof fetch;
     const { container } = render(<SettingsWorkspace initial={baseline()} fetcher={fetcher} />);
     const ctx = within(container);
     const localeSelect = ctx.getAllByRole("combobox")[0];

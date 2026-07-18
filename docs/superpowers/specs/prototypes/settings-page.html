@@ -1,0 +1,759 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>设置 — 原型预览</title>
+  <style>
+    /* ─── Reset & base ─────────────────────────────────────── */
+    :root {
+      color-scheme: light;
+      font-family:
+        Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont,
+        "Segoe UI", "Noto Sans SC", sans-serif;
+      --bg: #f4f6f9;
+      --panel-bg: #ffffff;
+      --panel-border: #d9e0e9;
+      --panel-border-soft: #e7ebf0;
+      --title: #172033;
+      --body: #526174;
+      --muted: #64748b;
+      --primary: #2563eb;
+      --primary-hover: #1d4ed8;
+      --primary-soft: #eff6ff;
+      --shadow-rest: 0 1px 2px rgba(15, 23, 42, 0.04);
+      --shadow-hover: 0 6px 18px rgba(15, 23, 42, 0.08);
+      --success-bg: #d1fae5;
+      --success-fg: #047857;
+      --warning-bg: #fef3c7;
+      --warning-fg: #b45309;
+      --danger-bg: #fee2e2;
+      --danger-fg: #991b1b;
+    }
+    * { box-sizing: border-box; }
+    html, body { margin: 0; min-height: 100%; }
+    body {
+      background: var(--bg);
+      color: var(--title);
+      line-height: 1.45;
+      font-size: 14px;
+    }
+    button, input, select, textarea { font: inherit; }
+    button, a { -webkit-tap-highlight-color: transparent; }
+    button {
+      min-height: 36px;
+      padding: 7px 14px;
+      border: 1px solid var(--panel-border);
+      border-radius: 8px;
+      color: #1e293b;
+      background: #fff;
+      cursor: pointer;
+      transition: border-color 120ms ease, background 120ms ease, color 120ms ease;
+    }
+    button:hover:not(:disabled) { border-color: #7c8ba1; background: #f8fafc; }
+    button:disabled { color: #94a3b8; background: #eef2f6; cursor: not-allowed; }
+    :focus-visible {
+      outline: 3px solid rgb(37 99 235 / 35%);
+      outline-offset: 2px;
+    }
+
+    /* ─── App shell (mocked sidebar) ───────────────────────── */
+    .tk-app {
+      display: grid;
+      grid-template-columns: clamp(192px, 16vw, 220px) minmax(0, 1fr);
+      min-height: 100vh;
+    }
+    .tk-sidebar {
+      position: sticky;
+      top: 0;
+      align-self: start;
+      height: 100vh;
+      padding: 24px 14px;
+      border-right: 1px solid #263449;
+      background: #111c2d;
+    }
+    .tk-sidebar::before {
+      display: block;
+      margin: 0 10px 24px;
+      color: #f8fafc;
+      font-size: 16px;
+      font-weight: 750;
+      letter-spacing: 0.02em;
+      content: "TK 商品自动化";
+    }
+    .tk-sidebar ul {
+      display: grid;
+      gap: 6px;
+      margin: 0;
+      padding: 0;
+      list-style: none;
+    }
+    .tk-sidebar a {
+      display: block;
+      padding: 10px 12px;
+      border-radius: 8px;
+      color: #cbd5e1;
+      font-size: 14px;
+      font-weight: 600;
+      text-decoration: none;
+    }
+    .tk-sidebar a[aria-current="page"] {
+      color: #fff;
+      background: #24334a;
+    }
+    .tk-app__main { min-width: 0; padding: 32px 28px 120px; }
+
+    /* ─── Page header ──────────────────────────────────────── */
+    .tk-page-heading {
+      display: flex;
+      align-items: flex-end;
+      justify-content: space-between;
+      gap: 16px;
+      padding-bottom: 20px;
+      border-bottom: 1px solid var(--panel-border-soft);
+      margin-bottom: 20px;
+    }
+    .tk-page-heading p {
+      margin: 0 0 4px;
+      color: var(--muted);
+      font-size: 12px;
+      font-weight: 700;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+    }
+    .tk-page-heading h1 {
+      margin: 0;
+      color: var(--title);
+      font-size: 24px;
+      font-weight: 750;
+      letter-spacing: -0.01em;
+    }
+    .tk-page-heading__meta {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      color: var(--body);
+      font-size: 13px;
+      font-weight: 600;
+    }
+    .tk-page-heading__meta .dot {
+      width: 8px; height: 8px; border-radius: 50%;
+      background: #22c55e; box-shadow: 0 0 0 3px rgba(34,197,94,.18);
+    }
+
+    /* ─── Info banner ──────────────────────────────────────── */
+    .tk-info-banner {
+      display: flex;
+      gap: 12px;
+      align-items: flex-start;
+      padding: 14px 18px;
+      margin-bottom: 20px;
+      border: 1px solid #bfdbfe;
+      border-radius: 12px;
+      background: var(--primary-soft);
+      box-shadow: var(--shadow-rest);
+    }
+    .tk-info-banner__icon {
+      flex: 0 0 24px;
+      width: 24px; height: 24px;
+      display: grid; place-items: center;
+      color: var(--primary);
+      background: #fff;
+      border-radius: 999px;
+      font-size: 14px; font-weight: 800;
+    }
+    .tk-info-banner__body { min-width: 0; color: #1e3a8a; font-size: 13px; }
+    .tk-info-banner__body strong { color: #172033; font-weight: 700; }
+
+    /* ─── Settings card ────────────────────────────────────── */
+    .tk-settings-card {
+      position: relative;
+      padding: 0;
+      border: 1px solid var(--panel-border);
+      border-radius: 12px;
+      background: var(--panel-bg);
+      box-shadow: var(--shadow-rest);
+      margin-bottom: 16px;
+      overflow: hidden;
+    }
+    .tk-settings-card__head {
+      display: grid;
+      grid-template-columns: 4px 1fr auto;
+      gap: 12px;
+      align-items: center;
+      padding: 16px 20px 14px;
+      border-bottom: 1px solid var(--panel-border-soft);
+    }
+    .tk-settings-card__accent {
+      align-self: stretch;
+      background: linear-gradient(180deg, var(--primary), #60a5fa);
+      border-radius: 4px;
+    }
+    .tk-settings-card__title {
+      display: flex;
+      align-items: baseline;
+      gap: 10px;
+      min-width: 0;
+    }
+    .tk-settings-card__title h2 {
+      margin: 0;
+      color: var(--title);
+      font-size: 16px;
+      font-weight: 700;
+      letter-spacing: -0.005em;
+    }
+    .tk-settings-card__hint {
+      color: var(--muted);
+      font-size: 12px;
+      font-weight: 500;
+    }
+    .tk-settings-card__dirty {
+      color: var(--primary);
+      font-size: 12px;
+      font-weight: 600;
+      background: var(--primary-soft);
+      padding: 2px 8px;
+      border-radius: 999px;
+    }
+    .tk-settings-card__body {
+      padding: 18px 20px 20px;
+    }
+
+    /* ─── Field primitive ──────────────────────────────────── */
+    .tk-field {
+      display: grid;
+      gap: 6px;
+      min-width: 0;
+    }
+    .tk-field__label {
+      color: var(--title);
+      font-size: 13px;
+      font-weight: 600;
+    }
+    .tk-field__control {
+      position: relative;
+      display: flex;
+      align-items: center;
+    }
+    .tk-field__control input,
+    .tk-field__control select {
+      width: 100%;
+      min-height: 38px;
+      padding: 8px 12px;
+      border: 1px solid var(--panel-border);
+      border-radius: 8px;
+      color: var(--title);
+      background: #fff;
+      transition: border-color 120ms ease, box-shadow 120ms ease;
+      appearance: none;
+    }
+    .tk-field__control select {
+      background-image: linear-gradient(45deg, transparent 50%, #64748b 50%),
+        linear-gradient(135deg, #64748b 50%, transparent 50%);
+      background-position: calc(100% - 18px) 17px, calc(100% - 12px) 17px;
+      background-size: 6px 6px, 6px 6px;
+      background-repeat: no-repeat;
+      padding-right: 32px;
+    }
+    .tk-field__control input:hover,
+    .tk-field__control select:hover { border-color: #94a3b8; }
+    .tk-field__control input:focus,
+    .tk-field__control select:focus {
+      outline: none;
+      border-color: var(--primary);
+      box-shadow: 0 0 0 3px rgb(37 99 235 / 18%);
+    }
+    .tk-field__control.is-dirty input,
+    .tk-field__control.is-dirty select {
+      border-color: var(--primary);
+      background: var(--primary-soft);
+    }
+    .tk-field__dirty-dot {
+      position: absolute;
+      right: 8px; top: 50%;
+      width: 8px; height: 8px;
+      border-radius: 50%;
+      background: var(--primary);
+      transform: translateY(-50%);
+      pointer-events: none;
+    }
+    .tk-field__control select + .tk-field__dirty-dot { right: 32px; }
+    .tk-field__help {
+      color: var(--muted);
+      font-size: 12px;
+      line-height: 1.4;
+    }
+
+    /* grid for fields */
+    .tk-field-grid {
+      display: grid;
+      gap: 16px 18px;
+    }
+    .tk-field-grid.cols-2 { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    .tk-field-grid.cols-3 { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+    .tk-field-grid.cols-2 > .tk-field--wide,
+    .tk-field-grid.cols-3 > .tk-field--wide { grid-column: 1 / -1; }
+    @media (max-width: 760px) {
+      .tk-field-grid.cols-2,
+      .tk-field-grid.cols-3 { grid-template-columns: 1fr; }
+    }
+
+    /* ─── Status pill ──────────────────────────────────────── */
+    .tk-pill-row {
+      display: grid;
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+      gap: 12px;
+    }
+    @media (max-width: 760px) {
+      .tk-pill-row { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    }
+    .tk-pill {
+      display: grid;
+      grid-template-columns: 24px 1fr;
+      gap: 10px;
+      align-items: center;
+      padding: 12px 14px;
+      border: 1px solid transparent;
+      border-radius: 10px;
+      transition: transform 120ms ease, box-shadow 120ms ease;
+      cursor: default;
+    }
+    .tk-pill:hover { transform: translateY(-1px); box-shadow: var(--shadow-rest); }
+    .tk-pill__icon {
+      display: grid; place-items: center;
+      width: 24px; height: 24px;
+      border-radius: 999px;
+      font-size: 14px; font-weight: 800;
+    }
+    .tk-pill__body { min-width: 0; }
+    .tk-pill__name { font-size: 13px; font-weight: 700; color: var(--title); }
+    .tk-pill__env {
+      margin-top: 2px;
+      font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+      font-size: 11px;
+      color: var(--muted);
+      letter-spacing: 0.01em;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+    .tk-pill.is-ok { background: var(--success-bg); border-color: #a7f3d0; }
+    .tk-pill.is-ok .tk-pill__icon { background: #10b981; color: #fff; }
+    .tk-pill.is-warn { background: var(--warning-bg); border-color: #fde68a; }
+    .tk-pill.is-warn .tk-pill__icon { background: #f59e0b; color: #fff; }
+
+    /* ─── Save bar ─────────────────────────────────────────── */
+    .tk-save-bar {
+      position: fixed;
+      left: 16px; right: 16px;
+      bottom: 16px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 16px;
+      padding: 12px 18px;
+      border: 1px solid var(--panel-border);
+      border-radius: 14px;
+      background: #fff;
+      box-shadow: 0 10px 30px rgba(15, 23, 42, 0.16);
+      z-index: 10;
+    }
+    .tk-save-bar__status {
+      display: inline-flex; align-items: center; gap: 10px;
+      color: var(--title);
+      font-size: 13px; font-weight: 600;
+    }
+    .tk-save-bar__status .dot {
+      width: 10px; height: 10px; border-radius: 50%;
+      background: var(--primary);
+      box-shadow: 0 0 0 4px var(--primary-soft);
+    }
+    .tk-save-bar__meta {
+      color: var(--muted); font-weight: 500;
+      font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+      font-size: 12px;
+    }
+    .tk-save-bar__actions { display: inline-flex; gap: 8px; }
+    .tk-save-bar__btn--ghost {
+      background: transparent;
+      border-color: var(--panel-border);
+    }
+    .tk-save-bar__btn--primary {
+      background: var(--primary);
+      border-color: var(--primary);
+      color: #fff;
+    }
+    .tk-save-bar__btn--primary:hover {
+      background: var(--primary-hover);
+      border-color: var(--primary-hover);
+    }
+    /* error state */
+    .tk-save-bar.is-error {
+      background: var(--danger-bg);
+      border-color: #fca5a5;
+    }
+    .tk-save-bar.is-error .tk-save-bar__status .dot {
+      background: var(--danger-fg);
+      box-shadow: 0 0 0 4px rgba(220,38,38,.15);
+    }
+
+    /* ─── Toast ────────────────────────────────────────────── */
+    .tk-toast {
+      position: fixed;
+      right: 24px; bottom: 96px;
+      padding: 12px 16px;
+      border: 1px solid #a7f3d0;
+      background: var(--success-bg);
+      color: var(--success-fg);
+      border-radius: 10px;
+      font-size: 13px; font-weight: 600;
+      box-shadow: var(--shadow-hover);
+      display: inline-flex; align-items: center; gap: 8px;
+      animation: tk-toast-in 180ms ease-out;
+      z-index: 11;
+    }
+    @keyframes tk-toast-in {
+      from { transform: translateY(8px); opacity: 0; }
+      to { transform: translateY(0); opacity: 1; }
+    }
+
+    /* ─── Annotations (for prototype only) ─────────────────── */
+    .proto-legend {
+      position: fixed; left: 16px; bottom: 16px;
+      max-width: 320px;
+      padding: 10px 12px;
+      background: #172033;
+      color: #f8fafc;
+      border-radius: 10px;
+      font-size: 11px;
+      line-height: 1.5;
+      box-shadow: var(--shadow-hover);
+      z-index: 12;
+      opacity: .92;
+    }
+    .proto-legend strong { color: #93c5fd; }
+    .proto-legend kbd {
+      background: #1e293b; padding: 1px 5px; border-radius: 4px;
+      font-family: inherit;
+    }
+  </style>
+</head>
+<body>
+  <div class="tk-app">
+    <!-- Mocked sidebar (kept for context fidelity) -->
+    <aside class="tk-sidebar" aria-label="主导航">
+      <ul>
+        <li><a href="#">商品工作台</a></li>
+        <li><a href="#">商品列表</a></li>
+        <li><a href="#">任务中心</a></li>
+        <li><a href="#">模板库</a></li>
+        <li><a href="#" aria-current="page">设置</a></li>
+      </ul>
+    </aside>
+
+    <main class="tk-app__main" aria-label="工作区设置">
+      <!-- Page header -->
+      <header class="tk-page-heading">
+        <div>
+          <p>Local workspace</p>
+          <h1>设置</h1>
+        </div>
+        <span class="tk-page-heading__meta">
+          <span class="dot" aria-hidden></span>
+          v12 · 单用户本地模式 · Worker 运行中
+        </span>
+      </header>
+
+      <!-- Info banner -->
+      <div class="tk-info-banner" role="note">
+        <span class="tk-info-banner__icon" aria-hidden>ℹ</span>
+        <div class="tk-info-banner__body">
+          <strong>修改这些值只更新工作区默认值。</strong>
+          已启动的 Worker 不会被自动重配，需要<strong>重启进程</strong>才能生效。
+        </div>
+      </div>
+
+      <!-- Card 1: Basic Settings -->
+      <section class="tk-settings-card" aria-label="基础设置">
+        <header class="tk-settings-card__head">
+          <span class="tk-settings-card__accent" aria-hidden></span>
+          <div class="tk-settings-card__title">
+            <h2>基础设置</h2>
+            <span class="tk-settings-card__hint">新建商品和 Worker 启动时使用的默认值</span>
+          </div>
+          <span class="tk-settings-card__dirty">已改 1 项</span>
+        </header>
+        <div class="tk-settings-card__body">
+          <div class="tk-field-grid cols-2">
+            <label class="tk-field">
+              <span class="tk-field__label">默认语言</span>
+              <span class="tk-field__control">
+                <select>
+                  <option>zh-CN</option>
+                  <option>th-TH</option>
+                  <option>en-US</option>
+                </select>
+              </span>
+              <span class="tk-field__help">新建商品时默认使用</span>
+            </label>
+
+            <label class="tk-field">
+              <span class="tk-field__label">默认币种</span>
+              <span class="tk-field__control">
+                <select>
+                  <option>CNY</option>
+                  <option>THB</option>
+                  <option>USD</option>
+                </select>
+              </span>
+              <span class="tk-field__help">利润换算的目标币种</span>
+            </label>
+
+            <label class="tk-field">
+              <span class="tk-field__label">Provider 模式</span>
+              <span class="tk-field__control is-dirty">
+                <select>
+                  <option>mock</option>
+                  <option selected>live</option>
+                </select>
+                <span class="tk-field__dirty-dot" aria-hidden></span>
+              </span>
+              <span class="tk-field__help">mock = 仅本地模拟；live = 真实调用外部 API</span>
+            </label>
+
+            <label class="tk-field">
+              <span class="tk-field__label">Worker 并发</span>
+              <span class="tk-field__control">
+                <input type="number" value="4" min="1" max="32" />
+              </span>
+              <span class="tk-field__help">同时处理的商品任务数</span>
+            </label>
+
+            <label class="tk-field">
+              <span class="tk-field__label">Canvas 每日上限</span>
+              <span class="tk-field__control">
+                <input type="number" value="50" min="1" />
+              </span>
+              <span class="tk-field__help">0 表示不限制</span>
+            </label>
+
+            <label class="tk-field tk-field--wide">
+              <span class="tk-field__label">素材目录</span>
+              <span class="tk-field__control">
+                <input type="text" value="/home/morav/.local/share/tk-commerce-workbench/data/assets" />
+              </span>
+              <span class="tk-field__help">Worker 写文件的绝对路径。建议放在 Linux-native 文件系统（如 <code style="background:#f1f5f9;padding:1px 4px;border-radius:3px">~/.local/share</code>）上，避免 9p mount 不保留权限。</span>
+            </label>
+          </div>
+        </div>
+      </section>
+
+      <!-- Card 2: Pricing Formula -->
+      <section class="tk-settings-card" aria-label="定价公式">
+        <header class="tk-settings-card__head">
+          <span class="tk-settings-card__accent" aria-hidden></span>
+          <div class="tk-settings-card__title">
+            <h2>定价公式</h2>
+            <span class="tk-settings-card__hint">影响每个商品的售价建议</span>
+          </div>
+          <span class="tk-settings-card__dirty">已改 2 项</span>
+        </header>
+        <div class="tk-settings-card__body">
+          <div class="tk-field-grid cols-3">
+            <label class="tk-field">
+              <span class="tk-field__label">国内运费 CNY</span>
+              <span class="tk-field__control">
+                <input type="number" step="0.01" value="8.50" />
+              </span>
+              <span class="tk-field__help">每件商品分摊的国内发货成本</span>
+            </label>
+            <label class="tk-field">
+              <span class="tk-field__label">跨境成本 CNY</span>
+              <span class="tk-field__control">
+                <input type="number" step="0.01" value="35.00" />
+              </span>
+              <span class="tk-field__help">头程 + 尾程物流综合</span>
+            </label>
+            <label class="tk-field">
+              <span class="tk-field__label">固定成本 THB</span>
+              <span class="tk-field__control is-dirty">
+                <input type="number" step="0.01" value="12.00" />
+                <span class="tk-field__dirty-dot" aria-hidden></span>
+              </span>
+              <span class="tk-field__help">包装/标签等</span>
+            </label>
+            <label class="tk-field">
+              <span class="tk-field__label">平台费率</span>
+              <span class="tk-field__control">
+                <input type="number" step="0.001" value="0.050" />
+              </span>
+              <span class="tk-field__help">0.05 = 5%</span>
+            </label>
+            <label class="tk-field">
+              <span class="tk-field__label">支付费率</span>
+              <span class="tk-field__control">
+                <input type="number" step="0.001" value="0.006" />
+              </span>
+              <span class="tk-field__help">支付通道手续费</span>
+            </label>
+            <label class="tk-field">
+              <span class="tk-field__label">目标利润率</span>
+              <span class="tk-field__control is-dirty">
+                <input type="number" step="0.01" value="0.22" />
+                <span class="tk-field__dirty-dot" aria-hidden></span>
+              </span>
+              <span class="tk-field__help">售价中利润占比</span>
+            </label>
+            <label class="tk-field tk-field--wide">
+              <span class="tk-field__label">价格尾数</span>
+              <span class="tk-field__control" style="max-width:160px">
+                <input type="number" min="0" max="9" value="9" />
+              </span>
+              <span class="tk-field__help">售价尾数；9 表示以 .9 结尾</span>
+            </label>
+          </div>
+        </div>
+      </section>
+
+      <!-- Card 3: Provider Defaults -->
+      <section class="tk-settings-card" aria-label="Provider 默认值">
+        <header class="tk-settings-card__head">
+          <span class="tk-settings-card__accent" aria-hidden></span>
+          <div class="tk-settings-card__title">
+            <h2>Provider 默认值</h2>
+            <span class="tk-settings-card__hint">选择非密钥 Provider 时使用的默认配置</span>
+          </div>
+        </header>
+        <div class="tk-settings-card__body">
+          <div class="tk-field-grid cols-2">
+            <label class="tk-field">
+              <span class="tk-field__label">Listing Provider</span>
+              <span class="tk-field__control">
+                <input type="text" value="miaoshou" />
+              </span>
+              <span class="tk-field__help">可选值：<code style="background:#f1f5f9;padding:1px 4px;border-radius:3px">miaoshou</code> / <code style="background:#f1f5f9;padding:1px 4px;border-radius:3px">custom</code></span>
+            </label>
+            <label class="tk-field">
+              <span class="tk-field__label">Listing Model</span>
+              <span class="tk-field__control">
+                <input type="text" value="miaoshou-v3" />
+              </span>
+              <span class="tk-field__help">Provider 对应的模型 ID</span>
+            </label>
+            <label class="tk-field tk-field--wide">
+              <span class="tk-field__label">Canvas 工作流</span>
+              <span class="tk-field__control">
+                <input type="text" value="wf-product-main-shot-v2" />
+              </span>
+              <span class="tk-field__help">在 Canvas 后台创建的工作流 ID</span>
+            </label>
+          </div>
+        </div>
+      </section>
+
+      <!-- Card 4: Retry Policy -->
+      <section class="tk-settings-card" aria-label="重试策略">
+        <header class="tk-settings-card__head">
+          <span class="tk-settings-card__accent" aria-hidden></span>
+          <div class="tk-settings-card__title">
+            <h2>重试策略</h2>
+            <span class="tk-settings-card__hint">当妙手 / Canvas / LLM 返回可重试错误时的行为</span>
+          </div>
+        </header>
+        <div class="tk-settings-card__body">
+          <div class="tk-field-grid cols-2">
+            <label class="tk-field">
+              <span class="tk-field__label">最多尝试次数</span>
+              <span class="tk-field__control">
+                <input type="number" min="1" max="20" value="5" />
+              </span>
+              <span class="tk-field__help">含首次执行；1-20</span>
+            </label>
+            <label class="tk-field">
+              <span class="tk-field__label">首次重试等待（秒）</span>
+              <span class="tk-field__control">
+                <input type="number" min="1" value="30" />
+              </span>
+              <span class="tk-field__help">之后按指数退避</span>
+            </label>
+          </div>
+        </div>
+      </section>
+
+      <!-- Card 5: Secret Status (read-only) -->
+      <section class="tk-settings-card" aria-label="密钥配置状态">
+        <header class="tk-settings-card__head">
+          <span class="tk-settings-card__accent" aria-hidden></span>
+          <div class="tk-settings-card__title">
+            <h2>密钥配置状态</h2>
+            <span class="tk-settings-card__hint">密钥不会进入浏览器或保存到本页面</span>
+          </div>
+        </header>
+        <div class="tk-settings-card__body">
+          <div class="tk-pill-row">
+            <div class="tk-pill is-ok" title="MIAOSHOU_APP_KEY / MIAOSHOU_APP_SECRET">
+              <span class="tk-pill__icon" aria-hidden>✓</span>
+              <div class="tk-pill__body">
+                <div class="tk-pill__name">妙手</div>
+                <div class="tk-pill__env">MIAOSHOU_APP_KEY / _SECRET</div>
+              </div>
+            </div>
+            <div class="tk-pill is-ok" title="CANVAS_API_KEY">
+              <span class="tk-pill__icon" aria-hidden>✓</span>
+              <div class="tk-pill__body">
+                <div class="tk-pill__name">Canvas</div>
+                <div class="tk-pill__env">CANVAS_API_KEY</div>
+              </div>
+            </div>
+            <div class="tk-pill is-ok" title="LLM_API_KEY">
+              <span class="tk-pill__icon" aria-hidden>✓</span>
+              <div class="tk-pill__body">
+                <div class="tk-pill__name">LLM</div>
+                <div class="tk-pill__env">LLM_API_KEY</div>
+              </div>
+            </div>
+            <div class="tk-pill is-warn" title="EXCHANGE_RATE_API_KEY">
+              <span class="tk-pill__icon" aria-hidden>!</span>
+              <div class="tk-pill__body">
+                <div class="tk-pill__name">汇率</div>
+                <div class="tk-pill__env">EXCHANGE_RATE_API_KEY</div>
+              </div>
+            </div>
+          </div>
+          <p style="margin: 14px 0 0; color: var(--muted); font-size: 12px;">
+            在 <code style="background:#f1f5f9;padding:1px 4px;border-radius:3px">~/.local/share/tk-commerce-workbench/.env</code> 中设置环境变量后，重启 Worker 进程即可生效。
+          </p>
+        </div>
+      </section>
+
+      <!-- Save bar (sticky) -->
+      <div class="tk-save-bar" role="region" aria-label="保存栏">
+        <div class="tk-save-bar__status">
+          <span class="dot" aria-hidden></span>
+          已修改 <strong style="color:var(--primary);margin:0 4px;">3</strong> 项
+          <span class="tk-save-bar__meta">当前版本 v12</span>
+        </div>
+        <div class="tk-save-bar__actions">
+          <button class="tk-save-bar__btn--ghost" type="button">放弃修改</button>
+          <button class="tk-save-bar__btn--primary" type="button">保存设置</button>
+        </div>
+      </div>
+
+      <!-- Toast (success state demo) -->
+      <div class="tk-toast" role="status">
+        <span aria-hidden>✓</span>
+        已保存 · 版本 v13
+      </div>
+    </main>
+  </div>
+
+  <!-- Prototype legend (not part of design) -->
+  <div class="proto-legend">
+    <strong>原型预览</strong> — 此页是设计草图，展示了：<br />
+    · 5 张分组卡片 + 粘性保存栏 + dirty 标记<br />
+    · 密钥 status pill（绿=已配置 / 黄=未配置）<br />
+    · 顶部运行规则提示 banner<br />
+    键盘：<kbd>⌘</kbd>+<kbd>S</kbd> 保存
+  </div>
+</body>
+</html>

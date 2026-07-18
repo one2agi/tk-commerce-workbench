@@ -52,12 +52,12 @@ export function SettingsWorkspace({ initial, fetcher }: SettingsWorkspaceProps):
 
   // Detect successful save (saving → idle with no error) and advance baseline + show toast.
   useEffect(() => {
-    if (prevSaveStateRef.current === "saving" && saveHook.state === "idle" && saveHook.error === null) {
-      setBaseline(draft);
-      setToast({ kind: "success", message: `已保存 · 版本 v${draft.version}`, key: Date.now() });
+    if (prevSaveStateRef.current === "saving" && saveHook.state === "idle" && saveHook.error === null && saveHook.lastSaved) {
+      setBaseline(saveHook.lastSaved);
+      setToast({ kind: "success", message: `已保存 · 版本 v${saveHook.lastSaved.version}`, key: Date.now() });
     }
     prevSaveStateRef.current = saveHook.state;
-  }, [saveHook.state, saveHook.error, draft]);
+  }, [saveHook.state, saveHook.error, saveHook.lastSaved]);
 
   // Auto-dismiss toast after 5s
   useEffect(() => {

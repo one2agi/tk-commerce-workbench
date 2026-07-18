@@ -105,7 +105,7 @@ describe("useSaveSettings", () => {
   });
 
   it("transitions to conflict on 409 and reports the actual version in error", async () => {
-    const fetcher = vi.fn(async () => Response.json({ version: 7 }, { status: 409 })) as unknown as typeof fetch;
+    const fetcher = vi.fn(async () => Response.json({ actualVersion: 7 }, { status: 409 })) as unknown as typeof fetch;
     const { result } = renderHook(() => useSaveSettings({ fetcher }));
     await act(async () => {
       await result.current.save(baselineFixture(), baselineFixture(), new Set());

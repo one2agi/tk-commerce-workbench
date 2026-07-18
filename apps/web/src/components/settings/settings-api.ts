@@ -81,8 +81,8 @@ export async function patchSettings(
   let actualVersion: number | undefined;
   if (response.status === 409) {
     try {
-      const body = (await response.json()) as { version?: number };
-      actualVersion = body.version;
+      const body = (await response.json()) as { actualVersion?: number };
+      actualVersion = body.actualVersion;
     } catch {
       // ignore parse failure
     }
@@ -98,6 +98,7 @@ export interface UseSaveSettingsOptions {
 export interface UseSaveSettingsResult {
   state: SaveState;
   error: string | null;
+  lastSaved: WorkspaceSettingsView | null;
   save: (baseline: WorkspaceSettingsView, draft: WorkspaceSettingsView, dirtyFields: ReadonlySet<string>) => Promise<void>;
   reset: () => void;
 }
@@ -106,6 +107,7 @@ export function useSaveSettings(options: UseSaveSettingsOptions = {}): UseSaveSe
   const fetcher = options.fetcher ?? fetch;
   const [state, setState] = useState<SaveState>("idle");
   const [error, setError] = useState<string | null>(null);
+  const [lastSaved, setLastSaved] = useState<WorkspaceSettingsView | null>(null);
 
   const save = useCallback(
     async (baseline: WorkspaceSettingsView, draft: WorkspaceSettingsView, dirtyFields: ReadonlySet<string>) => {
@@ -113,6 +115,7 @@ export function useSaveSettings(options: UseSaveSettingsOptions = {}): UseSaveSe
       setError(null);
       const result = await patchSettings(fetcher, baseline, draft, dirtyFields);
       if (result.ok) {
+        setLastSaved(result.value);
         setState("idle");
         return;
       }
@@ -132,5 +135,5 @@ export function useSaveSettings(options: UseSaveSettingsOptions = {}): UseSaveSe
     setError(null);
   }, []);
 
-  return { state, error, save, reset };
+  return { state, error, lastSaved, save, reset };
 }
