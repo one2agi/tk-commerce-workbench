@@ -16,6 +16,7 @@ type Props = Readonly<{
   onOpenDrawer: (productId: string) => void;
   onScroll: (scrollTop: number) => void;
   scrollTop: number;
+  onStart: (productId: string) => void;
 }>;
 
 const STAGE_STATE_LABEL: Readonly<Record<StageKey, string>> = {
@@ -46,7 +47,8 @@ export function ProductTable({
   onToggleSelection,
   onOpenDrawer,
   onScroll,
-  scrollTop
+  scrollTop,
+  onStart
 }: Props): ReactElement {
   function handleScroll(ev: UIEvent<HTMLDivElement>): void {
     onScroll(ev.currentTarget.scrollTop);
@@ -79,13 +81,25 @@ export function ProductTable({
             {filtered.map((item) => {
               const checked = selectedIds.has(String(item.productId));
               const startStatus = startStatusById.get(String(item.productId)) ?? "idle";
-              const startLabel = startStatus === "pending"
-                ? "启动:处理中"
-                : startStatus === "success"
-                  ? "启动:已开始"
-                  : startStatus === "failure"
-                    ? "启动:失败，可重试"
-                    : null;
+              const canStart = canStartAutomation(item);
+              const startDisabled =
+                startStatus === "pending" || startStatus === "success" || !canStart;
+              const startText =
+                startStatus === "pending"
+                  ? "处理中"
+                  : startStatus === "success"
+                    ? "已开始"
+                    : startStatus === "failure"
+                      ? "重试处理"
+                      : "开始处理";
+              const blockedReason =
+                !canStart && item.automation === "not_started"
+                  ? item.sourceImageCount <= 0
+                    ? "妙手原始数据没有可用图片"
+                    : item.canonicalSuccessDetailId === null
+                      ? "缺少妙手采集箱详情 ID"
+                      : "采集尚未成功"
+                  : null;
               return (
                 <tr key={String(item.productId)} aria-selected={checked}>
                   <td>
@@ -106,18 +120,29 @@ export function ProductTable({
                   </td>
                   <td>{String(item.productId)}</td>
                   <td>{item.canonicalSourceTitle ?? "—"}</td>
-                   <td>
-                     {statusFor(item)}
-                     {startLabel ? <span className="tk-start-status">{startLabel}</span> : null}
-                   </td>
+                  <td>{statusFor(item)}</td>
                   <td>
-                    <button
-                      type="button"
-                      aria-label={`查看详情 ${item.productId}`}
-                      onClick={() => onOpenDrawer(String(item.productId))}
-                    >
-                      查看详情
-                    </button>
+                    <div className="tk-product-table__actions">
+                      <button
+                        type="button"
+                        aria-label={`查看详情 ${item.productId}`}
+                        onClick={() => onOpenDrawer(String(item.productId))}
+                      >
+                        查看详情
+                      </button>
+                      <button
+                        type="button"
+                        aria-label={`${startText} ${item.productId}`}
+                        disabled={startDisabled}
+                        title={blockedReason ?? undefined}
+                        onClick={() => onStart(String(item.productId))}
+                      >
+                        {startText}
+                      </button>
+                      {blockedReason ? (
+                        <span className="tk-start-status">{blockedReason}</span>
+                      ) : null}
+                    </div>
                   </td>
                 </tr>
               );

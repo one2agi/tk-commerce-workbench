@@ -29,6 +29,23 @@ SELECT p.id AS product_id,
        p.locale,
        p.currency,
        pricing.final_price_minor AS price_minor,
+       (
+         jsonb_array_length(
+           CASE
+             WHEN jsonb_typeof(revision.source_payload->'mainImages') = 'array'
+             THEN revision.source_payload->'mainImages'
+             ELSE '[]'::jsonb
+           END
+         )
+         +
+         jsonb_array_length(
+           CASE
+             WHEN jsonb_typeof(revision.source_payload->'detailImages') = 'array'
+             THEN revision.source_payload->'detailImages'
+             ELSE '[]'::jsonb
+           END
+         )
+       )::integer AS source_image_count,
        COALESCE(asset_totals.image_count, 0)::integer AS image_count,
        COALESCE(canvas.outputs, '[]'::jsonb) AS canvas_outputs,
        p.state_source,
@@ -150,6 +167,7 @@ function toPoolItem(row: Record<string, unknown>): ProductPoolItemV1 {
     locale: requiredString(row, "locale"),
     currency,
     priceWire: priceMinor ? { amountMinor: priceMinor, currency } : null,
+    sourceImageCount: Number(row.source_image_count ?? 0),
     imageCount: Number(row.image_count ?? 0),
     usableCanvasOutputCount: usableOutputCount(row.canvas_outputs),
     miaoshouSource: requiredString(row, "state_source") as ProductPoolItemV1["miaoshouSource"],

@@ -56,7 +56,7 @@ export function canStartAutomation(item: ProductPoolItem): boolean {
     item.automation === "not_started" &&
     (item.miaoshouSource === "success" || item.miaoshouSource === "skipped_duplicate") &&
     item.canonicalSuccessDetailId !== null &&
-    item.imageCount > 0
+    item.sourceImageCount > 0
   );
 }
 
@@ -91,7 +91,7 @@ export function buildAutomationProgress(item: ProductPoolItem): AutomationProgre
         : "pending";
   return [
     { key: "collect", label: "采集", state: collect },
-    { key: "listing", label: "Listing", state: listing },
+    { key: "listing", label: "上架草稿", state: listing },
     { key: "canvas", label: "Canvas", state: canvas },
     { key: "edit", label: "妙手编辑", state: edit }
   ];

@@ -28,7 +28,8 @@ const items: ProductPoolItem[] = [
     locale: "th-TH",
     currency: "CNY",
     priceWire: null,
-    imageCount: 1,
+    sourceImageCount: 1,
+    imageCount: 0,
     usableCanvasOutputCount: 0,
     miaoshouSource: "success",
     automation: "not_started",
@@ -49,6 +50,7 @@ const items: ProductPoolItem[] = [
     locale: "th-TH",
     currency: "CNY",
     priceWire: null,
+    sourceImageCount: 8,
     imageCount: 1,
     usableCanvasOutputCount: 5,
     miaoshouSource: "success",
@@ -70,6 +72,26 @@ describe("workbench state machine", () => {
     expect(s.drawerProductId).toBeNull();
     expect(s.batchButtonLabel).toMatch(/批量开始处理（0）/);
     expect(s.batchButtonEnabled).toBe(false);
+  });
+
+  it("allows a collected product to start when source payload has images but local assets are not archived yet", () => {
+    const collectedButNotArchived = {
+      ...items[0]!,
+      sourceImageCount: 8,
+      imageCount: 0,
+      automation: "not_started" as const,
+      assetArchive: "pending" as const,
+      listing: "pending" as const,
+      canvas: "not_started" as const
+    };
+
+    let s = createWorkbenchState([collectedButNotArchived]);
+    s = toggleSelection(s, String(collectedButNotArchived.productId));
+
+    expect(s.selectedIds.has(String(collectedButNotArchived.productId))).toBe(true);
+    expect(s.batchButtonEnabled).toBe(true);
+    s = openDrawer(s, String(collectedButNotArchived.productId));
+    expect(s.drawerStartButtonEnabled).toBe(true);
   });
 
   it("keeps selected rows when the drawer opens and closes", () => {
@@ -110,7 +132,7 @@ describe("workbench state machine", () => {
     ["source pending", { miaoshouSource: "pending" as const }],
     ["source failed", { miaoshouSource: "failed" as const }],
     ["missing canonical detail", { canonicalSuccessDetailId: null }],
-    ["missing source images", { imageCount: 0 }]
+    ["missing source images", { sourceImageCount: 0 }]
   ])("does not select a product when %s", (_label, override) => {
     const blocked = { ...items[0]!, ...override };
     const s = toggleSelection(createWorkbenchState([blocked]), String(blocked.productId));

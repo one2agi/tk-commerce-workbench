@@ -18,7 +18,7 @@ export function renderProductsPage(data: { items: ProductPoolItemV1[] }) {
       <div><p>Catalog</p><h1>商品列表</h1></div>
       <span>{items.length} 个商品</span>
     </header>
-    <p>浏览当前工作区已收录的全部商品；点击商品行进入单商品工作区进行素材归档、Listing、定价、Canvas 与妙手同步。需要批量操作请使用商品工作台。</p>
+    <p>这里用于查看当前工作区已收录的全部商品。采集成功后，请回到<a href="/">商品工作台</a>勾选商品并点击"开始处理"，系统会生成上架草稿、归档图片、调用 Canvas 生图，并在审核后同步回妙手。</p>
     <div className="tk-product-table tk-product-list-table">
       <table>
         <thead><tr>

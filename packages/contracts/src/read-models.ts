@@ -29,7 +29,9 @@ export type ProductPoolItemV1 = Readonly<{
   locale: Locale;
   currency: MoneyWire["currency"];
   priceWire: MoneyWire | null;
-  /** Total archived source/product images available before Canvas generation. */
+  /** Product images available in the original Miaoshou collect-box payload before local archiving. */
+  sourceImageCount: number;
+  /** Total archived source/product images available after automation starts. */
   imageCount: number;
   /** Valid images returned by the latest Canvas run; excludes source images. */
   usableCanvasOutputCount: number;

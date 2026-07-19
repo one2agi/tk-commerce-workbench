@@ -19,6 +19,7 @@ export async function renderProductPage(params: PageProps["params"], products: P
   return (
     <article aria-label={`商品详情 ${productId}`}>
       <h1>{workspace.originalListing?.sourceTitle ?? workspace.target?.title ?? productId}</h1>
+      <p>当前详情页用于查看商品结果；如需启动标题清洗、定价和 Canvas 生图，请回到<a href="/">商品工作台</a>点击"开始处理"。</p>
       <dl>
         <dt>当前版本</dt>
         <dd>{String(workspace.revisionId)} / v{workspace.draftVersion}</dd>

@@ -161,6 +161,7 @@ export function ProductWorkbench({
           onOpenDrawer={(id) => dispatch({ type: "open", productId: id })}
           onScroll={(scrollTop) => dispatch({ type: "scroll", scrollTop })}
           scrollTop={state.scrollTop}
+          onStart={handleStart}
         />
         <ProductDrawer
           item={drawerItem}

@@ -22,6 +22,7 @@ function item(
     locale: "th-TH",
     currency: "CNY",
     priceWire: null,
+    sourceImageCount: 0,
     imageCount: 0,
     usableCanvasOutputCount: 0,
     miaoshouSource: "success",
@@ -114,7 +115,7 @@ describe("stage overview projection", () => {
 
     expect(buildAutomationProgress(focused)).toEqual([
       { key: "collect", label: "采集", state: "ready" },
-      { key: "listing", label: "Listing", state: "ready" },
+      { key: "listing", label: "上架草稿", state: "ready" },
       { key: "canvas", label: "Canvas", state: "ready" },
       { key: "edit", label: "妙手编辑", state: "failed" }
     ]);
