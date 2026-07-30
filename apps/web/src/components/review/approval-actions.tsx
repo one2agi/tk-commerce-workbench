@@ -24,7 +24,6 @@ const defaultActions: ReviewActions = {
     version: command.version,
     expectedDraftVersion: command.expectedDraftVersion,
     expectedListingRunId: command.expectedListingRunId,
-    expectedPricingRunId: command.expectedPricingRunId,
     expectedTemplateVersion: command.expectedTemplateVersion,
     orderedFinalAssetIds: command.orderedFinalAssetIds
   })
@@ -58,7 +57,6 @@ export function ApprovalActions(props: Readonly<{
   revisionId: string;
   draftVersion: number;
   listingRunId: string;
-  pricingRunId: string;
   templateVersion: number;
   orderedFinalAssetIds: string[];
   targetLocale: string;
@@ -128,7 +126,6 @@ export function ApprovalActions(props: Readonly<{
         productId: props.productId,
         expectedDraftVersion: draftVersion,
         expectedListingRunId: props.listingRunId,
-        expectedPricingRunId: props.pricingRunId,
         expectedTemplateVersion: props.templateVersion,
         orderedFinalAssetIds: props.orderedFinalAssetIds
       });
@@ -176,17 +173,16 @@ export function ApprovalActions(props: Readonly<{
         <label>从节点重跑
           <select value={startNode} onChange={(event) => setStartNode(event.target.value as RerunDownstreamV1["startNode"])}>
             <option value="listing">Listing</option>
-            <option value="pricing">定价</option>
             <option value="template">模板匹配</option>
             <option value="canvas">Canvas 生图</option>
           </select>
         </label>
         <button type="button" onClick={() => void rerun()}>开始局部重跑</button>
-        <button type="button" disabled={confirmPending || props.orderedFinalAssetIds.length === 0 || !props.listingRunId || !props.pricingRunId} onClick={() => void confirm()}>
-          确认并推送妙手
+        <button type="button" disabled={confirmPending || props.orderedFinalAssetIds.length === 0 || !props.listingRunId} onClick={() => void confirm()}>
+          确认写回妙手
         </button>
       </div>
-      <p>确认只会编辑妙手中已采集的同一商品，不会触发店铺发布。</p>
+      <p>确认后，如商品尚未进入妙手采集箱，系统会先低频导入再编辑；不会触发店铺发布。</p>
     </section>
   );
 }

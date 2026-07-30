@@ -19,6 +19,7 @@ import { AutomationRunRepository } from "../repositories/automation-run-reposito
 import { CanvasQuotaRepository } from "../repositories/canvas-quota-repository.js";
 import { AssetRepository } from "../repositories/asset-repository.js";
 import { PipelineRepository } from "../repositories/pipeline-repository.js";
+import { LocalCaptureRepository } from "../repositories/local-capture-repository.js";
 import { ApprovalRepository } from "../repositories/approval-repository.js";
 import { INITIAL_SQL } from "../migrations/0000_initial.js";
 
@@ -31,6 +32,7 @@ let approvals: ApprovalRepository;
 let canvasQuota: CanvasQuotaRepository;
 let assets: AssetRepository;
 let pipeline: PipelineRepository;
+let localCaptures: LocalCaptureRepository;
 
 beforeAll(async () => {
   handle = await bootTestDb();
@@ -43,6 +45,7 @@ beforeAll(async () => {
   canvasQuota = new CanvasQuotaRepository(handle.pool);
   assets = new AssetRepository(handle.pool);
   pipeline = new PipelineRepository(handle.pool);
+  localCaptures = new LocalCaptureRepository(handle.pool);
 });
 
 beforeEach(async () => {
@@ -239,6 +242,126 @@ describe("integration: bootstrap", () => {
 });
 
 describe("integration: catalog repository", () => {
+  test("persists a local detail capture idempotently without a Miaoshou source record", async () => {
+    const item = {
+      sourceItemId: "892408514788",
+      sourceUrl: "https://detail.1688.com/offer/892408514788.html",
+      title: "测试商品",
+      mainImages: ["https://cbu01.alicdn.com/img/ibank/main.jpg"],
+      detailImages: ["https://cbu01.alicdn.com/img/ibank/detail.jpg"],
+      descriptionText: "商品详情正文",
+      itemNumber: "ITEM-892408514788",
+      category: "饰品 > 手表",
+      sourcePriceWire: { amountMinor: "1350", currency: "CNY" as const },
+      sourcePriceRangeWire: {
+        minAmountMinor: "1350",
+        maxAmountMinor: "1420",
+        currency: "CNY" as const
+      },
+      sourceStock: 159,
+      weightKg: "0.12",
+      dimensionsCm: { lengthCm: "15", widthCm: "15", heightCm: "3" },
+      attributes: [{ name: "材质", value: "不锈钢" }],
+      saleAttributes: [{ name: "颜色", value: "银色" }],
+      skuAttributes: [{ name: "颜色", values: [{ name: "银色" }] }],
+      skuText: ["颜色: 银色"],
+      colors: ["银色"],
+      sizes: [],
+      skus: [{
+        skuId: "sku-silver",
+        attributes: { 颜色: "银色" },
+        priceWire: { amountMinor: "1350", currency: "CNY" as const },
+        stock: 159,
+        imageUrl: null,
+        weightKg: "0.08"
+      }],
+      capturedAt: "2026-07-24T08:00:00.000Z",
+      captureQuality: "detail_page_complete" as const,
+      diagnostics: {
+        version: 2 as const,
+        pageKind: "offer_detail" as const,
+        titleSource: "page_context" as const,
+        stableForMs: 2000,
+        fieldEvidence: {
+          title: "captured" as const,
+          mainImages: "captured" as const,
+          detail: "captured" as const,
+          attributes: "captured" as const,
+          price: "captured" as const,
+          stock: "captured" as const,
+          skus: "captured" as const,
+          weight: "captured" as const,
+          dimensions: "captured" as const
+        },
+        expectedSkuCount: 1,
+        capturedSkuCount: 1,
+        acceptedMainImages: 1,
+        acceptedDetailImages: 1,
+        rejectedImages: 0,
+        warnings: []
+      },
+      idempotencyKey: "1688:892408514788:batch_local_01"
+    };
+
+    const first = await localCaptures.save({ batchId: "batch_local_01", item });
+    const repeated = await localCaptures.save({ batchId: "batch_local_01", item });
+
+    expect(first).toMatchObject({ sourceItemId: item.sourceItemId, created: true });
+    expect(repeated).toEqual({ ...first, created: false });
+    const product = await handle.pool.query(
+      `SELECT state_source, state_automation, canonical_success_detail_id
+       FROM products WHERE id = $1`,
+      [first.productId]
+    );
+    expect(product.rows[0]).toEqual({
+      state_source: "local_captured",
+      state_automation: "not_started",
+      canonical_success_detail_id: null
+    });
+    const revision = await handle.pool.query(
+      `SELECT source_title, source_payload, working_draft
+       FROM product_revisions WHERE id = $1`,
+      [first.revisionId]
+    );
+    expect(revision.rows[0]).toMatchObject({
+      source_title: item.title,
+      source_payload: {
+        sourceItemId: item.sourceItemId,
+        title: item.title,
+        sourceAttributes: item.attributes,
+        saleAttributes: item.saleAttributes,
+        skuAttributes: item.skuAttributes,
+        skuText: item.skuText,
+        sourcePriceWire: item.sourcePriceWire,
+        sourcePriceRangeWire: item.sourcePriceRangeWire,
+        sourceStock: item.sourceStock,
+        itemNumber: item.itemNumber,
+        category: item.category,
+        weightKg: item.weightKg,
+        dimensionsCm: item.dimensionsCm,
+        colors: item.colors,
+        sizes: item.sizes,
+        skus: item.skus,
+        description: item.descriptionText,
+        captureQuality: "detail_page_complete",
+        captureDiagnostics: item.diagnostics,
+        captureIdempotencyKey: item.idempotencyKey
+      },
+      working_draft: {
+        sourceLocale: "zh-CN",
+        targetLocale: "th-TH"
+      }
+    });
+    expect(revision.rows[0].source_payload.mainImages[0]).toMatchObject({
+      url: item.mainImages[0]
+    });
+    const sourceRecords = await handle.pool.query(
+      "SELECT count(*)::integer AS count FROM miaoshou_source_records WHERE product_id = $1",
+      [first.productId]
+    );
+    expect(sourceRecords.rows[0]?.count).toBe(0);
+  });
+
   test("upserts the fixed local operator", async () => {
     const id = await catalog.upsertLocalOperator({
       handle: "local-operator",
@@ -493,6 +616,48 @@ describe("integration: durable pipeline repository", () => {
       { assetId: expect.any(String), url: "/assets/accepted.jpg", role: "primary", score: 0.87, perceptualHash: "same-hash" }
     ]);
   });
+
+  test("ignores stale one-slot canvasInputCapacity and defaults TK workflow input selection to five images", async () => {
+    const operatorId = await catalog.upsertLocalOperator({ handle: "canvas-capacity", displayName: "Canvas Capacity" });
+    const productId = await catalog.insertProduct({ operatorId, sourceUrl: "https://detail.1688.com/offer/capacity.html", locale: "th-TH", currency: "THB" });
+    const revisionId = await catalog.insertRevision({
+      productId,
+      draftVersion: 1,
+      sourceTitle: "capacity",
+      workingDraft: {
+        canvasInputCapacity: 1,
+        templateMatch: { templateId: "default", templateVersion: 1 },
+        imageSelection: { assetIds: ["asset-a", "asset-b"], referenceUrls: [], totalCount: 2 }
+      }
+    });
+    await handle.pool.query(
+      `INSERT INTO templates
+       (id, template_key, name, target_locale, visual_style, prompt_fragment, reference_asset_ids, version, enabled)
+       VALUES ('template-default-v1', 'default', 'Default', 'th-TH', 'clean ecommerce product photo', '', '[]'::jsonb, 1, true)`
+    );
+    await handle.pool.query(
+      `INSERT INTO assets
+       (id, product_id, revision_id, remote_url, kind, state, width, height, sha256, local_path, extension,
+        perceptual_hash, clarity, duplicate_distance, watermark_probability, collage_probability, non_product_probability, visual_score, chosen_role)
+       VALUES
+       ('asset-a', $1, $2, 'https://cdn.test/a.jpg', 'detail', 'ready', 1200, 1200, 'hash-a', '/assets/a.jpg', 'jpg',
+        'phash-a', 0.9, 8, 0.01, 0.01, 0.01, 0.9, 'primary'),
+       ('asset-b', $1, $2, 'https://cdn.test/b.jpg', 'detail', 'ready', 1200, 1200, 'hash-b', '/assets/b.jpg', 'jpg',
+        'phash-b', 0.8, 9, 0.01, 0.01, 0.01, 0.8, 'detail')`,
+      [productId, revisionId]
+    );
+
+    await expect(pipeline.loadSelectionInputs(revisionId)).resolves.toMatchObject({
+      capacity: 5
+    });
+    await expect(pipeline.loadPlan(revisionId)).resolves.toMatchObject({
+      canvasInputCapacity: undefined,
+      productImages: [
+        expect.objectContaining({ assetId: "asset-a" }),
+        expect.objectContaining({ assetId: "asset-b" })
+      ]
+    });
+  });
 });
 
 describe("integration: job repository claim semantics", () => {
@@ -647,9 +812,77 @@ describe("integration: job repository claim semantics", () => {
     await handle.pool.query("UPDATE jobs SET status = 'needs_input', remote_task_id = 'remote-1', error = '{\"code\":\"reconcile_required\"}'::jsonb WHERE id = $1", [external]);
     expect(await jobs.retrySafe(external, new Date("2026-07-16T00:00:00Z"))).toBe(false);
 
+    const recoverableCanvas = await jobs.enqueue({ kind: "canvas_generate", businessKey: "control:canvas-reconcile-failed", payload: { version: 1 } });
+    await handle.pool.query("UPDATE jobs SET status = 'needs_input', remote_task_id = 'remote-2', error = '{\"code\":\"reconcile_failed\"}'::jsonb WHERE id = $1", [recoverableCanvas]);
+    expect(await jobs.retrySafe(recoverableCanvas, new Date("2026-07-16T00:00:00Z"))).toBe(true);
+    row = await handle.pool.query("SELECT status, remote_task_id, error FROM jobs WHERE id = $1", [recoverableCanvas]);
+    expect(row.rows[0]).toMatchObject({ status: "queued", remote_task_id: "remote-2", error: null });
+
+    const recoverableCanvasArchive = await jobs.enqueue({ kind: "canvas_generate", businessKey: "control:canvas-zero-valid-outputs", payload: { version: 1 } });
+    await handle.pool.query("UPDATE jobs SET status = 'needs_input', remote_task_id = 'remote-3', error = '{\"code\":\"canvas_zero_valid_outputs\"}'::jsonb WHERE id = $1", [recoverableCanvasArchive]);
+    expect(await jobs.retrySafe(recoverableCanvasArchive, new Date("2026-07-16T00:00:00Z"))).toBe(true);
+    row = await handle.pool.query("SELECT status, remote_task_id, error FROM jobs WHERE id = $1", [recoverableCanvasArchive]);
+    expect(row.rows[0]).toMatchObject({ status: "queued", remote_task_id: "remote-3", error: null });
+
     const unknownWithoutRemoteId = await jobs.enqueue({ kind: "canvas_generate", businessKey: "control:unknown-without-id", payload: { version: 1 } });
     await handle.pool.query("UPDATE jobs SET status = 'needs_input', remote_task_id = NULL, error = '{\"code\":\"reconcile_required\"}'::jsonb WHERE id = $1", [unknownWithoutRemoteId]);
     expect(await jobs.retrySafe(unknownWithoutRemoteId, new Date("2026-07-16T00:00:00Z"))).toBe(false);
+  });
+
+  test("exhausting a retry stores a terminal ExternalFailure shape", async () => {
+    const exhausted = await jobs.enqueue({
+      kind: "canvas_generate",
+      businessKey: "control:retry-exhausted",
+      payload: { version: 1 },
+      maxAttempts: 1
+    });
+    const claimed = await jobs.claim("worker-exhausted", new Date("2026-07-16T00:00:00Z"), 30_000);
+    expect(claimed?.jobId).toBe(exhausted);
+    expect(await jobs.retry(
+      exhausted,
+      "worker-exhausted",
+      claimed!.leaseToken,
+      new Date("2026-07-16T00:00:01Z"),
+      30_000,
+      {
+        kind: "retryable",
+        code: "canvas.network",
+        safeMessage: "Canvas is temporarily unavailable"
+      }
+    )).toBe(true);
+
+    const row = await handle.pool.query("SELECT status, error, next_attempt_at FROM jobs WHERE id = $1", [exhausted]);
+    expect(row.rows[0]).toMatchObject({
+      status: "failed",
+      error: {
+        kind: "fatal",
+        code: "attempts_exhausted",
+        safeMessage: "Maximum attempts exhausted"
+      },
+      next_attempt_at: null
+    });
+  });
+
+  test("an expired internal job at its attempt limit stores a terminal ExternalFailure shape", async () => {
+    const exhausted = await jobs.enqueue({
+      kind: "pricing_calculate",
+      businessKey: "control:expired-exhausted",
+      payload: { version: 1 },
+      maxAttempts: 1
+    });
+    const startedAt = new Date("2026-07-16T00:00:00Z");
+    expect((await jobs.claim("worker-expired", startedAt, 1_000))?.jobId).toBe(exhausted);
+    expect(await jobs.releaseExpired(new Date("2026-07-16T00:00:02Z"))).toBe(1);
+
+    const row = await handle.pool.query("SELECT status, error FROM jobs WHERE id = $1", [exhausted]);
+    expect(row.rows[0]).toMatchObject({
+      status: "failed",
+      error: {
+        kind: "fatal",
+        code: "attempts_exhausted",
+        safeMessage: "Maximum attempts exhausted"
+      }
+    });
   });
 
   test("historical Miaoshou result_unknown without a marker stays manual and cannot be claimed for edit", async () => {
@@ -673,7 +906,7 @@ describe("integration: job repository claim semantics", () => {
   test("expired paid or external jobs require review instead of being automatically charged again", async () => {
     const startedAt = new Date("2026-07-16T00:00:00Z");
     const expiredAt = new Date("2026-07-16T00:00:01Z");
-    for (const kind of ["listing_generate", "exchange_rate_refresh"]) {
+    for (const kind of ["listing_generate", "exchange_rate_refresh", "miaoshou_prepare_writeback"]) {
       const id = await jobs.enqueue({ kind, businessKey: `paid-expiry:${kind}`, payload: { version: 1 } });
       expect((await jobs.claim(`worker-${kind}`, startedAt, 10))?.jobId).toBe(id);
       expect(await jobs.releaseExpired(expiredAt)).toBe(1);
@@ -1039,6 +1272,75 @@ describe("integration: exchange rate snapshots", () => {
 });
 
 describe("integration: automation run repository", () => {
+  test("starts only complete V3 local captures", async () => {
+    const operatorId = await catalog.upsertLocalOperator({
+      handle: "local-quality-gate",
+      displayName: "Local Quality Gate"
+    });
+    const productId = await catalog.insertProduct({
+      operatorId,
+      sourceUrl: "https://detail.1688.com/offer/932820256180.html",
+      sourceItemId: "932820256180",
+      locale: "th-TH",
+      currency: "THB"
+    });
+    await handle.pool.query(
+      "UPDATE products SET state_source = 'local_captured' WHERE id = $1",
+      [productId]
+    );
+    const revisionId = await catalog.insertRevision({
+      productId,
+      draftVersion: 1,
+      sourceTitle: "洛阳千易针织有限公司",
+      workingDraft: {}
+    });
+    await handle.pool.query(
+      `UPDATE product_revisions
+       SET source_payload = $2::jsonb
+       WHERE id = $1`,
+      [
+        revisionId,
+        JSON.stringify({
+          captureQuality: "detail_page",
+          mainImages: [{ url: "https://cbu01.alicdn.com/164-32.png" }]
+        })
+      ]
+    );
+
+    await expect(automations.createOrReuseAndEnqueue({
+      revisionId,
+      processingVersion: 1
+    })).rejects.toThrow("local_capture_quality_invalid");
+
+    await handle.pool.query(
+      `UPDATE product_revisions
+       SET source_payload = jsonb_set(source_payload, '{captureQuality}', '"detail_page_partial"')
+       WHERE id = $1`,
+      [revisionId]
+    );
+    await expect(automations.createOrReuseAndEnqueue({
+      revisionId,
+      processingVersion: 1
+    })).rejects.toThrow("local_capture_quality_invalid");
+
+    const runs = await handle.pool.query(
+      "SELECT count(*)::integer AS count FROM automation_runs WHERE revision_id = $1",
+      [revisionId]
+    );
+    expect(runs.rows[0]?.count).toBe(0);
+
+    await handle.pool.query(
+      `UPDATE product_revisions
+       SET source_payload = jsonb_set(source_payload, '{captureQuality}', '"detail_page_complete"')
+       WHERE id = $1`,
+      [revisionId]
+    );
+    await expect(automations.createOrReuseAndEnqueue({
+      revisionId,
+      processingVersion: 1
+    })).resolves.toMatchObject({ created: true });
+  });
+
   test("concurrent createOrReuseAndEnqueue creates one run and one asset archive job", async () => {
     const opId = await catalog.upsertLocalOperator({
       handle: "local-operator",
@@ -1141,7 +1443,7 @@ describe("integration: automation run repository", () => {
 });
 
 describe("integration: ApprovalRepository.confirmAndEnqueue", () => {
-  async function readyApprovalFixture() {
+  async function readyApprovalFixture(options: { canonical?: boolean } = {}) {
     const opId = await catalog.upsertLocalOperator({
       handle: "local-operator",
       displayName: "Local Operator"
@@ -1153,7 +1455,13 @@ describe("integration: ApprovalRepository.confirmAndEnqueue", () => {
       locale: "th-TH",
       currency: "THB"
     });
-    await handle.pool.query("UPDATE products SET canonical_success_detail_id = 'detail-canonical', state_automation = 'ready' WHERE id = $1", [productId]);
+    await handle.pool.query(
+      `UPDATE products
+       SET canonical_success_detail_id = $2, state_automation = 'ready',
+           state_source = CASE WHEN $2::text IS NULL THEN 'local_captured' ELSE 'success' END
+       WHERE id = $1`,
+      [productId, options.canonical === false ? null : "detail-canonical"]
+    );
     const revisionId = await catalog.insertRevision({
       productId,
       draftVersion: 1,
@@ -1205,7 +1513,6 @@ describe("integration: ApprovalRepository.confirmAndEnqueue", () => {
       productId,
       expectedDraftVersion: 1,
       expectedListingRunId: "run-listing-1",
-      expectedPricingRunId: "run-pricing-1",
       expectedTemplateVersion: 3,
       orderedFinalAssetIds: ["asset-a", "asset-b"]
     };
@@ -1226,15 +1533,98 @@ describe("integration: ApprovalRepository.confirmAndEnqueue", () => {
       source_item_id: "abc",
       canonical_success_detail_id: "detail-canonical",
       title: "Thai title",
-      price_minor: "25900",
-      price_currency: "THB",
-      weight_kg: "0.35",
+      price_minor: null,
+      price_currency: null,
+      weight_kg: null,
       state: "approved"
     });
     expect(snapshots.rows[0].skus[0]).toMatchObject({ skuId: "sku-red", assetIds: ["asset-a"] });
-    expect(snapshots.rows[0].skus[0].priceWire).toEqual({ amountMinor: "25900", currency: "THB" });
+    expect(snapshots.rows[0].skus[0].priceWire).toBeUndefined();
     expect(syncs.rows[0].count).toBe(1);
     expect(queued.rows[0].count).toBe(1);
+  });
+
+  test("queues a late Miaoshou import when a local capture has no canonical detail id", async () => {
+    const { productId } = await readyApprovalFixture({ canonical: false });
+
+    const confirmed = await approvals.confirmAndEnqueue({
+      version: 1,
+      productId,
+      expectedDraftVersion: 1,
+      expectedListingRunId: "run-listing-1",
+      expectedTemplateVersion: 3,
+      orderedFinalAssetIds: ["asset-a", "asset-b"]
+    });
+
+    const snapshot = await handle.pool.query(
+      "SELECT canonical_success_detail_id FROM approval_snapshots WHERE id = $1",
+      [confirmed.approvalSnapshotId]
+    );
+    const queued = await handle.pool.query(
+      "SELECT kind, payload FROM jobs WHERE payload->>'approvalSnapshotId' = $1",
+      [confirmed.approvalSnapshotId]
+    );
+    expect(snapshot.rows[0]?.canonical_success_detail_id).toBeNull();
+    expect(queued.rows).toHaveLength(1);
+    expect(queued.rows[0]).toMatchObject({
+      kind: "miaoshou_prepare_writeback",
+      payload: {
+        version: 1,
+        approvalSnapshotId: confirmed.approvalSnapshotId,
+        productId,
+        sourceUrl: "https://detail.1688.com/offer/abc.html"
+      }
+    });
+
+    const claimed = await jobs.claim("worker-prepare", new Date(), 30_000);
+    expect(claimed?.kind).toBe("miaoshou_prepare_writeback");
+    const bound = await approvals.bindCanonicalAndEnqueueEdit({
+      approvalSnapshotId: confirmed.approvalSnapshotId,
+      productId,
+      result: {
+        fetchDetailId: "fetch-late",
+        skippedDetailId: null,
+        canonicalSuccessDetailId: "detail-late",
+        detail: {
+          detailId: "detail-late",
+          sourceItemId: "abc" as never,
+          sourceUrl: "https://detail.1688.com/offer/abc.html",
+          title: "Source",
+          itemNumber: null,
+          description: "",
+          category: null,
+          sourcePriceWire: null,
+          sourceStock: null,
+          weightKg: null,
+          dimensionsCm: null,
+          mainImages: [],
+          detailImages: [],
+          sourceAttributes: [],
+          saleAttributes: [],
+          colors: [],
+          sizes: [],
+          skus: []
+        }
+      }
+    }, {
+      jobId: claimed!.jobId,
+      owner: "worker-prepare",
+      leaseToken: claimed!.leaseToken
+    });
+    expect(bound).toBe(true);
+    const transitioned = await handle.pool.query(
+      `SELECT
+         (SELECT canonical_success_detail_id FROM products WHERE id = $1) AS product_detail_id,
+         (SELECT canonical_success_detail_id FROM approval_snapshots WHERE id = $2) AS approval_detail_id,
+         (SELECT count(*)::integer FROM jobs
+          WHERE kind = 'miaoshou_edit' AND payload->>'approvalSnapshotId' = $2) AS edit_jobs`,
+      [productId, confirmed.approvalSnapshotId]
+    );
+    expect(transitioned.rows[0]).toEqual({
+      product_detail_id: "detail-late",
+      approval_detail_id: "detail-late",
+      edit_jobs: 1
+    });
   });
 
   test("rejects stale confirmation with conflict metadata and no writes", async () => {
@@ -1244,7 +1634,6 @@ describe("integration: ApprovalRepository.confirmAndEnqueue", () => {
       productId,
       expectedDraftVersion: 1,
       expectedListingRunId: "run-listing-1",
-      expectedPricingRunId: "run-pricing-1",
       expectedTemplateVersion: 2,
       orderedFinalAssetIds: ["asset-a", "asset-b"]
     };
@@ -1263,19 +1652,18 @@ describe("integration: ApprovalRepository.confirmAndEnqueue", () => {
       productId,
       expectedDraftVersion: 1,
       expectedListingRunId: "run-listing-1",
-      expectedPricingRunId: "run-pricing-1",
       expectedTemplateVersion: 3,
       orderedFinalAssetIds: ["asset-a", "asset-b"]
     });
     const snapshot = await approvals.loadSnapshot(confirmed.approvalSnapshotId);
-    expect(snapshot.skus[0]?.priceWire).toEqual({ amountMinor: "25900", currency: "THB" });
+    expect(snapshot.priceWire).toBeNull();
+    expect(snapshot.skus[0]?.priceWire).toBeUndefined();
     expect(Object.isFrozen(snapshot)).toBe(true);
     expect(Object.isFrozen(snapshot.attributes[0])).toBe(true);
     expect(Object.isFrozen(snapshot.priceWire)).toBe(true);
     expect(Object.isFrozen(snapshot.dimensions)).toBe(true);
     expect(Object.isFrozen(snapshot.skus[0])).toBe(true);
     expect(Object.isFrozen(snapshot.skus[0]?.attributes)).toBe(true);
-    expect(Object.isFrozen(snapshot.skus[0]?.priceWire)).toBe(true);
     expect(Object.isFrozen(snapshot.skus[0]?.assetIds)).toBe(true);
     expect(() => { (snapshot.attributes[0] as { value: string }).value = "polyester"; }).toThrow();
     expect(() => { (snapshot.priceWire as { amountMinor: string }).amountMinor = "1"; }).toThrow();
@@ -1322,7 +1710,6 @@ describe("integration: ApprovalRepository.confirmAndEnqueue", () => {
       productId,
       expectedDraftVersion: 1,
       expectedListingRunId: "run-listing-1",
-      expectedPricingRunId: "run-pricing-1",
       expectedTemplateVersion: 3,
       orderedFinalAssetIds: ["asset-a", "asset-b"]
     };
@@ -1344,7 +1731,6 @@ describe("integration: ApprovalRepository.confirmAndEnqueue", () => {
       productId,
       expectedDraftVersion: 1,
       expectedListingRunId: "run-listing-1",
-      expectedPricingRunId: "run-pricing-1",
       expectedTemplateVersion: 3,
       orderedFinalAssetIds: ["asset-a", "asset-b"]
     });
@@ -1366,7 +1752,7 @@ describe("integration: ApprovalRepository.confirmAndEnqueue", () => {
     const { productId } = await readyApprovalFixture();
     const confirmed = await approvals.confirmAndEnqueue({
       version: 1, productId, expectedDraftVersion: 1,
-      expectedListingRunId: "run-listing-1", expectedPricingRunId: "run-pricing-1",
+      expectedListingRunId: "run-listing-1",
       expectedTemplateVersion: 3, orderedFinalAssetIds: ["asset-a", "asset-b"]
     });
     const claimed = await jobs.claim("sync-worker", new Date(), 30_000);
@@ -1391,7 +1777,7 @@ describe("integration: ApprovalRepository.confirmAndEnqueue", () => {
       const { productId } = await readyApprovalFixture();
       const confirmed = await approvals.confirmAndEnqueue({
         version: 1, productId, expectedDraftVersion: 1,
-        expectedListingRunId: "run-listing-1", expectedPricingRunId: "run-pricing-1",
+        expectedListingRunId: "run-listing-1",
         expectedTemplateVersion: 3, orderedFinalAssetIds: ["asset-a", "asset-b"]
       });
       await handle.pool.query(
@@ -1410,7 +1796,7 @@ describe("integration: ApprovalRepository.confirmAndEnqueue", () => {
     const { productId } = await readyApprovalFixture();
     const confirmed = await approvals.confirmAndEnqueue({
       version: 1, productId, expectedDraftVersion: 1,
-      expectedListingRunId: "run-listing-1", expectedPricingRunId: "run-pricing-1",
+      expectedListingRunId: "run-listing-1",
       expectedTemplateVersion: 3, orderedFinalAssetIds: ["asset-a", "asset-b"]
     });
     await handle.pool.query(
@@ -1426,7 +1812,7 @@ describe("integration: ApprovalRepository.confirmAndEnqueue", () => {
     const { productId } = await readyApprovalFixture();
     const confirmed = await approvals.confirmAndEnqueue({
       version: 1, productId, expectedDraftVersion: 1,
-      expectedListingRunId: "run-listing-1", expectedPricingRunId: "run-pricing-1",
+      expectedListingRunId: "run-listing-1",
       expectedTemplateVersion: 3, orderedFinalAssetIds: ["asset-a", "asset-b"]
     });
     const claimed = await jobs.claim("concurrent-sync-worker", new Date(), 30_000);

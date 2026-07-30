@@ -14,6 +14,7 @@ const snapshot = {
   pricingRunId: "pricing-2",
   templateVersion: 3,
   orderedFinalAssetIds: ["asset-b", "asset-a"],
+  orderedFinalAssetLocalPaths: ["/assets/b.png", "/assets/a.png"],
   sourcePlatform: "1688",
   sourceCanonicalUrl: "https://detail.1688.com/offer/892408514788.html",
   sourceItemId: "892408514788",
@@ -108,7 +109,7 @@ describe("createMiaoshouEditHandler", () => {
     expect(deps.repository.persistReconciliationContext.mock.invocationCallOrder[0])
       .toBeLessThan(persistedMarker.mock.invocationCallOrder[0]!);
     expect(persistedMarker.mock.invocationCallOrder[0]).toBeLessThan(deps.edit.applyEdit.mock.invocationCallOrder[0]!);
-    expect(deps.staging.stage).toHaveBeenCalledWith({ localAssetIds: ["asset-b", "asset-a"], purpose: "miaoshou_edit" });
+    expect(deps.staging.stage).toHaveBeenCalledWith({ localAssetIds: ["/assets/b.png", "/assets/a.png"], purpose: "miaoshou_edit" });
     expect(deps.reachability.assertReachable).toHaveBeenCalledWith(["https://stage.test/asset-b", "https://stage.test/asset-a"]);
     expect(deps.edit.applyEdit).toHaveBeenCalledWith(expect.objectContaining({
       approvalSnapshot: snapshot,

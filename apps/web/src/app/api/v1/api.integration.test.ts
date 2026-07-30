@@ -286,13 +286,18 @@ describe("v1 API integration", () => {
         rows: [{
           product_id: "product-1",
           current_revision_id: "revision-1",
+          source_url: "https://detail.1688.com/offer/1688-1.html",
+          collected_at: new Date("2026-07-24T08:00:00.000Z"),
+          updated_at: new Date("2026-07-24T08:01:00.000Z"),
           source_item_id: "1688-1",
+          thumbnail_url: "https://images.test/source.png",
           canonical_source_title: "Source title",
           target_title: "Target title",
           canonical_success_detail_id: "detail-1",
           locale: "th-TH",
           currency: "THB",
           price_minor: "29900",
+          source_image_count: 12,
           image_count: 8,
           canvas_outputs: ["https://images.test/one.png", "bad-value", null],
           state_source: "success",
@@ -314,8 +319,55 @@ describe("v1 API integration", () => {
     expect(payload.items[0]).toMatchObject({
       productId: "product-1",
       currentRevisionId: "revision-1",
+      sourceImageCount: 12,
       imageCount: 8,
       usableCanvasOutputCount: 1
+    });
+  });
+
+  it("projects latest Canvas job needs_input as a visible product-pool failure", async () => {
+    const service = new ProductService({
+      query: async () => ({
+        rows: [{
+          product_id: "product-1",
+          current_revision_id: "revision-1",
+          source_url: "https://detail.1688.com/offer/1.html",
+          collected_at: new Date("2026-07-22T00:00:00.000Z"),
+          updated_at: new Date("2026-07-22T00:00:00.000Z"),
+          source_item_id: "1688-1",
+          canonical_source_title: "Source title",
+          target_title: "Target title",
+          canonical_success_detail_id: "detail-1",
+          locale: "th-TH",
+          currency: "THB",
+          price_minor: "29900",
+          thumbnail_url: "https://images.test/source.png",
+          source_image_count: 12,
+          image_count: 8,
+          canvas_outputs: [],
+          state_source: "success",
+          state_automation: "ready",
+          state_asset_archive: "ready",
+          state_listing: "ready",
+          state_canvas: "not_started",
+          latest_canvas_job_status: "needs_input",
+          latest_canvas_job_error: { code: "reconcile_failed" },
+          state_approval: "unapproved",
+          state_miaoshou_edit: "not_started",
+          warning_codes: []
+        }]
+      })
+    });
+
+    const response = await createProductsHandler({ service })(
+      new Request("http://127.0.0.1/api/v1/products")
+    );
+    const payload = await response.json();
+
+    expect(payload.items[0]).toMatchObject({
+      productId: "product-1",
+      canvas: "failed",
+      usableCanvasOutputCount: 0
     });
   });
 
@@ -558,6 +610,79 @@ describe.runIf(Boolean(pgTestUrl))("v1 API PostgreSQL integration", () => {
         kind: "listing_generate",
         status: "queued",
         payload: { version: 1, revisionId: result.revisionId }
+      });
+    } finally {
+      await pool.end();
+    }
+  }, 60_000);
+
+  it("gives Canvas-only reruns enough polling attempts for live image generation", async () => {
+    const pool = new pg.Pool({ connectionString: pgTestUrl });
+    try {
+      await pool.query("DROP SCHEMA IF EXISTS public CASCADE");
+      await pool.query("CREATE SCHEMA public");
+      await pool.query(INITIAL_SQL);
+      await pool.query(
+        `INSERT INTO local_operators (id, handle, display_name)
+         VALUES ('operator-canvas-rerun', 'canvas-rerun', 'Canvas Rerun')`
+      );
+      await pool.query(
+        `INSERT INTO products (id, operator_id, source_url, source_item_id, state_source)
+         VALUES ('product-canvas-rerun', 'operator-canvas-rerun',
+           'https://detail.1688.com/offer/892408514788.html', '892408514788', 'success')`
+      );
+      await pool.query(
+        `INSERT INTO product_revisions
+          (id, product_id, draft_version, source_title, source_payload, working_draft)
+         VALUES ('revision-canvas-rerun-original', 'product-canvas-rerun', 7, '四叶草项链',
+           '{"imageUrls":["https://images.test/original.jpg"]}',
+           '{"targetLocale":"th-TH","targetTitle":"สร้อยคอ","templateMatch":{"templateId":"TK","templateVersion":1},"imageSelection":{"assetIds":["asset-canvas-rerun-original"]}}')`
+      );
+      await pool.query(
+        `INSERT INTO listing_drafts
+         (id, product_id, revision_id, draft_version, target_locale, style, title, description, attributes)
+         VALUES ('listing-canvas-rerun-original', 'product-canvas-rerun', 'revision-canvas-rerun-original',
+           7, 'th-TH', 'marketplace', 'สร้อยคอ', 'รายละเอียด', '[]'::jsonb)`
+      );
+      await pool.query(
+        `INSERT INTO pricing_runs
+         (id, product_id, revision_id, draft_version, state, final_price_minor, final_currency)
+         VALUES ('pricing-canvas-rerun-original', 'product-canvas-rerun', 'revision-canvas-rerun-original',
+           7, 'ready', '25900', 'THB')`
+      );
+      await pool.query(
+        `INSERT INTO assets
+         (id, product_id, revision_id, remote_url, kind, state, width, height, sha256,
+          local_path, extension, perceptual_hash, visual_score, chosen_role)
+         VALUES ('asset-canvas-rerun-original', 'product-canvas-rerun', 'revision-canvas-rerun-original',
+           'https://images.test/original.jpg', 'original', 'ready', 1200, 1200,
+           'f2f824b84fc627b3ef3c33a75b951ab3be37d1342da76a9b2446157867c9a840',
+           '/data/assets/f2/f2f824b84fc627b3ef3c33a75b951ab3be37d1342da76a9b2446157867c9a840.jpg',
+           'jpg', 'original-phash', 0.91, 'primary')`
+      );
+
+      const reruns = createPgRerunPort(
+        createPgApprovalInvalidationPort(() => pool),
+        () => pool
+      );
+      const response = await createRerunHandler({ reruns })(
+        jsonRequest("http://127.0.0.1/api/v1/products/product-canvas-rerun/rerun", {
+          version: 1,
+          revisionId: "revision-canvas-rerun-original",
+          expectedDraftVersion: 7,
+          startNode: "canvas"
+        }),
+        { params: Promise.resolve({ productId: "product-canvas-rerun" }) }
+      );
+
+      expect(response.status).toBe(202);
+      const result = await response.json() as { jobId: string };
+      expect((await pool.query(
+        "SELECT kind, max_attempts FROM jobs WHERE id = $1",
+        [result.jobId]
+      )).rows[0]).toMatchObject({
+        kind: "canvas_generate",
+        max_attempts: 30
       });
     } finally {
       await pool.end();

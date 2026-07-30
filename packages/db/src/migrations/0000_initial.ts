@@ -316,7 +316,7 @@ CREATE TABLE IF NOT EXISTS approval_snapshots (
   revision_id      TEXT REFERENCES product_revisions(id) ON DELETE SET NULL,
   draft_version    INTEGER NOT NULL,
   listing_run_id   TEXT NOT NULL,
-  pricing_run_id   TEXT NOT NULL,
+  pricing_run_id   TEXT,
   template_version INTEGER NOT NULL,
   ordered_final_asset_ids JSONB NOT NULL DEFAULT '[]'::jsonb,
   source_platform  TEXT NOT NULL DEFAULT '1688',
@@ -329,10 +329,10 @@ CREATE TABLE IF NOT EXISTS approval_snapshots (
   description      TEXT NOT NULL,
   attributes       JSONB NOT NULL DEFAULT '[]'::jsonb,
   item_number      TEXT,
-  price_minor      TEXT NOT NULL,
-  price_currency   TEXT NOT NULL,
-  stock            INTEGER NOT NULL,
-  weight_kg        TEXT NOT NULL,
+  price_minor      TEXT,
+  price_currency   TEXT,
+  stock            INTEGER,
+  weight_kg        TEXT,
   dimensions       JSONB,
   skus             JSONB NOT NULL DEFAULT '[]'::jsonb,
   state            TEXT NOT NULL DEFAULT 'unapproved',
@@ -342,6 +342,13 @@ CREATE TABLE IF NOT EXISTS approval_snapshots (
   CONSTRAINT approval_snapshots_unique_triplet UNIQUE NULLS NOT DISTINCT
     (product_id, revision_id, draft_version, listing_run_id, pricing_run_id)
 );
+
+ALTER TABLE approval_snapshots ALTER COLUMN pricing_run_id DROP NOT NULL;
+ALTER TABLE approval_snapshots ALTER COLUMN price_minor DROP NOT NULL;
+ALTER TABLE approval_snapshots ALTER COLUMN price_currency DROP NOT NULL;
+ALTER TABLE approval_snapshots ALTER COLUMN stock DROP NOT NULL;
+ALTER TABLE approval_snapshots ALTER COLUMN weight_kg DROP NOT NULL;
+ALTER TABLE approval_snapshots ALTER COLUMN canonical_success_detail_id DROP NOT NULL;
 
 CREATE TABLE IF NOT EXISTS miaoshou_syncs (
   id               TEXT PRIMARY KEY,

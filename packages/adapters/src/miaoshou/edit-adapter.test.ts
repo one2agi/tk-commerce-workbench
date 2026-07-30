@@ -55,39 +55,50 @@ function approval(): ApprovalSnapshotV1 {
 const remoteUrls = ["https://staging.test/final-b.png", "https://staging.test/final-a.png"];
 
 describe("Miaoshou common collect-box edit mapper", () => {
-  it("converts minor money once, preserves kg/cm once and maps ordered remote images", () => {
+  it("maps only title, translated content and images without price, stock or weight fields", () => {
+    const mapped = mapApprovalSnapshotToMiaoshouEdit({
+      ...approval(),
+      priceWire: null,
+      weightKg: null,
+      skus: []
+    }, remoteUrls);
+
+    expect(mapped).toMatchObject({
+      title: "กางเกงขาสั้นผู้ชาย",
+      notesText: "คำอธิบายสินค้า",
+      notes: "คำอธิบายสินค้า",
+      imgUrls: remoteUrls
+    });
+    expect(mapped).not.toHaveProperty("price");
+    expect(mapped).not.toHaveProperty("stock");
+    expect(mapped).not.toHaveProperty("weight");
+    expect(mapped).not.toHaveProperty("skuMap");
+  });
+
+  it("ignores approved price, stock, weight and sku price while preserving ordered remote images", () => {
     const mapped = mapApprovalSnapshotToMiaoshouEdit(approval(), remoteUrls);
 
     expect(mapped).toMatchObject({
       title: "กางเกงขาสั้นผู้ชาย",
-      price: 71.28,
-      stock: 200,
-      weight: 0.3,
-      packageLength: 30,
-      packageWidth: 20.5,
-      packageHeight: 5,
       imgUrls: remoteUrls
     });
-    expect(mapped.skuMap[";แดง;S;"]).toMatchObject({
-      itemNum: "SKU-RED-S",
-      price: 80.5,
-      stock: 50,
-      weight: 0.3,
-      imgUrl: "https://staging.test/final-a.png"
-    });
+    expect(mapped).not.toHaveProperty("price");
+    expect(mapped).not.toHaveProperty("stock");
+    expect(mapped).not.toHaveProperty("weight");
+    expect(mapped).not.toHaveProperty("skuMap");
   });
 
-  it("uses the same single minor-to-major conversion for approved CNY values", () => {
+  it("truncates source attributes to Miaoshou's 255-character field limit", () => {
+    const longValue = "红".repeat(300);
     const snapshot: ApprovalSnapshotV1 = {
       ...approval(),
-      currency: "CNY",
-      priceWire: { amountMinor: "600", currency: "CNY" },
-      skus: approval().skus.map((sku) => ({ ...sku, priceWire: { amountMinor: "650", currency: "CNY" as const } }))
+      attributes: [{ name: "颜色".repeat(160), value: longValue }]
     };
 
     const mapped = mapApprovalSnapshotToMiaoshouEdit(snapshot, remoteUrls);
-    expect(mapped.price).toBe(6);
-    expect(mapped.skuMap[";แดง;S;"]?.price).toBe(6.5);
+
+    expect(mapped.sourceAttrs[0]?.name).toHaveLength(255);
+    expect(mapped.sourceAttrs[0]?.value).toHaveLength(255);
   });
 
   it("rejects reordered/missing staged URLs instead of silently changing approval order", () => {
@@ -132,26 +143,10 @@ describe("Miaoshou common collect-box edit adapter", () => {
     const expected: MiaoshouEditExpectation = {
       version: 1,
       title: detail.title,
-      itemNum: detail.itemNum,
       notesText: detail.notesText,
       notes: detail.notes,
-      price: detail.price,
-      stock: detail.stock,
-      weight: detail.weight,
-      packageLength: detail.packageLength,
-      packageWidth: detail.packageWidth,
-      packageHeight: detail.packageHeight,
       imgUrlSha256: detail.imgUrls.map(sha256Text),
-      sourceAttrs: detail.sourceAttrs,
-      // The real GET fixture exposes only price/stock per SKU. These sent fields
-      // are deliberately different/unobservable and must not cause false failure.
-      skuMap: Object.fromEntries(Object.entries(detail.skuMap).map(([key, value]) => [key, {
-        itemNum: `sent-${key}`,
-        price: (value as any).price,
-        stock: (value as any).stock,
-        weight: 9.99,
-        imgUrlSha256: "f".repeat(64)
-      }]))
+      sourceAttrs: detail.sourceAttrs
     };
     const adapter = createMiaoshouEditAdapter({
       http: { post: vi.fn(async () => real) } as MiaoshouHttp,
@@ -162,18 +157,16 @@ describe("Miaoshou common collect-box edit adapter", () => {
       .resolves.toEqual({ remoteDetailId: "3799770548", state: "applied" });
   });
 
-  it("returns no_change when a real-fixture observable SKU field differs", async () => {
+  it("returns no_change when an edited observable field differs", async () => {
     const real = await fixture("detail-3799770548.json");
     const detail = real.data.editCommonCollectBoxDetail as Record<string, any>;
-    const [firstKey] = Object.keys(detail.skuMap);
     const expected: MiaoshouEditExpectation = {
-      version: 1, title: detail.title, itemNum: detail.itemNum, notesText: detail.notesText, notes: detail.notes,
-      price: detail.price, stock: detail.stock, weight: detail.weight,
-      packageLength: detail.packageLength, packageWidth: detail.packageWidth, packageHeight: detail.packageHeight,
-      imgUrlSha256: detail.imgUrls.map(sha256Text), sourceAttrs: detail.sourceAttrs,
-      skuMap: Object.fromEntries(Object.entries(detail.skuMap).map(([key, value]) => [key, {
-        itemNum: "unobservable", price: (value as any).price + (key === firstKey ? 1 : 0), stock: (value as any).stock, weight: 1
-      }]))
+      version: 1,
+      title: `${detail.title} changed`,
+      notesText: detail.notesText,
+      notes: detail.notes,
+      imgUrlSha256: detail.imgUrls.map(sha256Text),
+      sourceAttrs: detail.sourceAttrs
     };
     const adapter = createMiaoshouEditAdapter({ http: { post: vi.fn(async () => real) } as MiaoshouHttp, expectationResolver: { resolve: vi.fn().mockResolvedValue(expected) } });
     await expect(adapter.reconcileByCanonicalDetailId({ canonicalSuccessDetailId: "3799770548", sourceItemId: sourceItemId("892408514788") }))
@@ -208,8 +201,58 @@ describe("Miaoshou common collect-box edit adapter", () => {
     expect(body.commonCollectBoxDetailId).toBe(3799770548);
     expect(body.ossMd5).toBe("before-md5");
     expect(body.editCommonCollectBoxDetail.sourceList).toEqual(current.data.editCommonCollectBoxDetail.sourceList);
-    expect(body.editCommonCollectBoxDetail.skuMap[";แดง;S;"]).toMatchObject({ oriPrice: 8, oriStock: 60, itemNum: "SKU-RED-S", price: 80.5, stock: 50 });
+    expect(body.editCommonCollectBoxDetail).toMatchObject({
+      title: "กางเกงขาสั้นผู้ชาย",
+      notesText: "คำอธิบายสินค้า",
+      notes: "คำอธิบายสินค้า",
+      imgUrls: remoteUrls
+    });
+    expect(body.editCommonCollectBoxDetail.skuMap[";แดง;S;"]).toMatchObject({ oriPrice: 8, oriStock: 60, itemNum: "SKU-RED-S", price: 6, stock: 60, weight: 0.3 });
     expect(body.editCommonCollectBoxDetail.skuMap[";แดง;S;"]).not.toHaveProperty("attributes");
+  });
+
+  it("caps sale-property maps and keeps SKU combinations aligned before editing", async () => {
+    const success = await fixture("edit-success.json");
+    const largeApproval: ApprovalSnapshotV1 = {
+      ...approval(),
+      skus: Array.from({ length: 132 }, (_, index) => {
+        const colorIndex = Math.floor(index / 2);
+        const size = index % 2 === 0 ? "A" : "B";
+        return {
+          skuId: `SKU-${colorIndex}-${size}`,
+          attributes: { สี: `color-${colorIndex}`, ขนาด: size },
+          priceWire: { amountMinor: "8050", currency: "THB" as const },
+          stock: 50,
+          assetIds: [assetId("asset-a")]
+        };
+      })
+    };
+    const current = {
+      result: "success", code: "200", data: {
+        ossMd5: "before-md5",
+        editCommonCollectBoxDetail: {
+          commonCollectBoxDetailId: 3799770548,
+          sourceList: [{ source: "1688", sourceItemId: "892408514788" }],
+          colorMap: Object.fromEntries(Array.from({ length: 66 }, (_, index) => [`color-${index}`, { name: `color-${index}` }])),
+          sizeMap: { A: { name: "A" }, B: { name: "B" } },
+          saleProp3Map: Array.from({ length: 55 }, (_, index) => ({ name: `prop-${index}` })),
+          skuMap: Object.fromEntries(largeApproval.skus.map((sku) => [`;${sku.attributes.สี};${sku.attributes.ขนาด};`, { itemNum: sku.skuId, price: 1, stock: 1, weight: 0.3 }]))
+        }
+      }
+    };
+    const post = vi.fn(async (path: string) => path.includes("get_common_collect_box_detail") ? current : success);
+    const adapter = createMiaoshouEditAdapter({ http: { post } as MiaoshouHttp });
+
+    await expect(adapter.applyEdit({ approvalSnapshot: largeApproval, orderedRemoteAssetUrls: remoteUrls, idempotencyKey: idempotencyKey("edit:limits") }))
+      .resolves.toEqual({ kind: "succeeded", remoteDetailId: "3799770548" });
+
+    const [, body] = post.mock.calls[1] as unknown as [string, Record<string, any>];
+    expect(Object.keys(body.editCommonCollectBoxDetail.colorMap)).toHaveLength(50);
+    expect(Object.keys(body.editCommonCollectBoxDetail.sizeMap)).toHaveLength(2);
+    expect(body.editCommonCollectBoxDetail.saleProp3Map).toHaveLength(50);
+    expect(Object.keys(body.editCommonCollectBoxDetail.skuMap)).toHaveLength(100);
+    expect(body.editCommonCollectBoxDetail.skuMap[";color-49;B;"]).toBeDefined();
+    expect(body.editCommonCollectBoxDetail.skuMap[";color-50;A;"]).toBeUndefined();
   });
 
   it("returns stable UI field paths for upstream validation errors", async () => {
@@ -263,26 +306,15 @@ describe("Miaoshou common collect-box edit adapter", () => {
     expect(realSkuKey).toMatch(/^;.*;$/);
     expect(realSkuValue).not.toHaveProperty("attributes");
     const mapped = mapApprovalSnapshotToMiaoshouEdit(approval(), remoteUrls);
-    const mappedSku = mapped.skuMap[";แดง;S;"]!;
     const currentAfter = { result: "success", code: "200", data: { ossMd5: "new", editCommonCollectBoxDetail: {
       ...realDetailShape,
       commonCollectBoxDetailId: 3799770548,
       sourceList: [{ source: "1688", sourceItemId: "892408514788" }],
       title: mapped.title,
-      itemNum: mapped.itemNum,
       notesText: mapped.notesText,
       notes: mapped.notes,
-      price: mapped.price,
-      stock: mapped.stock,
-      weight: mapped.weight,
-      packageLength: mapped.packageLength,
-      packageWidth: mapped.packageWidth,
-      packageHeight: mapped.packageHeight,
       imgUrls: mapped.imgUrls,
-      sourceAttrs: mapped.sourceAttrs,
-      // Real get_common_collect_box_detail shape: the dimension combination is
-      // the key and values do not echo our internal `attributes` object.
-      skuMap: { ";แดง;S;": { ...mappedSku } }
+      sourceAttrs: mapped.sourceAttrs
     } } };
     const timeout = Object.freeze({ kind: "retryable", code: "miaoshou.network", safeMessage: "Miaoshou API is temporarily unavailable" });
     const post = vi.fn().mockResolvedValueOnce(currentBefore).mockRejectedValueOnce(timeout).mockResolvedValueOnce(currentAfter);
@@ -325,12 +357,10 @@ describe("Miaoshou common collect-box edit adapter", () => {
 
   it("rebuilds the exact expectation through a repository resolver after process restart", async () => {
     const mapped = mapApprovalSnapshotToMiaoshouEdit(approval(), remoteUrls);
-    const mappedSku = mapped.skuMap[";แดง;S;"]!;
     const remote = { result: "success", code: "200", data: { editCommonCollectBoxDetail: {
       commonCollectBoxDetailId: 3799770548,
       sourceList: [{ sourceItemId: "892408514788" }],
-      ...mapped,
-      skuMap: { ";แดง;S;": { ...mappedSku } }
+      ...mapped
     } } };
     const expectation = fingerprintMiaoshouEditableDetail(mapped);
     expect(JSON.stringify(expectation)).not.toContain("https://staging.test");
@@ -344,7 +374,7 @@ describe("Miaoshou common collect-box edit adapter", () => {
     expect(post.mock.calls.some(([path]) => String(path).includes("edit_common_collect_box_detail"))).toBe(false);
   });
 
-  it("requires explicit canonical identity and an exact remote SKU key set", async () => {
+  it("requires explicit canonical identity and exact edited fields", async () => {
     const mapped = mapApprovalSnapshotToMiaoshouEdit(approval(), remoteUrls);
     const expected = fingerprintMiaoshouEditableDetail(mapped);
     const base = { sourceList: [{ sourceItemId: "892408514788" }], ...mapped };
@@ -353,7 +383,7 @@ describe("Miaoshou common collect-box edit adapter", () => {
       .mockResolvedValueOnce({ result: "success", data: { editCommonCollectBoxDetail: {
         ...base,
         commonCollectBoxDetailId: 3799770548,
-        skuMap: { ...mapped.skuMap, ";EXTRA;": { itemNum: "EXTRA", price: 1, stock: 1, weight: 1 } }
+        title: `${mapped.title} changed`
       } } });
     const restarted = createMiaoshouEditAdapter({
       http: { post } as MiaoshouHttp,

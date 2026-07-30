@@ -1,11 +1,15 @@
 import type { ProductPoolItemV1 } from "@tk/contracts/read-models";
 import {
-  projectUiStage,
-  type UiStageLabel
-} from "@tk/domain/state/project-ui-stage";
+  canStartProcessing,
+  productBusinessStage,
+  STAGE_LABELS,
+  STAGE_ORDER,
+  type ProductBusinessStage,
+  type WorkbenchStageKey
+} from "./product-row-view";
 
 export type ProductPoolItem = ProductPoolItemV1;
-export type StageKey = "all" | UiStageLabel;
+export type StageKey = WorkbenchStageKey;
 export type AutomationProgressNode = Readonly<{
   key: "collect" | "listing" | "canvas" | "edit";
   label: string;
@@ -20,48 +24,18 @@ export type StageCard = Readonly<{
 
 export type StageOverview = Readonly<Record<StageKey, StageCard>>;
 
-export const STAGE_ORDER: ReadonlyArray<StageKey> = [
-  "all",
-  "pending",
-  "processing",
-  "review",
-  "needs_attention",
-  "synced"
-];
+export { STAGE_ORDER };
 
-const STAGE_LABEL: Readonly<Record<StageKey, string>> = {
-  all: "全部",
-  pending: "待处理",
-  processing: "处理中",
-  review: "待确认",
-  needs_attention: "需处理",
-  synced: "已同步妙手"
-};
-
-export function productStage(item: ProductPoolItem): UiStageLabel {
-  return projectUiStage({
-    miaoshouSource: item.miaoshouSource,
-    automation: item.automation,
-    assetArchive: item.assetArchive,
-    listing: item.listing,
-    canvas: item.canvas,
-    approval: item.approval,
-    miaoshouEdit: item.miaoshouEdit,
-    hasUsableCanvasOutputs: item.usableCanvasOutputCount > 0
-  }).label;
+export function productStage(item: ProductPoolItem): ProductBusinessStage {
+  return productBusinessStage(item);
 }
 
 export function canStartAutomation(item: ProductPoolItem): boolean {
-  return (
-    item.automation === "not_started" &&
-    (item.miaoshouSource === "success" || item.miaoshouSource === "skipped_duplicate") &&
-    item.canonicalSuccessDetailId !== null &&
-    item.sourceImageCount > 0
-  );
+  return canStartProcessing(item);
 }
 
 export function buildAutomationProgress(item: ProductPoolItem): AutomationProgressNode[] {
-  const collect: AutomationProgressNode["state"] = item.miaoshouSource === "success" || item.miaoshouSource === "skipped_duplicate"
+  const collect: AutomationProgressNode["state"] = item.miaoshouSource === "local_captured" || item.miaoshouSource === "success" || item.miaoshouSource === "skipped_duplicate"
     ? "ready"
     : item.miaoshouSource === "submitted" || item.miaoshouSource === "pending"
       ? "running"
@@ -111,7 +85,7 @@ export function buildStageOverview(items: ReadonlyArray<ProductPoolItem>): Stage
   return Object.fromEntries(
     STAGE_ORDER.map((key) => [
       key,
-      { key, label: `${STAGE_LABEL[key]}（${counts[key]}）`, count: counts[key] }
+      { key, label: `${STAGE_LABELS[key]}（${counts[key]}）`, count: counts[key] }
     ])
   ) as StageOverview;
 }

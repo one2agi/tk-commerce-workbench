@@ -50,6 +50,12 @@ export function createMiaoshouEditHandler(input: {
   return async (job, execution) => {
     const approvalSnapshotId = String(job.payload.approvalSnapshotId ?? "");
     const snapshot = await input.repository.loadSnapshot(approvalSnapshotId);
+    if (!snapshot.canonicalSuccessDetailId) {
+      throw new NeedsInputError(
+        "miaoshou_detail_id_missing",
+        "Miaoshou writeback must finish the import step before editing"
+      );
+    }
 
     if (job.remoteTaskId) {
       try {
@@ -90,8 +96,12 @@ export function createMiaoshouEditHandler(input: {
     let externalCallStarted = false;
     try {
       execution.assertLease();
+      const localAssetIds = snapshot.orderedFinalAssetLocalPaths ?? [];
+      if (localAssetIds.length !== snapshot.orderedFinalAssetIds.length) {
+        throw new NeedsInputError("miaoshou_asset_paths_missing", "Approved images are missing local archive paths");
+      }
       staged = await input.staging.stage({
-        localAssetIds: [...snapshot.orderedFinalAssetIds],
+        localAssetIds,
         purpose: "miaoshou_edit"
       });
       if (staged.length !== snapshot.orderedFinalAssetIds.length) {

@@ -25,15 +25,40 @@ export interface AssetFetchRequest {
 
 export type AssetFetch = (request: AssetFetchRequest) => Promise<AssetFetchResponse>;
 
+type LookupCallback = (
+  error: NodeJS.ErrnoException | null,
+  address: string | Array<{ address: string; family: number }>,
+  family?: number
+) => void;
+
+function createPinnedLookup(address: string) {
+  const family = isIP(address);
+  if (family === 0) throw new Error("pinned lookup address must be an IP literal");
+  return (
+    _hostname: string,
+    options: unknown,
+    callback?: LookupCallback
+  ) => {
+    const cb = typeof options === "function" ? options as LookupCallback : callback;
+    if (!cb) throw new Error("pinned lookup callback is required");
+    const wantsAll = typeof options === "object" &&
+      options !== null &&
+      (options as { all?: boolean }).all === true;
+    if (wantsAll) {
+      cb(null, [{ address, family }]);
+      return;
+    }
+    cb(null, address, family);
+  };
+}
+
 export function createNodePinnedAssetFetch(timeoutMs = 30_000): AssetFetch {
   return (input) => new Promise((resolve, reject) => {
     const url = new URL(input.url);
     const request = (url.protocol === "https:" ? httpsRequest : httpRequest)(url, {
       method: "GET",
       headers: { host: input.hostHeader, accept: "image/png,image/jpeg" },
-      lookup: ((_hostname: string, _options: unknown, callback: (error: NodeJS.ErrnoException | null, address: string, family: number) => void) => {
-        callback(null, input.connectAddress, isIP(input.connectAddress));
-      }) as never,
+      lookup: createPinnedLookup(input.connectAddress) as never,
       ...(input.servername ? { servername: input.servername } : {})
     }, (response) => {
       const headers: Record<string, string | undefined> = {};
@@ -66,6 +91,16 @@ function header(response: AssetFetchResponse, name: string): string | undefined 
   return entry?.[1];
 }
 
+function localCanvasOutputAddress(url: URL): string | null {
+  if (url.protocol !== "http:") return null;
+  if (!url.pathname.startsWith("/assets/output/")) return null;
+  const hostname = url.hostname.replace(/^\[|\]$/g, "").toLowerCase();
+  if (hostname === "localhost") return "127.0.0.1";
+  if (hostname === "::1") return "::1";
+  if (/^127\./.test(hostname)) return hostname;
+  return null;
+}
+
 export class ContentAddressedStore {
   private readonly maxRedirects: number;
   private readonly maxBytes: number;
@@ -94,7 +129,10 @@ export class ContentAddressedStore {
     let response: AssetFetchResponse | undefined;
 
     for (let redirects = 0; redirects <= this.maxRedirects; redirects++) {
-      const validated = await resolveSafeRemoteUrl(current.toString(), this.options.resolveHost);
+      const localCanvasAddress = localCanvasOutputAddress(current);
+      const validated = localCanvasAddress
+        ? { url: current, addresses: [localCanvasAddress] }
+        : await resolveSafeRemoteUrl(current.toString(), this.options.resolveHost);
       current = validated.url;
       const hostname = current.hostname.replace(/^\[|\]$/g, "");
       response = await this.options.fetch({

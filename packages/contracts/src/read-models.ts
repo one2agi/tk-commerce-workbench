@@ -23,14 +23,22 @@ export type ProductPoolItemV1 = Readonly<{
   productId: ProductId;
   currentRevisionId: ProductRevisionId;
   sourceItemId: SourceItemId | null;
+  sourceUrl: string;
+  thumbnailUrl: string | null;
+  collectedAt: string;
+  updatedAt: string;
   canonicalSourceTitle: string | null;
   targetTitle: string | null;
   canonicalSuccessDetailId: MiaoshouDetailId | null;
   locale: Locale;
   currency: MoneyWire["currency"];
   priceWire: MoneyWire | null;
+  /** Original 1688 purchase price captured in CNY; independent from target pricing. */
+  sourcePriceWire?: MoneyWire | null;
   /** Product images available in the original Miaoshou collect-box payload before local archiving. */
   sourceImageCount: number;
+  /** Validation marker for browser-local 1688 captures; null for Miaoshou-sourced products. */
+  sourceCaptureQuality: string | null;
   /** Total archived source/product images available after automation starts. */
   imageCount: number;
   /** Valid images returned by the latest Canvas run; excludes source images. */
@@ -96,7 +104,7 @@ export type ApprovalPreviewV1 = Readonly<{
   productId: ProductId;
   draftVersion: number;
   listingRunId: string;
-  pricingRunId: string;
+  pricingRunId?: string | null;
   templateVersion: number;
   orderedFinalAssetIds: AssetId[];
   locale: Locale;
@@ -112,28 +120,29 @@ export type ApprovalSnapshotV1 = Readonly<{
   revisionId: ProductRevisionId;
   draftVersion: number;
   listingRunId: string;
-  pricingRunId: string;
+  pricingRunId?: string | null;
   templateVersion: number;
   orderedFinalAssetIds: AssetId[];
+  orderedFinalAssetLocalPaths?: string[];
   sourcePlatform: "1688";
   sourceCanonicalUrl: string;
   sourceItemId: SourceItemId;
-  canonicalSuccessDetailId: MiaoshouDetailId;
+  canonicalSuccessDetailId: MiaoshouDetailId | null;
   locale: Locale;
   currency: MoneyWire["currency"];
   title: string;
   description: string;
   attributes: Array<{ name: string; value: string }>;
   itemNumber: string | null;
-  priceWire: MoneyWire;
-  stock: number;
-  weightKg: string;
+  priceWire?: MoneyWire | null;
+  stock?: number | null;
+  weightKg?: string | null;
   dimensions: { lengthCm: string; widthCm: string; heightCm: string } | null;
   skus: Array<{
     skuId: string;
     attributes: Record<string, string>;
-    priceWire: MoneyWire;
-    stock: number;
+    priceWire?: MoneyWire | null;
+    stock?: number | null;
     assetIds: AssetId[];
   }>;
   createdAt: string;

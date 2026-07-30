@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 
-import { createWorkerApplication, LIVE_MIAOSHOU_MIN_INTERVAL_MS } from "./entry.js";
+import { createCanvasOutputAssetFetch, createWorkerApplication, LIVE_MIAOSHOU_MIN_INTERVAL_MS } from "./entry.js";
 
 const testEnv = {
   NODE_ENV: "test",
@@ -15,6 +15,64 @@ describe("worker entry", () => {
   it("uses a non-zero live Miaoshou request interval", () => {
     expect(LIVE_MIAOSHOU_MIN_INTERVAL_MS).toBeGreaterThan(0);
   });
+
+  it("archives configured remote Canvas outputs through the shared env-aware fetch", async () => {
+    const canvasBytes = new Uint8Array([0x89, 0x50, 0x4e, 0x47]);
+    const fallbackFetch = vi.fn(async () => {
+      throw new Error("pinned fetch should not download configured Canvas outputs");
+    });
+    const liveFetch = vi.fn(async () => new Response(canvasBytes, {
+      headers: { "content-type": "image/png", "content-length": String(canvasBytes.byteLength) }
+    }));
+    const fetch = createCanvasOutputAssetFetch({
+      baseUrl: "https://canvas.test",
+      liveFetch: liveFetch as never,
+      fallbackFetch
+    });
+
+    const response = await fetch({
+      url: "https://canvas.test/assets/output/generated.png",
+      connectAddress: "203.0.113.9",
+      hostHeader: "canvas.test",
+      servername: "canvas.test"
+    });
+    const chunks = [];
+    for await (const chunk of response.body ?? []) chunks.push(...chunk);
+
+    expect(response.status).toBe(200);
+    expect(response.headers["content-type"]).toBe("image/png");
+    expect(chunks).toEqual([...canvasBytes]);
+    expect(liveFetch).toHaveBeenCalledWith("https://canvas.test/assets/output/generated.png", expect.objectContaining({
+      headers: { accept: "image/png,image/jpeg" }
+    }));
+    expect(fallbackFetch).not.toHaveBeenCalled();
+  });
+
+  it("keeps non-Canvas asset archive downloads on the pinned fetch path", async () => {
+    const fallbackFetch = vi.fn(async () => ({
+      status: 200,
+      headers: { "content-type": "image/jpeg" },
+      body: (async function* () { yield new Uint8Array([0xff, 0xd8, 0xff]); })()
+    }));
+    const liveFetch = vi.fn();
+    const fetch = createCanvasOutputAssetFetch({
+      baseUrl: "https://canvas.test",
+      liveFetch: liveFetch as never,
+      fallbackFetch
+    });
+
+    const response = await fetch({
+      url: "https://cdn.test/assets/output/generated.png",
+      connectAddress: "203.0.113.9",
+      hostHeader: "cdn.test",
+      servername: "cdn.test"
+    });
+
+    expect(response.status).toBe(200);
+    expect(fallbackFetch).toHaveBeenCalledTimes(1);
+    expect(liveFetch).not.toHaveBeenCalled();
+  });
+
   it("rejects live adapters in tests before constructing database or HTTP clients", () => {
     const createPool = vi.fn();
     const createAdapterBundle = vi.fn();

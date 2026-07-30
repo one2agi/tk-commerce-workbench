@@ -504,7 +504,13 @@ export class JobRepository {
        SET status = 'queued', error = NULL, next_attempt_at = $2::timestamptz,
            pause_reason = NULL, updated_at = now()
        WHERE id = $1 AND status IN ('failed', 'needs_input')
-         AND remote_task_id IS NULL
+         AND (
+           remote_task_id IS NULL
+           OR (
+             kind = 'canvas_generate'
+             AND COALESCE(error->>'code', '') IN ('reconcile_failed', 'canvas_zero_valid_outputs')
+           )
+         )
          AND COALESCE(error->>'code', '') <> 'reconcile_required'
          AND attempt < max_attempts`,
       [jobId, now]
@@ -525,7 +531,7 @@ export class JobRepository {
        SET status = CASE WHEN attempt >= max_attempts THEN 'failed' ELSE 'queued' END,
            next_attempt_at = CASE WHEN attempt >= max_attempts THEN NULL ELSE $5::timestamptz END,
            error = CASE WHEN attempt >= max_attempts
-             THEN '{"code":"attempts_exhausted","safeMessage":"Maximum attempts exhausted"}'::jsonb
+             THEN '{"kind":"fatal","code":"attempts_exhausted","safeMessage":"Maximum attempts exhausted"}'::jsonb
              ELSE $6::jsonb END,
            owner = NULL, lease_token = NULL, lease_expires_at = NULL, updated_at = now()
        WHERE id = $1 AND status = 'running' AND owner = $2 AND lease_token = $3
@@ -595,17 +601,17 @@ export class JobRepository {
         `UPDATE ${schema.jobs}
        SET status = CASE
              WHEN remote_task_id IS NOT NULL
-               OR kind IN ('miaoshou_collect', 'listing_generate', 'exchange_rate_refresh', 'canvas_generate', 'miaoshou_edit')
+               OR kind IN ('miaoshou_collect', 'miaoshou_prepare_writeback', 'listing_generate', 'exchange_rate_refresh', 'canvas_generate', 'miaoshou_edit')
                THEN 'needs_input'
              WHEN attempt >= max_attempts THEN 'failed'
              ELSE 'queued'
            END,
            error = CASE
              WHEN remote_task_id IS NOT NULL
-               OR kind IN ('miaoshou_collect', 'listing_generate', 'exchange_rate_refresh', 'canvas_generate', 'miaoshou_edit')
+               OR kind IN ('miaoshou_collect', 'miaoshou_prepare_writeback', 'listing_generate', 'exchange_rate_refresh', 'canvas_generate', 'miaoshou_edit')
                THEN '{"kind":"reconcile_required","code":"reconcile_required","safeMessage":"External request may have started before the worker lease expired; review before retry"}'::jsonb
              WHEN attempt >= max_attempts
-               THEN '{"code":"attempts_exhausted","message":"Maximum attempts exhausted"}'::jsonb
+               THEN '{"kind":"fatal","code":"attempts_exhausted","safeMessage":"Maximum attempts exhausted"}'::jsonb
              ELSE error
            END,
            owner = NULL, lease_token = NULL, lease_expires_at = NULL, updated_at = now()

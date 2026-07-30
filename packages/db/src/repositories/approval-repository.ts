@@ -1,7 +1,11 @@
 import { strict as assert } from "node:assert";
 import { isDeepStrictEqual } from "node:util";
 
-import type { ApprovalSnapshotV1, ConfirmMiaoshouEditV1 } from "@tk/contracts";
+import type {
+  ApprovalSnapshotV1,
+  ConfirmMiaoshouEditV1,
+  MiaoshouSourceCollectResult
+} from "@tk/contracts";
 import { createApprovalSnapshot, type ApprovalSnapshotMaterial } from "@tk/domain";
 import type { PoolClient } from "pg";
 
@@ -98,23 +102,23 @@ interface PersistedApprovalRow {
   revision_id: string;
   draft_version: number;
   listing_run_id: string;
-  pricing_run_id: string;
+  pricing_run_id: string | null;
   template_version: number;
   ordered_final_asset_ids: string[];
   source_platform: "1688";
   source_canonical_url: string;
   source_item_id: string;
-  canonical_success_detail_id: string;
+  canonical_success_detail_id: string | null;
   locale: string;
   currency: string;
   title: string;
   description: string;
   attributes: Array<{ name: string; value: string }>;
   item_number: string | null;
-  price_minor: string;
-  price_currency: string;
-  stock: number;
-  weight_kg: string;
+  price_minor: string | null;
+  price_currency: string | null;
+  stock: number | null;
+  weight_kg: string | null;
   dimensions: { lengthCm: string; widthCm: string; heightCm: string } | null;
   skus: ApprovalSnapshotV1["skus"];
   state: string;
@@ -142,7 +146,7 @@ function snapshotFromRow(row: PersistedApprovalRow): ApprovalSnapshotV1 {
     description: row.description,
     attributes: row.attributes ?? [],
     itemNumber: row.item_number,
-    priceWire: { amountMinor: row.price_minor, currency: row.price_currency },
+    priceWire: row.price_minor && row.price_currency ? { amountMinor: row.price_minor, currency: row.price_currency } : null,
     stock: row.stock,
     weightKg: row.weight_kg,
     dimensions: row.dimensions,
@@ -158,16 +162,13 @@ function assertSameApprovedMaterial(existing: ApprovalSnapshotV1, current: Appro
     ["orderedFinalAssetIds", existing.orderedFinalAssetIds, current.orderedFinalAssetIds],
     ["sourceCanonicalUrl", existing.sourceCanonicalUrl, current.sourceCanonicalUrl],
     ["sourceItemId", existing.sourceItemId, current.sourceItemId],
-    ["canonicalSuccessDetailId", existing.canonicalSuccessDetailId, current.canonicalSuccessDetailId],
     ["locale", existing.locale, current.locale],
     ["currency", existing.currency, current.currency],
     ["title", existing.title, current.title],
     ["description", existing.description, current.description],
     ["attributes", existing.attributes, current.attributes],
     ["itemNumber", existing.itemNumber, current.itemNumber],
-    ["priceWire", existing.priceWire, current.priceWire],
     ["stock", existing.stock, current.stock],
-    ["weightKg", existing.weightKg, current.weightKg],
     ["dimensions", existing.dimensions, current.dimensions],
     ["skus", existing.skus, current.skus]
   ];
@@ -207,14 +208,6 @@ export class ApprovalRepository {
     }
 
     const draft = object(revision.working_draft);
-    const currentListingRunId = String(draft.listingRunId ?? "");
-    if (currentListingRunId !== command.expectedListingRunId) {
-      conflict("listingRunId", command.expectedListingRunId, currentListingRunId || null);
-    }
-    const currentPricingRunId = String(draft.pricingRunId ?? "");
-    if (currentPricingRunId !== command.expectedPricingRunId) {
-      conflict("pricingRunId", command.expectedPricingRunId, currentPricingRunId || null);
-    }
     const templateMatch = object(draft.templateMatch);
     const templateVersion = Number(templateMatch.templateVersion ?? 0);
     if (templateVersion !== command.expectedTemplateVersion) {
@@ -240,22 +233,6 @@ export class ApprovalRepository {
     const listing = listingResult.rows[0];
     if (!listing) conflict("listingRunId", command.expectedListingRunId, null);
 
-    const pricingResult = await client.query<{
-      id: string;
-      state: string;
-      final_price_minor: string | null;
-      final_currency: string | null;
-    }>(
-      `SELECT id, state, final_price_minor, final_currency
-       FROM ${schema.pricingRuns}
-       WHERE id = $1 AND product_id = $2 AND revision_id = $3 AND draft_version = $4`,
-      [command.expectedPricingRunId, command.productId, revision.id, revision.draft_version]
-    );
-    const pricing = pricingResult.rows[0];
-    if (!pricing || pricing.state !== "ready" || !pricing.final_price_minor || !pricing.final_currency) {
-      conflict("pricingRunId", command.expectedPricingRunId, pricing?.state ?? null);
-    }
-
     const assetsResult = await client.query<{ id: string; remote_url: string }>(
       `SELECT id, remote_url FROM ${schema.assets}
        WHERE revision_id = $1 AND state = 'ready' AND local_path IS NOT NULL`,
@@ -265,7 +242,7 @@ export class ApprovalRepository {
     const invalidAssetId = command.orderedFinalAssetIds.find((assetId) => !assetsById.has(assetId));
     if (invalidAssetId) conflict("orderedFinalAssetIds", command.orderedFinalAssetIds, { invalidAssetId });
 
-    return { product, revision, listing, pricing, assetsById, templateVersion };
+    return { product, revision, listing, assetsById, templateVersion };
   }
 
   async confirmAndEnqueue(command: ConfirmMiaoshouEditV1): Promise<ConfirmResult> {
@@ -280,13 +257,8 @@ export class ApprovalRepository {
       const material = await this.loadMaterial(client, command);
       const source = object(material.revision.source_payload);
       const sourceItemId = material.product.source_item_id ?? String(source.sourceItemId ?? "");
-      const canonicalSuccessDetailId = material.product.canonical_success_detail_id ?? "";
-      const stock = Number(source.sourceStock);
-      const weightKg = typeof source.weightKg === "string" ? source.weightKg : "";
+      const canonicalSuccessDetailId = material.product.canonical_success_detail_id;
       if (!sourceItemId) conflict("sourceItemId", "known", null);
-      if (!canonicalSuccessDetailId) conflict("canonicalSuccessDetailId", "known", null);
-      if (!Number.isInteger(stock) || stock < 0) conflict("stock", "non-negative integer", source.sourceStock ?? null);
-      if (!weightKg) conflict("weightKg", "known", null);
 
       const assetsByRemoteUrl = new Map(
         [...material.assetsById.values()].map((asset) => [asset.remote_url, asset.id])
@@ -297,14 +269,7 @@ export class ApprovalRepository {
         return {
           skuId: String(sku.skuId ?? ""),
           attributes: object(sku.attributes) as Record<string, string>,
-          // The frozen edit payload must never mix source CNY with the target product
-          // currency. The current pricing model produces one target listing price, so
-          // every variant inherits that explicit approved target price.
-          priceWire: {
-            amountMinor: material.pricing.final_price_minor,
-            currency: material.pricing.final_currency
-          },
-          stock: Number.isInteger(Number(sku.stock)) ? Number(sku.stock) : 0,
+          stock: Number.isInteger(Number(sku.stock)) ? Number(sku.stock) : null,
           assetIds: imageAssetId ? [imageAssetId] : []
         };
       });
@@ -321,7 +286,7 @@ export class ApprovalRepository {
         revisionId: material.revision.id,
         draftVersion: material.revision.draft_version,
         listingRunId: material.listing.id,
-        pricingRunId: material.pricing.id,
+        pricingRunId: null,
         templateVersion: material.templateVersion,
         orderedFinalAssetIds: [...command.orderedFinalAssetIds],
         sourcePlatform: "1688",
@@ -329,14 +294,14 @@ export class ApprovalRepository {
         sourceItemId,
         canonicalSuccessDetailId,
         locale: material.listing.target_locale || material.product.locale,
-        currency: material.pricing.final_currency,
+        currency: material.product.currency,
         title: material.listing.title ?? "",
         description: material.listing.description ?? "",
         attributes: Array.isArray(material.listing.attributes) ? material.listing.attributes : [],
         itemNumber: typeof source.itemNumber === "string" ? source.itemNumber : null,
-        priceWire: { amountMinor: material.pricing.final_price_minor, currency: material.pricing.final_currency },
-        stock,
-        weightKg,
+        priceWire: null,
+        stock: null,
+        weightKg: null,
         dimensions: normalizedDimensions,
         skus,
         createdAt
@@ -348,9 +313,9 @@ export class ApprovalRepository {
          JOIN ${schema.miaoshouSyncs} sync ON sync.approval_snapshot_id = approval.id
          WHERE approval.product_id = $1 AND approval.revision_id = $2
            AND approval.draft_version = $3 AND approval.listing_run_id = $4
-           AND approval.pricing_run_id = $5
+           AND approval.pricing_run_id IS NOT DISTINCT FROM $5
          FOR UPDATE`,
-        [command.productId, material.revision.id, command.expectedDraftVersion, command.expectedListingRunId, command.expectedPricingRunId]
+        [command.productId, material.revision.id, command.expectedDraftVersion, command.expectedListingRunId, null]
       );
       const existing = existingResult.rows[0];
       if (existing) {
@@ -375,7 +340,7 @@ export class ApprovalRepository {
           JSON.stringify(snapshot.orderedFinalAssetIds), snapshot.sourcePlatform, snapshot.sourceCanonicalUrl,
           snapshot.sourceItemId, snapshot.canonicalSuccessDetailId, snapshot.locale, snapshot.currency,
           snapshot.title, snapshot.description, JSON.stringify(snapshot.attributes), snapshot.itemNumber,
-          snapshot.priceWire.amountMinor, snapshot.priceWire.currency, snapshot.stock, snapshot.weightKg,
+          null, null, null, null,
           JSON.stringify(snapshot.dimensions), JSON.stringify(snapshot.skus), snapshot.createdAt
         ]
       );
@@ -384,17 +349,33 @@ export class ApprovalRepository {
          VALUES ($1, $2, 'queued')`,
         [syncId, approvalSnapshotId]
       );
+      const writebackJobKind = canonicalSuccessDetailId
+        ? "miaoshou_edit"
+        : "miaoshou_prepare_writeback";
+      const writebackBusinessKey = canonicalSuccessDetailId
+        ? `miaoshou-edit:${approvalSnapshotId}`
+        : `miaoshou-prepare:${approvalSnapshotId}`;
+      const writebackPayload = canonicalSuccessDetailId
+        ? {
+            version: 1,
+            approvalSnapshotId,
+            productId: command.productId,
+            canonicalSuccessDetailId
+          }
+        : {
+            version: 1,
+            approvalSnapshotId,
+            productId: command.productId,
+            revisionId: material.revision.id,
+            sourceUrl: material.product.source_url,
+            idempotencyKey: writebackBusinessKey
+          };
       await client.query(
         `INSERT INTO ${schema.jobs}
          (id, kind, business_key, idempotency_key, payload, status, max_attempts)
-         VALUES ($1, 'miaoshou_edit', $2, $2, $3::jsonb, 'queued', 3)
+         VALUES ($1, $2, $3, $3, $4::jsonb, 'queued', 3)
          ON CONFLICT (kind, business_key) DO NOTHING`,
-        [newId("job"), `miaoshou-edit:${approvalSnapshotId}`, JSON.stringify({
-          version: 1,
-          approvalSnapshotId,
-          productId: command.productId,
-          canonicalSuccessDetailId
-        })]
+        [newId("job"), writebackJobKind, writebackBusinessKey, JSON.stringify(writebackPayload)]
       );
       await client.query(
         `UPDATE ${schema.products}
@@ -410,13 +391,126 @@ export class ApprovalRepository {
           productId: command.productId,
           draftVersion: command.expectedDraftVersion,
           listingRunId: command.expectedListingRunId,
-          pricingRunId: command.expectedPricingRunId,
+          pricingRunId: null,
           templateVersion: command.expectedTemplateVersion,
           assetCount: command.orderedFinalAssetIds.length
         }
       }, approvalSnapshotId);
       await client.query("COMMIT");
       return { approvalSnapshotId, syncId };
+    } catch (error) {
+      await client.query("ROLLBACK").catch(() => undefined);
+      throw error;
+    } finally {
+      client.release();
+    }
+  }
+
+  async bindCanonicalAndEnqueueEdit(
+    value: {
+      approvalSnapshotId: string;
+      productId: string;
+      result: MiaoshouSourceCollectResult;
+    },
+    fence: ApprovalSyncFence
+  ): Promise<boolean> {
+    const client = await this.pool.connect();
+    try {
+      await client.query("BEGIN");
+      const locked = await client.query<{
+        product_id: string;
+        source_item_id: string;
+        approval_state: string;
+      }>(
+        `SELECT approval.product_id, approval.source_item_id,
+                approval.state AS approval_state
+         FROM ${schema.approvalSnapshots} approval
+         JOIN ${schema.products} product ON product.id = approval.product_id
+         WHERE approval.id = $1 AND approval.product_id = $2
+         FOR UPDATE OF approval, product`,
+        [value.approvalSnapshotId, value.productId]
+      );
+      const material = locked.rows[0];
+      if (!material || material.approval_state !== "approved") {
+        await client.query("ROLLBACK");
+        return false;
+      }
+      const owned = await client.query(
+        `SELECT id FROM ${schema.jobs}
+         WHERE id = $1
+           AND kind = 'miaoshou_prepare_writeback'
+           AND status = 'running'
+           AND owner = $2
+           AND lease_token = $3
+           AND lease_expires_at > now()
+           AND payload->>'approvalSnapshotId' = $4
+         FOR UPDATE`,
+        [fence.jobId, fence.owner, fence.leaseToken, value.approvalSnapshotId]
+      );
+      if ((owned.rowCount ?? 0) === 0) {
+        await client.query("ROLLBACK");
+        return false;
+      }
+      const canonicalSuccessDetailId = value.result.canonicalSuccessDetailId;
+      await client.query(
+        `UPDATE ${schema.products}
+         SET canonical_success_detail_id = $2,
+             state_source = 'success',
+             state_miaoshou_edit = 'queued',
+             updated_at = now()
+         WHERE id = $1`,
+        [value.productId, canonicalSuccessDetailId]
+      );
+      await client.query(
+        `UPDATE ${schema.approvalSnapshots}
+         SET canonical_success_detail_id = $2
+         WHERE id = $1`,
+        [value.approvalSnapshotId, canonicalSuccessDetailId]
+      );
+      await client.query(
+        `INSERT INTO ${schema.miaoshouSourceRecords}
+          (id, product_id, source_item_id, fetch_detail_id, skipped_detail_id,
+           canonical_success_detail_id, fetched_payload, state)
+         VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb, $8)`,
+        [
+          newId("source"),
+          value.productId,
+          material.source_item_id,
+          value.result.fetchDetailId,
+          value.result.skippedDetailId,
+          canonicalSuccessDetailId,
+          JSON.stringify(value.result),
+          value.result.skippedDetailId ? "skipped_duplicate" : "success"
+        ]
+      );
+      const businessKey = `miaoshou-edit:${value.approvalSnapshotId}`;
+      await client.query(
+        `INSERT INTO ${schema.jobs}
+          (id, kind, business_key, idempotency_key, payload, status, max_attempts)
+         VALUES ($1, 'miaoshou_edit', $2, $2, $3::jsonb, 'queued', 3)
+         ON CONFLICT (kind, business_key) DO NOTHING`,
+        [
+          newId("job"),
+          businessKey,
+          JSON.stringify({
+            version: 1,
+            approvalSnapshotId: value.approvalSnapshotId,
+            productId: value.productId,
+            canonicalSuccessDetailId
+          })
+        ]
+      );
+      await appendAuditInTransaction(client, {
+        actorType: "worker",
+        action: "miaoshou.prepare_writeback.bound",
+        targetKind: "approval_snapshot",
+        payload: {
+          productId: value.productId,
+          canonicalSuccessDetailId
+        }
+      }, value.approvalSnapshotId);
+      await client.query("COMMIT");
+      return true;
     } catch (error) {
       await client.query("ROLLBACK").catch(() => undefined);
       throw error;
@@ -528,7 +622,20 @@ export class ApprovalRepository {
     );
     const row = result.rows[0];
     assert(row, "approval snapshot not found");
-    return snapshotFromRow(row);
+    const snapshot = snapshotFromRow(row);
+    const assets = snapshot.orderedFinalAssetIds.length === 0 ? { rows: [] } : await this.pool.query<{ id: string; local_path: string }>(
+      `SELECT id, local_path FROM ${schema.assets}
+       WHERE revision_id = $1 AND id = ANY($2::text[]) AND state = 'ready' AND local_path IS NOT NULL`,
+      [snapshot.revisionId, snapshot.orderedFinalAssetIds]
+    );
+    const pathsById = new Map(assets.rows.map((asset) => [asset.id, asset.local_path]));
+    const { sourcePlatform: _sourcePlatform, ...material } = snapshot;
+    return createApprovalSnapshot({
+      ...material,
+      orderedFinalAssetLocalPaths: snapshot.orderedFinalAssetIds.flatMap((assetId) =>
+        pathsById.has(assetId) ? [pathsById.get(assetId)!] : []
+      )
+    });
   }
 
   private async withSyncFence(

@@ -58,7 +58,62 @@ describe("selected 1688 card to loopback ingest", () => {
       apiBase: "http://127.0.0.1:3000",
       storage: storageWithToken("local-extension-token")
     });
-    const handler = createBackgroundMessageHandler(submitter);
+    const handler = createBackgroundMessageHandler({
+      submitter,
+      queue: {
+        async captureBatch(input) {
+          const selected = input.items[0]!;
+          return {
+            batchId: input.batchId,
+            captures: [{
+              ...selected,
+              mainImages: ["https://img.test/892408514788.jpg"],
+              detailImages: [],
+              itemNumber: null,
+              category: null,
+              sourcePriceWire: null,
+              sourcePriceRangeWire: null,
+              sourceStock: null,
+              weightKg: null,
+              dimensionsCm: null,
+              attributes: [],
+              saleAttributes: [],
+              skuText: [],
+              capturedAt: "2026-07-24T08:00:00.000Z",
+              captureQuality: "detail_page_complete" as const,
+              skuAttributes: [],
+              colors: [],
+              sizes: [],
+              skus: [],
+              diagnostics: {
+                version: 2 as const,
+                pageKind: "offer_detail" as const,
+                titleSource: "page_context" as const,
+                stableForMs: 2000,
+                fieldEvidence: {
+                  title: "captured" as const,
+                  mainImages: "captured" as const,
+                  detail: "source_absent" as const,
+                  attributes: "source_absent" as const,
+                  price: "source_absent" as const,
+                  stock: "source_absent" as const,
+                  skus: "source_absent" as const,
+                  weight: "source_absent" as const,
+                  dimensions: "source_absent" as const
+                },
+                expectedSkuCount: null,
+                capturedSkuCount: 0,
+                acceptedMainImages: 1,
+                acceptedDetailImages: 0,
+                rejectedImages: 0,
+                warnings: []
+              }
+            }],
+            failures: []
+          };
+        }
+      }
+    });
     const message = createSubmitSelectedMessage("batch_checked_only", store.selectedBatch());
     const response = await new Promise<unknown>((resolve) => {
       expect(handler(message, resolve)).toBe(true);
@@ -66,10 +121,53 @@ describe("selected 1688 card to loopback ingest", () => {
 
     expect(response).toMatchObject({ outcome: "submitted", accepted: 1 });
     expect(postedBodies).toEqual([{
-      version: 1,
+      version: 3,
       batchId: "batch_checked_only",
       items: [{
+        sourceItemId: "892408514788",
         sourceUrl: "https://detail.1688.com/offer/892408514788.html",
+        title: "防晒夹克",
+        mainImages: ["https://img.test/892408514788.jpg"],
+        detailImages: [],
+        itemNumber: null,
+        category: null,
+        sourcePriceWire: null,
+        sourcePriceRangeWire: null,
+        sourceStock: null,
+        weightKg: null,
+        dimensionsCm: null,
+        attributes: [],
+        saleAttributes: [],
+        skuAttributes: [],
+        skuText: [],
+        colors: [],
+        sizes: [],
+        skus: [],
+        capturedAt: "2026-07-24T08:00:00.000Z",
+        captureQuality: "detail_page_complete",
+        diagnostics: {
+          version: 2,
+          pageKind: "offer_detail",
+          titleSource: "page_context",
+          stableForMs: 2000,
+          fieldEvidence: {
+            title: "captured",
+            mainImages: "captured",
+            detail: "source_absent",
+            attributes: "source_absent",
+            price: "source_absent",
+            stock: "source_absent",
+            skus: "source_absent",
+            weight: "source_absent",
+            dimensions: "source_absent"
+          },
+          expectedSkuCount: null,
+          capturedSkuCount: 0,
+          acceptedMainImages: 1,
+          acceptedDetailImages: 0,
+          rejectedImages: 0,
+          warnings: []
+        },
         idempotencyKey: "1688:892408514788:batch_checked_only"
       }]
     }]);

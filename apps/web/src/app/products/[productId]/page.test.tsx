@@ -1,108 +1,96 @@
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
-import { productId, productRevisionId } from "@tk/contracts/ids";
+import { assetId, productId, productRevisionId, templateId } from "@tk/contracts/ids";
+import type { ProductWorkspaceV1 } from "@tk/contracts/read-models";
 
 import { renderProductPage } from "./page";
 
-// Extract the workbench CTA <a> element from the rendered HTML by its
-// user-visible anchor text "商品工作台". Returns the first match.
-function extractWorkbenchCta(html: string): { href: string; text: string } | null {
-  const re = /<a\b[^>]*?>([^<]*商品工作台[^<]*)<\/a>/;
-  const match = re.exec(html);
-  if (!match) return null;
-  const tag = match[0].slice(0, match[0].indexOf(">") + 1);
-  const hrefMatch = /\bhref="([^"]*)"/.exec(tag);
-  return {
-    href: hrefMatch ? hrefMatch[1] : "",
-    text: match[1].trim()
-  };
-}
+const workspace: ProductWorkspaceV1 = {
+  productId: productId("database-product"),
+  revisionId: productRevisionId("database-revision"),
+  draftVersion: 7,
+  originalListing: {
+    sourceTitle: "数据库源标题",
+    description: "源描述",
+    sourceAttributes: [{ name: "材质", value: "合金" }],
+    saleAttributes: [{ name: "颜色", value: "金色" }],
+    mainImages: ["https://images.test/source.png"],
+    detailImages: []
+  },
+  target: {
+    locale: "th-TH",
+    title: "ชื่อจากฐานข้อมูล",
+    description: "รายละเอียด",
+    style: "clean",
+    provider: "rule",
+    model: "deterministic",
+    fallbackUsed: false
+  },
+  pricing: {
+    pricingRunId: "pricing-1",
+    currency: "THB",
+    finalPriceWire: { amountMinor: "29900", currency: "THB" },
+    breakdown: { margin: "30%" },
+    exchangeRate: null
+  },
+  template: {
+    templateId: templateId("template-1"),
+    version: 1,
+    matchedReason: "TK工作流"
+  },
+  canvas: {
+    runId: "canvas-real",
+    outputs: ["https://images.test/generated.png"],
+    state: "succeeded"
+  },
+  finalAssetOrder: [assetId("asset-1")],
+  warningCodes: []
+};
 
 describe("product detail page", () => {
-  it("renders the real ProductWorkspace projection supplied by ProductService", async () => {
+  it("renders the product detail image confirmation workspace", async () => {
     const html = renderToStaticMarkup(await renderProductPage(
       Promise.resolve({ productId: "database-product" }),
       {
-        get: async () => ({
-          productId: productId("database-product"),
-          revisionId: productRevisionId("database-revision"),
-          draftVersion: 7,
-          originalListing: {
-            sourceTitle: "数据库源标题",
-            description: "源描述",
-            sourceAttributes: [],
-            saleAttributes: [],
-            mainImages: ["https://images.test/source.png"],
-            detailImages: []
-          },
-          target: {
-            locale: "th-TH",
-            title: "ชื่อจากฐานข้อมูล",
-            description: "รายละเอียด",
-            style: "clean",
-            provider: "rule",
-            model: "deterministic",
-            fallbackUsed: false
-          },
-          pricing: null,
-          template: null,
-          canvas: { runId: "canvas-real", outputs: ["https://images.test/generated.png"], state: "partial" },
-          finalAssetOrder: [],
-          warningCodes: ["canvas_partial"]
+        get: async () => workspace,
+        preview: async () => ({
+          productId: workspace.productId,
+          draftVersion: workspace.draftVersion,
+          listingRunId: "listing-1",
+          pricingRunId: "pricing-1",
+          templateVersion: 1,
+          orderedFinalAssetIds: workspace.finalAssetOrder,
+          locale: "th-TH",
+          currency: "THB",
+          finalPriceWire: { amountMinor: "29900", currency: "THB" },
+          warningCodes: [],
+          miaoshouTargetDetailId: "detail-1" as never
+        }),
+        facts: async () => ({
+          skuCount: 2,
+          orderedFinalImages: [{ assetId: "asset-1", previewUrl: "https://images.test/final.jpg" }],
+          stock: "10",
+          weightKg: "0.50",
+          dimensions: null,
+          canonicalMiaoshouTarget: "detail-1"
         })
       }
     ));
 
-    expect(html).toContain("数据库源标题");
+    expect(html).toContain("商品详情 / 图片确认");
+    expect(html).toContain("图片确认");
+    expect(html).toContain("图片已生成");
+    expect(html).toContain("商品内容");
+    expect(html).toContain("下一步");
+    expect(html).toContain("确认后写入妙手采集箱");
+    expect(html).toContain("AI生成信息");
+    expect(html).toContain("SKU确认");
+    expect(html).toContain("检查结果");
+    expect(html).toContain("检查通过");
+    expect(html).toContain("确认写回妙手");
     expect(html).toContain("ชื่อจากฐานข้อมูล");
-    expect(html).toContain("database-revision");
-    expect(html).toContain("partial");
-    expect(html).not.toContain("fixtures");
-  });
-
-  it("explains that processing happens on the workbench (商品工作台) via a CTA link and 'Canvas 生图' copy", async () => {
-    const html = renderToStaticMarkup(await renderProductPage(
-      Promise.resolve({ productId: "database-product" }),
-      {
-        get: async () => ({
-          productId: productId("database-product"),
-          revisionId: productRevisionId("database-revision"),
-          draftVersion: 7,
-          originalListing: {
-            sourceTitle: "数据库源标题",
-            description: "源描述",
-            sourceAttributes: [],
-            saleAttributes: [],
-            mainImages: ["https://images.test/source.png"],
-            detailImages: []
-          },
-          target: {
-            locale: "th-TH",
-            title: "ชื่อจากฐานข้อมูล",
-            description: "รายละเอียด",
-            style: "clean",
-            provider: "rule",
-            model: "deterministic",
-            fallbackUsed: false
-          },
-          pricing: null,
-          template: null,
-          canvas: { runId: "canvas-real", outputs: ["https://images.test/generated.png"], state: "partial" },
-          finalAssetOrder: [],
-          warningCodes: ["canvas_partial"]
-        })
-      }
-    ));
-
-    // Resolve the CTA anchored on the workbench anchor text — must be the SAME <a>
-    // element that both names the workbench and points to "/".
-    const cta = extractWorkbenchCta(html);
-    expect(cta, "expected a <a> element wrapping the '商品工作台' text").not.toBeNull();
-    expect(cta!.href).toBe("/");
-    expect(cta!.text).toContain("商品工作台");
-
-    // Copy mentions 'Canvas 生图' so users know processing is elsewhere
-    expect(html).toContain("Canvas 生图");
-    expect(html).toContain("开始处理");
+    expect(html).toContain("https://images.test/final.jpg");
+    expect(html).not.toContain("请回到");
+    expect(html).not.toContain("发布 TikTok");
   });
 });

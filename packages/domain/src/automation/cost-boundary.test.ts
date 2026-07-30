@@ -7,7 +7,6 @@ describe("automation graph", () => {
     expect(AUTOMATION_DAG).toEqual([
       "asset_archive",
       "listing_generate",
-      "pricing_calculate",
       "template_match",
       "image_select",
       "canvas_generate",

@@ -5,6 +5,7 @@ import pg from "pg";
 
 import { AutomationRunRepository } from "../../../../packages/db/src/repositories/automation-run-repository.js";
 import { JobRepository } from "../../../../packages/db/src/repositories/job-repository.js";
+import { LocalCaptureRepository } from "../../../../packages/db/src/repositories/local-capture-repository.js";
 import { ApprovalRepository } from "@tk/db";
 import type { DbPool } from "../../../../packages/db/src/schema/index.js";
 
@@ -13,6 +14,10 @@ import { AutomationService } from "./services/automation-service";
 import { IngestService } from "./services/ingest-service";
 import { ProductService, type QueryPort } from "./services/product-service";
 import { PgSettingsStore, SettingsService } from "./services/settings-service";
+import { MiaoshouSyncService } from "./services/miaoshou-sync-service";
+import { ProductRerunService } from "./services/product-rerun-service";
+import { createPgRerunPort } from "../app/api/v1/products/[productId]/rerun/route";
+import { createPgApprovalInvalidationPort } from "./services/approval-invalidation";
 import { TaskService, type TaskAction, type TaskActionUnitOfWork } from "./services/task-service";
 import { PgTemplateStore, TemplateService } from "./services/template-service";
 
@@ -25,6 +30,8 @@ export interface ServerServices {
   templates: TemplateService;
   settings: SettingsService;
   approvals: ApprovalRepository;
+  syncs: MiaoshouSyncService;
+  productReruns: ProductRerunService;
 }
 
 interface RuntimeConfig {
@@ -135,7 +142,13 @@ function taskActionSql(action: TaskAction): string {
       return `UPDATE jobs SET status = 'queued', error = NULL, next_attempt_at = NULL,
                 pause_reason = NULL, updated_at = now()
               WHERE id = $1 AND status IN ('failed', 'needs_input')
-                AND remote_task_id IS NULL
+                AND (
+                  remote_task_id IS NULL
+                  OR (
+                    kind = 'canvas_generate'
+                    AND COALESCE(error->>'code', '') IN ('reconcile_failed', 'canvas_zero_valid_outputs')
+                  )
+                )
                 AND COALESCE(error->>'code', '') <> 'reconcile_required'
                 AND attempt < max_attempts`;
     case "cancel":
@@ -154,6 +167,11 @@ export function createServerServices(input: {
   const database = queryPort(input.pool);
   const jobs = new JobRepository(input.pool);
   const automationRuns = new AutomationRunRepository(input.pool);
+  const products = new ProductService(database);
+  const reruns = createPgRerunPort(
+    createPgApprovalInvalidationPort(() => input.pool),
+    () => input.pool
+  );
   const secretStatus = {
     miaoshouConfigured: input.config.miaoshouConfigured,
     canvasConfigured: input.config.canvasConfigured,
@@ -162,9 +180,9 @@ export function createServerServices(input: {
   };
   return {
     verifyExtensionToken: createExtensionTokenVerifier(input.config.extensionToken),
-    ingest: new IngestService(jobs),
+    ingest: new IngestService(jobs, new LocalCaptureRepository(input.pool)),
     automation: new AutomationService(new RevisionVersions(input.pool), automationRuns),
-    products: new ProductService(database),
+    products,
     tasks: new TaskService(database, new PgTaskActions(input.pool)),
     templates: new TemplateService(new PgTemplateStore(input.pool)),
     settings: new SettingsService(new PgSettingsStore(input.pool), {
@@ -193,7 +211,9 @@ export function createServerServices(input: {
       },
       secretStatus
     }),
-    approvals: new ApprovalRepository(input.pool)
+    approvals: new ApprovalRepository(input.pool),
+    syncs: new MiaoshouSyncService(database),
+    productReruns: new ProductRerunService(products, reruns)
   };
 }
 

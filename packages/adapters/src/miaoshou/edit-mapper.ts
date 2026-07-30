@@ -1,55 +1,12 @@
 import { externalFailure, type ApprovalSnapshotV1 } from "@tk/contracts";
 
-export type MiaoshouEditableSku = Readonly<{
-  itemNum: string;
-  price: number;
-  stock: number;
-  weight: number;
-  imgUrl?: string;
-}>;
-
 export type MiaoshouEditableDetail = Readonly<{
   title: string;
-  itemNum?: string;
   notesText: string;
   notes: string;
-  price: number;
-  stock: number;
-  weight: number;
-  packageLength?: number;
-  packageWidth?: number;
-  packageHeight?: number;
   imgUrls: readonly string[];
   sourceAttrs: ReadonlyArray<Readonly<{ name: string; value: string }>>;
-  skuMap: Readonly<Record<string, MiaoshouEditableSku>>;
 }>;
-
-function decimal(value: string, field: string): number {
-  const text = value.trim();
-  if (!/^(?:0|[1-9]\d*)(?:\.\d+)?$/.test(text)) {
-    throw externalFailure("needs_input", `miaoshou.edit_invalid_${field}`, `Approved ${field} is invalid`);
-  }
-  const number = Number(text);
-  if (!Number.isFinite(number)) {
-    throw externalFailure("needs_input", `miaoshou.edit_invalid_${field}`, `Approved ${field} is invalid`);
-  }
-  return number;
-}
-
-/** Convert the approved integer-minor amount to the API major-unit number exactly once. */
-function moneyMajor(amountMinor: string, field: string): number {
-  const text = amountMinor.trim();
-  if (!/^\d+$/.test(text)) {
-    throw externalFailure("needs_input", `miaoshou.edit_invalid_${field}`, `Approved ${field} is invalid`);
-  }
-  const minor = BigInt(text);
-  const majorText = `${minor / 100n}.${(minor % 100n).toString().padStart(2, "0")}`;
-  const number = Number(majorText);
-  if (!Number.isFinite(number) || minor > BigInt(Number.MAX_SAFE_INTEGER)) {
-    throw externalFailure("needs_input", `miaoshou.edit_invalid_${field}`, `Approved ${field} is outside the supported range`);
-  }
-  return number;
-}
 
 function remoteUrl(value: string): boolean {
   try {
@@ -58,6 +15,10 @@ function remoteUrl(value: string): boolean {
   } catch {
     return false;
   }
+}
+
+function miaoshouText(value: string, maxLength = 255): string {
+  return value.length > maxLength ? value.slice(0, maxLength) : value;
 }
 
 export function mapApprovalSnapshotToMiaoshouEdit(
@@ -75,47 +36,15 @@ export function mapApprovalSnapshotToMiaoshouEdit(
       "Approved images must have one unique remote URL in the approved order"
     );
   }
-  if (snapshot.priceWire.currency !== snapshot.currency || snapshot.skus.some((sku) => sku.priceWire.currency !== snapshot.currency)) {
-    throw externalFailure("needs_input", "miaoshou.edit_currency_mismatch", "Approved prices must use one currency");
-  }
-
-  const urlByAsset = new Map(snapshot.orderedFinalAssetIds.map((id, index) => [String(id), orderedRemoteAssetUrls[index]!]));
-  const weight = decimal(snapshot.weightKg, "weight");
-  const skuMap: Record<string, MiaoshouEditableSku> = {};
-  for (const sku of snapshot.skus) {
-    const imageUrl = sku.assetIds.map((id) => urlByAsset.get(String(id))).find((url): url is string => Boolean(url));
-    // Miaoshou's detail API uses the semicolon-wrapped dimension combination
-    // as skuMap key (for example `;Red;S;`), not the internal item number.
-    const dimensionValues = Object.values(sku.attributes);
-    const miaoshouKey = `;${(dimensionValues.length > 0 ? dimensionValues : [sku.skuId]).join(";")};`;
-    if (skuMap[miaoshouKey]) {
-      throw externalFailure("needs_input", "miaoshou.edit_duplicate_sku_dimensions", "Approved SKU dimensions must be unique");
-    }
-    skuMap[miaoshouKey] = Object.freeze({
-      itemNum: sku.skuId,
-      price: moneyMajor(sku.priceWire.amountMinor, "sku_price"),
-      stock: sku.stock,
-      weight,
-      ...(imageUrl ? { imgUrl: imageUrl } : {})
-    });
-  }
-  const dimensions = snapshot.dimensions;
 
   return Object.freeze({
     title: snapshot.title,
-    ...(snapshot.itemNumber ? { itemNum: snapshot.itemNumber } : {}),
     notesText: snapshot.description,
     notes: snapshot.description,
-    price: moneyMajor(snapshot.priceWire.amountMinor, "price"),
-    stock: snapshot.stock,
-    weight,
-    ...(dimensions ? {
-      packageLength: decimal(dimensions.lengthCm, "length"),
-      packageWidth: decimal(dimensions.widthCm, "width"),
-      packageHeight: decimal(dimensions.heightCm, "height")
-    } : {}),
     imgUrls: Object.freeze([...orderedRemoteAssetUrls]),
-    sourceAttrs: Object.freeze(snapshot.attributes.map((attribute) => Object.freeze({ ...attribute }))),
-    skuMap: Object.freeze(skuMap)
+    sourceAttrs: Object.freeze(snapshot.attributes.map((attribute) => Object.freeze({
+      name: miaoshouText(attribute.name),
+      value: miaoshouText(attribute.value)
+    })))
   });
 }

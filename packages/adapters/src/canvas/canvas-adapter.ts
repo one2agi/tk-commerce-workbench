@@ -38,6 +38,7 @@ type OutputCandidate = { url?: string; width?: number; height?: number; sha256?:
 
 export function createCanvasAdapter(config: CanvasAdapterConfig): CanvasPort {
   const baseUrl = config.baseUrl.replace(/\/+$/, "");
+  const baseOrigin = new URL(`${baseUrl}/`).origin;
   const fetchImpl = config.fetchImpl ?? globalThis.fetch;
   const timeoutMs = config.timeoutMs ?? 30_000;
   const downloadImage = config.downloadImage ?? createSafeImageDownloader({ timeoutMs });
@@ -87,11 +88,11 @@ export function createCanvasAdapter(config: CanvasAdapterConfig): CanvasPort {
       if (imageUrls.length < 1 || imageUrls.length > observed.inputCapacity) {
         throw externalFailure("needs_input", "canvas.invalid_image_count", "Canvas image count is outside the current workflow capacity");
       }
-      if (new Set(imageUrls).size !== imageUrls.length || imageUrls.some((url) => !isPublicHttpUrl(url))) {
+      if (new Set(imageUrls).size !== imageUrls.length || imageUrls.some((url) => !isAllowedCanvasAssetUrl(url, baseOrigin))) {
         throw externalFailure("needs_input", "canvas.invalid_image_urls", "Canvas requires unique publicly accessible image URLs");
       }
       try {
-        await Promise.all(imageUrls.map((url) => assertPublicHttpUrl(url, config.resolveHost)));
+        await Promise.all(imageUrls.map((url) => assertAllowedCanvasAssetUrl(url, baseOrigin, config.resolveHost)));
       } catch {
         throw externalFailure("needs_input", "canvas.invalid_image_urls", "Canvas requires unique publicly accessible image URLs");
       }
@@ -106,6 +107,7 @@ export function createCanvasAdapter(config: CanvasAdapterConfig): CanvasPort {
             canvas_workflow_id: observed.workflowId,
             canvas_workflow_name: config.workflowName ?? "",
             image_urls: imageUrls,
+            llm_user_input: buildCanvasLlmUserInput(input.promptContext),
             callback_url: ""
           })
         }) as typeof raw;
@@ -123,6 +125,7 @@ export function createCanvasAdapter(config: CanvasAdapterConfig): CanvasPort {
     async fetchOutputs({ remoteTaskId }): Promise<CanvasFetchOutputsResult> {
       const raw = await request(`/api/automation/workflow-runs/${encodeURIComponent(remoteTaskId)}`) as {
         status?: string;
+        images?: OutputCandidate[];
         outputs?: OutputCandidate[];
         result?: OutputCandidate[] | { outputs?: OutputCandidate[] };
       };
@@ -133,8 +136,8 @@ export function createCanvasAdapter(config: CanvasAdapterConfig): CanvasPort {
       if (status === "failed" || status === "error") {
         throw externalFailure("fatal", "canvas.remote_failed", "Canvas generation failed");
       }
-      const candidates = raw.outputs ?? (Array.isArray(raw.result) ? raw.result : raw.result?.outputs) ?? [];
-      const hydrated = await Promise.all(candidates.map((candidate) => normalizeOutput(candidate, baseUrl, downloadImage)));
+      const candidates = raw.outputs ?? raw.images ?? (Array.isArray(raw.result) ? raw.result : raw.result?.outputs) ?? [];
+      const hydrated = await Promise.all(candidates.map((candidate) => normalizeOutput(candidate, baseUrl, (url) => downloadCanvasOutput(url, baseOrigin, fetchImpl, timeoutMs, downloadImage))));
       const outputs = hydrated.filter((item): item is NonNullable<typeof item> => item !== null);
       if (outputs.length === 0) throw externalFailure("fatal", "canvas.no_valid_outputs", "Canvas returned no valid generated images");
       return Object.freeze({ outputs });
@@ -156,6 +159,14 @@ function deriveTopologyVersion(workflow: WorkflowMetadata): number {
     hash = Math.imul(hash, 16_777_619);
   }
   return (hash >>> 0) || 1;
+}
+
+function buildCanvasLlmUserInput(promptContext: { sourceLocale: string; targetLocale: string; style: string }): string {
+  return [
+    "请分析上传商品图片，基于工作流内置系统提示词生成差异化电商商品图生图 prompt。",
+    "要求：让每张图承担不同转化任务，不要只换背景；保持真实产品外观、颜色、材质、结构和可见文字。",
+    `源语言：${promptContext.sourceLocale}；目标语言：${promptContext.targetLocale}；目标风格：${promptContext.style}。`
+  ].join("\n");
 }
 
 async function normalizeOutput(candidate: OutputCandidate, baseUrl: string, downloadImage: (url: string) => Promise<{ bytes: Uint8Array; finalUrl: string }>) {
@@ -214,5 +225,69 @@ function isPublicHttpUrl(value: string): boolean {
     return private172 === undefined || Number(private172) < 16 || Number(private172) > 31;
   } catch {
     return false;
+  }
+}
+
+function isAllowedCanvasAssetUrl(value: string, baseOrigin: string): boolean {
+  if (isCanvasInternalAssetPath(value)) return true;
+  try {
+    const url = new URL(value);
+    if ((url.protocol !== "https:" && url.protocol !== "http:") || url.username || url.password) return false;
+    if (isSameOriginLoopback(url, baseOrigin)) return true;
+    return isPublicHttpUrl(value);
+  } catch {
+    return false;
+  }
+}
+
+async function assertAllowedCanvasAssetUrl(value: string, baseOrigin: string, resolveHost: ResolveHost = undefined as never): Promise<void> {
+  if (isCanvasInternalAssetPath(value)) return;
+  const url = new URL(value);
+  if (isSameOriginLoopback(url, baseOrigin)) return;
+  await assertPublicHttpUrl(value, resolveHost);
+}
+
+function isCanvasInternalAssetPath(value: string): boolean {
+  return /^\/assets\/(?:input|output)\//.test(value.trim());
+}
+
+function isSameOriginLoopback(url: URL, baseOrigin: string): boolean {
+  let base: URL;
+  try {
+    base = new URL(baseOrigin);
+  } catch {
+    return false;
+  }
+  return url.origin === base.origin && isLoopbackHost(base.hostname);
+}
+
+function isLoopbackHost(hostname: string): boolean {
+  const host = hostname.toLowerCase().replace(/^\[|\]$/g, "");
+  return host === "localhost" || host === "::1" || /^127\./.test(host);
+}
+
+async function downloadCanvasOutput(
+  value: string,
+  baseOrigin: string,
+  fetchImpl: typeof fetch,
+  timeoutMs: number,
+  fallback: (url: string) => Promise<{ bytes: Uint8Array; finalUrl: string }>
+): Promise<{ bytes: Uint8Array; finalUrl: string }> {
+  const url = new URL(value);
+  if (!isSameOriginLoopback(url, baseOrigin)) return fallback(value);
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    const response = await fetchImpl(url, { headers: { accept: "image/png,image/jpeg" }, signal: controller.signal });
+    if (!response.ok) throw externalFailure("retryable", `download.http_${response.status}`, "Remote image download failed");
+    const contentType = (response.headers.get("content-type") ?? "").split(";", 1)[0]?.trim().toLowerCase();
+    if (contentType !== "image/png" && contentType !== "image/jpeg") {
+      throw externalFailure("fatal", "download.invalid_content_type", "Remote file is not a supported image");
+    }
+    const bytes = new Uint8Array(await response.arrayBuffer());
+    if (bytes.byteLength > 12 * 1024 * 1024) throw externalFailure("fatal", "download.too_large", "Remote image exceeds the size limit");
+    return Object.freeze({ bytes, finalUrl: url.toString() });
+  } finally {
+    clearTimeout(timer);
   }
 }

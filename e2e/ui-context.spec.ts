@@ -15,12 +15,18 @@ function item(id: string, title: string): ProductPoolItem {
     productId: id as never,
     currentRevisionId: `revision-${id}` as never,
     sourceItemId: `source-${id}` as never,
+    sourceUrl: `https://detail.1688.com/offer/${id}.html`,
+    thumbnailUrl: `https://assets.example/${id}.jpg`,
+    collectedAt: "2026-07-22T10:00:00.000Z",
+    updatedAt: "2026-07-22T10:10:00.000Z",
     canonicalSourceTitle: title,
     targetTitle: null,
     canonicalSuccessDetailId: `detail-${id}` as never,
     locale: "th-TH",
     currency: "THB",
     priceWire: null,
+    sourceImageCount: 2,
+    sourceCaptureQuality: null,
     imageCount: 2,
     usableCanvasOutputCount: 0,
     miaoshouSource: "success",
@@ -94,7 +100,7 @@ test("刷新数据或完成动作后仍保留用户可见的筛选、勾选、�
   expect((tableTree.props as Record<string, unknown>)["aria-label"]).toBe("待处理商品表（2/2）");
   expect(nodes(tableTree as unknown as RenderNode).some((node) => typeof node === "object" && node?.props?.["aria-selected"] === true)).toBe(true);
   expect(nodes(tableTree as unknown as RenderNode).some((node) => typeof node === "object" && node?.props?.["data-scroll-top-mirror"] === 176)).toBe(true);
-  expect(visibleText(tableTree as unknown as RenderNode)).toContain("轻薄防晒男士夹克（已刷新）");
+  expect(visibleText(tableTree as unknown as RenderNode)).toContain("เสื้อแจ็กเก็ตกันแดด");
   expect(drawerItem?.targetTitle).toBe("เสื้อแจ็กเก็ตกันแดด");
   expect(state.drawerStartButtonLabel).toBe("开始处理");
 });

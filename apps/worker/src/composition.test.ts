@@ -17,7 +17,7 @@ describe("worker composition", () => {
     const registry = buildHandlerRegistry({
       ports: { miaoshou: {} as never, miaoshouEdit: {} as never, llm: {} as never, exchangeRate: {} as never, canvas: {} as never, staging: {} as never },
       repositories: {
-        collect: {} as never, archive: {} as never, listing: {} as never, pricing: {} as never,
+        collect: {} as never, prepareMiaoshouWriteback: {} as never, archive: {} as never, listing: {} as never, pricing: {} as never,
         exchangeRate: {} as never, templates: {} as never, images: {} as never, canvas: {} as never,
         finalPreview: {} as never, miaoshouEdit: {} as never
       },
@@ -36,7 +36,7 @@ describe("worker composition", () => {
       }
     });
     expect(Object.keys(registry)).toEqual(expect.arrayContaining([
-      "miaoshou_collect", "asset_archive", "listing_generate", "pricing_calculate", "template_match",
+      "miaoshou_collect", "miaoshou_prepare_writeback", "asset_archive", "listing_generate", "pricing_calculate", "template_match",
       "image_select", "canvas_generate", "final_preview", "exchange_rate_refresh", "staging_cleanup", "miaoshou_edit"
     ]));
   });
@@ -61,7 +61,7 @@ describe("worker composition", () => {
     const registry = buildHandlerRegistry({
       ports: { miaoshou: { fetchItem, resolveCanonicalSuccessDetail: vi.fn() }, miaoshouEdit: {} as never, llm: {} as never, exchangeRate: {} as never, canvas: {} as never, staging: { stage: vi.fn(), release: vi.fn() } },
       repositories: {
-        collect: { saveCollected: vi.fn(async () => ({ revisionId: "rev-1" })) }, archive: {} as never, listing: {} as never, pricing: {} as never,
+        collect: { saveCollected: vi.fn(async () => ({ revisionId: "rev-1" })) }, prepareMiaoshouWriteback: {} as never, archive: {} as never, listing: {} as never, pricing: {} as never,
         exchangeRate: {} as never, templates: {} as never, images: {} as never, canvas: {} as never, finalPreview: {} as never, miaoshouEdit: {} as never
       },
       reachability: {} as never, cleanupCodec: {} as never, store: {} as never, analyzer: {} as never, quota: {} as never, audit: { append: vi.fn(async () => undefined) }, now: () => new Date(), maxCanvasRunsPerDay: 1,

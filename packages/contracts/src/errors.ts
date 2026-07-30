@@ -22,6 +22,18 @@ export function externalFailure(
   return Object.freeze({ kind, code, safeMessage });
 }
 
+export function isExternalFailure(value: unknown): value is ExternalFailure {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return false;
+  const candidate = value as Record<string, unknown>;
+  return (
+    ["retryable", "needs_input", "reconcile_required", "fatal"].includes(String(candidate.kind))
+    && typeof candidate.code === "string"
+    && candidate.code.length > 0
+    && typeof candidate.safeMessage === "string"
+    && candidate.safeMessage.length > 0
+  );
+}
+
 export function isReconcileRequired(failure: ExternalFailure): boolean {
   return failure.kind === "reconcile_required";
 }

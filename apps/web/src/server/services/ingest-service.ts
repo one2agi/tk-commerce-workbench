@@ -1,4 +1,9 @@
-import type { IngestLinksV1 } from "@tk/contracts/commands";
+import type {
+  IngestLinksV1,
+  IngestLocalCaptureItemV3,
+  IngestLocalCapturesResult,
+  IngestLocalCapturesV3
+} from "@tk/contracts/commands";
 
 type EnqueueInput = {
   kind: string;
@@ -21,8 +26,23 @@ export interface IngestJobRepository {
   enqueue(input: AuditedEnqueueInput): Promise<string>;
 }
 
+export interface LocalCaptureRepository {
+  save(input: {
+    batchId: string;
+    item: IngestLocalCaptureItemV3;
+  }): Promise<{
+    sourceItemId: string;
+    productId: string;
+    revisionId: string;
+    created: boolean;
+  }>;
+}
+
 export class IngestService {
-  constructor(private readonly jobs: IngestJobRepository) {}
+  constructor(
+    private readonly jobs: IngestJobRepository,
+    private readonly captures?: LocalCaptureRepository
+  ) {}
 
   async ingest(command: IngestLinksV1): Promise<{
     jobs: Array<{ idempotencyKey: string; jobId: string }>;
@@ -50,5 +70,23 @@ export class IngestService {
         queued.push({ idempotencyKey: item.idempotencyKey, jobId });
     }
     return { jobs: queued };
+  }
+
+  async ingestLocal(command: IngestLocalCapturesV3): Promise<IngestLocalCapturesResult> {
+    if (!this.captures) throw new Error("local_capture_repository_unavailable");
+    const products: IngestLocalCapturesResult["products"][number][] = [];
+    const rejected: IngestLocalCapturesResult["rejected"][number][] = [];
+    for (const item of command.items) {
+      try {
+        products.push(await this.captures.save({ batchId: command.batchId, item }));
+      } catch {
+        rejected.push({
+          sourceItemId: item.sourceItemId,
+          sourceUrl: item.sourceUrl,
+          reason: "persist_failed"
+        });
+      }
+    }
+    return { accepted: products.length, products, rejected };
   }
 }

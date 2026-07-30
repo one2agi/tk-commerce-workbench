@@ -1,7 +1,6 @@
 // @vitest-environment node
-// scan-store relies on a DOM + MutationObserver. We provide a minimal in-memory
-// DOM stub that captures the same behavior: querySelectorAll, appendChild,
-// setAttribute, and an emit()-based MutationObserver.
+// scan-store relies on a DOM-like root. We provide a minimal in-memory DOM stub
+// that captures querySelectorAll, appendChild, and setAttribute behavior.
 import { describe, expect, it } from "vitest";
 import {
   createScanStore,
@@ -14,7 +13,7 @@ interface StubElement {
   children: StubElement[];
   attrs: Record<string, string>;
   text: string;
-  _observer: Array<() => void> | null;
+  textContent: string;
   setAttribute(name: string, value: string): void;
   getAttribute(name: string): string | null;
   appendChild(child: StubElement): StubElement;
@@ -29,7 +28,7 @@ function el(tag: string): StubElement {
     children: [],
     attrs: {},
     text: "",
-    _observer: null,
+    textContent: "",
     setAttribute(name, value) {
       node.attrs[name] = value;
     },
@@ -40,7 +39,6 @@ function el(tag: string): StubElement {
     appendChild(child) {
       child.parent = node;
       node.children.push(child);
-      node._observer?.forEach((cb) => cb());
       return child;
     },
     querySelectorAll(sel) {
@@ -114,29 +112,37 @@ function buildFixtureDom(): StubElement {
   return root;
 }
 
-// Provide a global MutationObserver stub for scan-store.ts to use.
-class StubObserver {
-  private cb: () => void;
-  private target: StubElement;
-  constructor(cb: () => void) {
-    this.cb = cb;
-    this.target = null as unknown as StubElement;
-  }
-  observe(target: StubElement) {
-    this.target = target;
-    if (!target._observer) target._observer = [];
-    target._observer.push(() => this.cb());
-  }
-  disconnect() {
-    if (this.target?._observer) {
-      this.target._observer = this.target._observer.filter((c) => c !== this.cb);
-    }
-  }
-}
-
-(globalThis as unknown as { MutationObserver: typeof StubObserver }).MutationObserver = StubObserver;
-
 describe("scan-store", () => {
+  it("creates one selectable product on a 1688 detail page", () => {
+    const previousLocation = Object.getOwnPropertyDescriptor(globalThis, "location");
+    const previousDocument = Object.getOwnPropertyDescriptor(globalThis, "document");
+    Object.defineProperty(globalThis, "location", {
+      value: new URL("https://detail.1688.com/offer/892408514788.html?forcePC=1"),
+      configurable: true
+    });
+    Object.defineProperty(globalThis, "document", {
+      value: {
+        title: "工装短裤男士夏季潮牌外穿休闲运动裤宽松薄款潮流百搭五分中裤子 - 阿里巴巴"
+      },
+      configurable: true
+    });
+    try {
+      const root = el("div");
+      root.textContent = "整页属性和 SKU 文本不应该成为浮层标题";
+      const store = createScanStore(root as unknown as HTMLElement);
+      expect(store.rescan()).toEqual([{
+        sourceItemId: "892408514788",
+        sourceUrl: "https://detail.1688.com/offer/892408514788.html",
+        title: "工装短裤男士夏季潮牌外穿休闲运动裤宽松薄款潮流百搭五分中裤子"
+      }]);
+    } finally {
+      if (previousLocation) Object.defineProperty(globalThis, "location", previousLocation);
+      else Reflect.deleteProperty(globalThis, "location");
+      if (previousDocument) Object.defineProperty(globalThis, "document", previousDocument);
+      else Reflect.deleteProperty(globalThis, "document");
+    }
+  });
+
   it("supports the direct and render-key card shapes used by the local 1688 collector", () => {
     const root = el("div");
     const direct = el("a");
@@ -152,7 +158,7 @@ describe("scan-store", () => {
     root.appendChild(rendered);
 
     const store = createScanStore(root as unknown as HTMLElement);
-    store.start();
+    store.rescan();
     expect(store.snapshot().map((card) => card.sourceItemId)).toEqual([
       "111111111111",
       "222222222222"
@@ -162,7 +168,7 @@ describe("scan-store", () => {
   it("parses visible cards from a frozen DOM fixture", () => {
     const root = buildFixtureDom();
     const store = createScanStore(root as unknown as HTMLElement);
-    store.start();
+    store.rescan();
     const cards = store.snapshot();
     expect(cards).toHaveLength(3);
     expect(cards.map((c) => c.sourceItemId).sort()).toEqual([
@@ -172,10 +178,10 @@ describe("scan-store", () => {
     ]);
   });
 
-  it("accumulates lazily loaded cards revealed by clicking load more", async () => {
+  it("only scans lazily loaded cards after the operator manually rescans", () => {
     const root = buildFixtureDom();
     const store = createScanStore(root as unknown as HTMLElement);
-    store.start();
+    store.rescan();
     expect(store.snapshot()).toHaveLength(3);
 
     for (const id of ["444444444444", "555555555555"]) {
@@ -187,10 +193,8 @@ describe("scan-store", () => {
       card.appendChild(a);
       root.appendChild(card);
     }
-    // MutationObserver callbacks fire synchronously in this stub.
-    await new Promise((r) => setTimeout(r, 10));
-    const after = store.snapshot();
-    expect(after).toHaveLength(5);
+    expect(store.snapshot()).toHaveLength(3);
+    expect(store.rescan()).toHaveLength(5);
   });
 
   it("deduplicates duplicate URLs within the visible batch", () => {
@@ -204,7 +208,7 @@ describe("scan-store", () => {
     root.appendChild(dup);
 
     const store = createScanStore(root as unknown as HTMLElement);
-    store.start();
+    store.rescan();
     const cards = store.snapshot();
     const ids = cards.map((c) => c.sourceItemId);
     expect(ids.filter((id) => id === "111111111111")).toHaveLength(1);
@@ -214,7 +218,7 @@ describe("scan-store", () => {
   it("persists selection across re-render (DOM rebuild)", () => {
     const root = buildFixtureDom();
     const store = createScanStore(root as unknown as HTMLElement);
-    store.start();
+    store.rescan();
     store.select("222222222222", true);
     expect(store.selection()).toEqual(new Set(["222222222222"]));
 
@@ -232,7 +236,7 @@ describe("scan-store", () => {
   it("emits selection-only batches (never submits unselected)", () => {
     const root = buildFixtureDom();
     const store = createScanStore(root as unknown as HTMLElement);
-    store.start();
+    store.rescan();
     store.select("111111111111", true);
     store.select("333333333333", true);
     const batch = store.selectedBatch();
@@ -241,13 +245,27 @@ describe("scan-store", () => {
     expect(ids).not.toContain("222222222222");
   });
 
+  it("bulk-selects and clears the current scanned set without submitting", () => {
+    const root = buildFixtureDom();
+    const store = createScanStore(root as unknown as HTMLElement);
+    store.rescan();
+    store.selectAll();
+    expect(store.selectedBatch().map((card) => card.sourceItemId).sort()).toEqual([
+      "111111111111",
+      "222222222222",
+      "333333333333"
+    ]);
+    store.clearSelection();
+    expect(store.selectedBatch()).toEqual([]);
+  });
+
   it("notifies listeners on changes", () => {
     const root = buildFixtureDom();
     const store = createScanStore(root as unknown as HTMLElement);
     const seen: number[] = [];
     const listener: ScanStoreListener = (cards) => seen.push(cards.length);
     store.subscribe(listener);
-    store.start();
+    store.rescan();
     store.select("111111111111", true);
     expect(seen.length).toBeGreaterThanOrEqual(1);
     expect(seen[seen.length - 1]).toBe(3);

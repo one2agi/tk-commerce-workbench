@@ -20,6 +20,7 @@ describe("Chrome extension build", () => {
       build: { outDir }
     });
     const manifest = JSON.parse(readFileSync(join(outDir, "manifest.json"), "utf8")) as {
+      permissions: string[];
       background: { service_worker: string };
       content_scripts: Array<{ js: string[] }>;
       options_ui: { page: string };
@@ -31,7 +32,14 @@ describe("Chrome extension build", () => {
       manifest.options_ui.page,
       manifest.action.default_popup
     ];
-    expect(referenced).toEqual(["background.js", "content.js", "options.html", "popup.html"]);
+    expect(manifest.permissions).toContain("scripting");
+    expect(referenced).toEqual([
+      "background.js",
+      "page-context.js",
+      "content.js",
+      "options.html",
+      "popup.html"
+    ]);
     expect(referenced.every((file) => existsSync(join(outDir, file)))).toBe(true);
   });
 });

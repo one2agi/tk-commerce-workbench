@@ -66,11 +66,27 @@ describe("OpenAI-compatible listing adapter", () => {
     await expect(adapter.generateListing(input)).rejects.toMatchObject({ kind: "fatal", code: "llm.ungrounded_claim" });
   });
 
-  it("rejects cross-language output before calling the model", async () => {
-    const fetchImpl = vi.fn();
+  it("allows cross-language listing generation when every output keeps source evidence mappings", async () => {
+    const translated = {
+      title: "สร้อยคอผู้หญิงจี้โคลเวอร์",
+      description: "สแตนเลสไทเทเนียม ไม่ลอกง่าย",
+      translatedAttributes: [{ name: "วัสดุ", value: "สแตนเลสไทเทเนียม" }],
+      styleApplied: "neutral",
+      fallbackUsed: false,
+      evidenceMappings: [
+        { outputPath: "title", sourcePath: "sourceTitle", sourceQuote: "男士宽松短裤" },
+        { outputPath: "description", sourcePath: "sourceDescription", sourceQuote: "轻薄舒适" },
+        { outputPath: "translatedAttributes.0.name", sourcePath: "sourceAttributes.0.name", sourceQuote: "颜色" },
+        { outputPath: "translatedAttributes.0.value", sourcePath: "sourceAttributes.0.value", sourceQuote: "黑色" }
+      ]
+    };
+    const fetchImpl = vi.fn(async () => llmResponse(translated));
     const adapter = createOpenAiCompatibleAdapter({ baseUrl: "https://llm.test/v1", apiKey: "secret", model: "model-1", fetchImpl });
-    await expect(adapter.generateListing({ ...input, targetLocale: "th-TH" })).rejects.toMatchObject({ code: "llm.cross_locale_requires_rules" });
-    expect(fetchImpl).not.toHaveBeenCalled();
+    await expect(adapter.generateListing({ ...input, targetLocale: "th-TH" })).resolves.toMatchObject({
+      title: "สร้อยคอผู้หญิงจี้โคลเวอร์",
+      fallbackUsed: false
+    });
+    expect(fetchImpl).toHaveBeenCalledTimes(1);
   });
 
   it("requires an exact source citation for every generated field", async () => {
@@ -103,10 +119,17 @@ describe("OpenAI-compatible listing adapter", () => {
     await expect(adapter.generateListing(sameLocaleInput)).rejects.toMatchObject({ code: "llm.ungrounded_claim" });
   });
 
-  it("fails closed before any paid model call when cross-language semantics cannot be proven locally", async () => {
-    const fetchImpl = vi.fn();
+  it("still requires exact source citations for cross-language outputs", async () => {
+    const fetchImpl = vi.fn(async () => llmResponse({
+      ...groundedOutput({ title: "สร้อยคอผู้หญิง" }),
+      evidenceMappings: [
+        { outputPath: "title", sourcePath: "sourceTitle", sourceQuote: "not in evidence" },
+        { outputPath: "description", sourcePath: "sourceDescription", sourceQuote: "轻薄舒适" },
+        { outputPath: "translatedAttributes.0.name", sourcePath: "sourceAttributes.0.name", sourceQuote: "颜色" },
+        { outputPath: "translatedAttributes.0.value", sourcePath: "sourceAttributes.0.value", sourceQuote: "黑色" }
+      ]
+    }));
     const adapter = createOpenAiCompatibleAdapter({ baseUrl: "https://llm.test/v1", apiKey: "secret", model: "model-1", fetchImpl });
-    await expect(adapter.generateListing({ ...input, targetLocale: "th-TH" })).rejects.toMatchObject({ kind: "needs_input", code: "llm.cross_locale_requires_rules" });
-    expect(fetchImpl).not.toHaveBeenCalled();
+    await expect(adapter.generateListing({ ...input, targetLocale: "th-TH" })).rejects.toMatchObject({ code: "llm.ungrounded_claim" });
   });
 });

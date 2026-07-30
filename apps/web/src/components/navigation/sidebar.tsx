@@ -4,10 +4,9 @@ import type { ReactElement } from "react";
 type SidebarItem = Readonly<{ href: string; label: string; ariaLabel: string }>;
 
 const ITEMS: ReadonlyArray<SidebarItem> = [
-  { href: "/", label: "商品工作台", ariaLabel: "商品工作台" },
-  { href: "/products", label: "商品列表", ariaLabel: "商品列表" },
-  { href: "/tasks", label: "任务中心", ariaLabel: "任务中心" },
-  { href: "/templates", label: "模板库", ariaLabel: "生图模板库" },
+  { href: "/", label: "商品", ariaLabel: "商品处理台" },
+  { href: "/processing-rules", label: "处理规则", ariaLabel: "处理规则" },
+  { href: "/write-records", label: "写入记录", ariaLabel: "妙手写入记录" },
   { href: "/settings", label: "设置", ariaLabel: "工作区设置" }
 ];
 

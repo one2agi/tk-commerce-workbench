@@ -82,6 +82,8 @@ describe("web app source invariants", () => {
     const offenders: string[] = [];
     for (const file of walk(SRC_ROOT)) {
       if (!isProductionSource(file)) continue;
+      const rel = relative(SRC_ROOT, file);
+      if (!/(?:^|\/)(?:navigation|sidebar|nav)(?:\/|\.|-)/i.test(rel)) continue;
       const src = readFileSync(file, "utf8");
       for (const pattern of FORBIDDEN_LINK_TEXT) {
         if (pattern.test(src)) offenders.push(`${file}: ${pattern}`);

@@ -8,6 +8,7 @@ import type { WorkerInstanceId } from "./ids.js";
 
 export type JobKind =
   | "miaoshou_collect"
+  | "miaoshou_prepare_writeback"
   | "asset_archive"
   | "listing_generate"
   | "pricing_calculate"
@@ -21,6 +22,7 @@ export type JobKind =
 
 export const JOB_KIND_VERSION: Readonly<Record<JobKind, number>> = Object.freeze({
   miaoshou_collect: 1,
+  miaoshou_prepare_writeback: 1,
   asset_archive: 1,
   listing_generate: 1,
   pricing_calculate: 1,
@@ -36,6 +38,15 @@ export const JOB_KIND_VERSION: Readonly<Record<JobKind, number>> = Object.freeze
 export type MiaoshouCollectPayloadV1 = Readonly<{
   version: 1;
   batchId: string;
+  sourceUrl: string;
+  idempotencyKey: string;
+}>;
+
+export type MiaoshouPrepareWritebackPayloadV1 = Readonly<{
+  version: 1;
+  approvalSnapshotId: string;
+  productId: ProductId;
+  revisionId: ProductRevisionId;
   sourceUrl: string;
   idempotencyKey: string;
 }>;
@@ -85,6 +96,10 @@ export type MiaoshouEditPayloadV1 = Readonly<{
 }>;
 
 export type MiaoshouCollectJob = { kind: "miaoshou_collect"; payload: MiaoshouCollectPayloadV1 };
+export type MiaoshouPrepareWritebackJob = {
+  kind: "miaoshou_prepare_writeback";
+  payload: MiaoshouPrepareWritebackPayloadV1;
+};
 export type AssetArchiveJob = { kind: "asset_archive"; payload: AssetArchivePayloadV1 };
 export type ListingGenerateJob = { kind: "listing_generate"; payload: ListingGeneratePayloadV1 };
 export type PricingCalculateJob = { kind: "pricing_calculate"; payload: PricingCalculatePayloadV1 };

@@ -1,3 +1,5 @@
+import { isExternalFailure } from "@tk/contracts/errors";
+
 export interface EnqueueJob {
   kind: string;
   businessKey: string;
@@ -184,6 +186,7 @@ export async function runWorkerLoop(input: {
       const handler = input.handlers[job.kind];
       if (!handler) {
         await input.jobs.fail(job, input.workerId, input.clock.now(), {
+          kind: "fatal",
           code: "worker.handler_missing",
           safeMessage: `No handler registered for ${job.kind}`
         });
@@ -255,13 +258,14 @@ export async function runWorkerLoop(input: {
           // A newer worker owns the row. The stale worker must not write any terminal state.
         } else if (error instanceof RetryableJobError) {
           await input.jobs.retry(job, input.workerId, input.clock.now(), error.delayMs, {
+            kind: "retryable",
             code: error.code,
             safeMessage: "The operation was temporarily unavailable and will be retried"
           });
         } else if (error instanceof NeedsInputError) {
           const reconciliationRequired = error.code === "reconcile_required";
           await input.jobs.markNeedsInput(job, input.workerId, input.clock.now(), {
-            ...(reconciliationRequired ? { kind: "reconcile_required" } : {}),
+            kind: reconciliationRequired ? "reconcile_required" : "needs_input",
             code: error.code,
             safeMessage: reconciliationRequired
               ? "External request result must be reconciled before retry"
@@ -270,17 +274,28 @@ export async function runWorkerLoop(input: {
         } else if (error instanceof ExternalResultUnknownError) {
           if (job.remoteTaskId) {
             await input.jobs.markNeedsInput(job, input.workerId, input.clock.now(), {
+              kind: "reconcile_required",
               code: "reconcile_failed",
               safeMessage: "Automatic reconciliation failed; review the external task before trying again"
             });
           } else {
             await input.jobs.markResultUnknown(job, input.workerId, input.clock.now(), error.remoteTaskId, {
+              kind: "reconcile_required",
               code: "reconcile_required",
               safeMessage: "External request result must be reconciled before retry"
             });
           }
+        } else if (isExternalFailure(error)) {
+          if (error.kind === "retryable") {
+            await input.jobs.retry(job, input.workerId, input.clock.now(), 30_000, error);
+          } else if (error.kind === "needs_input" || error.kind === "reconcile_required") {
+            await input.jobs.markNeedsInput(job, input.workerId, input.clock.now(), error);
+          } else {
+            await input.jobs.fail(job, input.workerId, input.clock.now(), error);
+          }
         } else {
           await input.jobs.fail(job, input.workerId, input.clock.now(), {
+            kind: "fatal",
             code: "worker.handler_failed",
             safeMessage: "Worker handler failed"
           });

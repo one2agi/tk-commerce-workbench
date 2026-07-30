@@ -12,6 +12,9 @@ import {
   markStartResult,
   recordScroll,
   refreshItems,
+  selectedBatchConfirmIds,
+  selectedBatchRetryIds,
+  selectedBatchStartIds,
   type ProductPoolItem,
   type WorkbenchState
 } from "./product-workbench.state";
@@ -22,6 +25,10 @@ const items: ProductPoolItem[] = [
     productId: productId("892408514788"),
     currentRevisionId: productRevisionId("revision-892408514788"),
     sourceItemId: sourceItemId("s-1"),
+    sourceUrl: "https://detail.1688.com/offer/892408514788.html",
+    thumbnailUrl: "https://img.test/892408514788.jpg",
+    collectedAt: "2026-07-22T10:00:00.000Z",
+    updatedAt: "2026-07-22T10:10:00.000Z",
     canonicalSourceTitle: "A",
     targetTitle: null,
     canonicalSuccessDetailId: miaoshouDetailId("detail-1"),
@@ -29,6 +36,7 @@ const items: ProductPoolItem[] = [
     currency: "CNY",
     priceWire: null,
     sourceImageCount: 1,
+    sourceCaptureQuality: null,
     imageCount: 0,
     usableCanvasOutputCount: 0,
     miaoshouSource: "success",
@@ -44,6 +52,10 @@ const items: ProductPoolItem[] = [
     productId: productId("892408514999"),
     currentRevisionId: productRevisionId("revision-892408514999"),
     sourceItemId: sourceItemId("s-2"),
+    sourceUrl: "https://detail.1688.com/offer/892408514999.html",
+    thumbnailUrl: "https://img.test/892408514999.jpg",
+    collectedAt: "2026-07-22T10:05:00.000Z",
+    updatedAt: "2026-07-22T10:15:00.000Z",
     canonicalSourceTitle: "B",
     targetTitle: null,
     canonicalSuccessDetailId: miaoshouDetailId("detail-2"),
@@ -51,6 +63,7 @@ const items: ProductPoolItem[] = [
     currency: "CNY",
     priceWire: null,
     sourceImageCount: 8,
+    sourceCaptureQuality: null,
     imageCount: 1,
     usableCanvasOutputCount: 5,
     miaoshouSource: "success",
@@ -94,6 +107,45 @@ describe("workbench state machine", () => {
     expect(s.drawerStartButtonEnabled).toBe(true);
   });
 
+  it("derives separate batch groups for start, confirm and retry", () => {
+    const pending = {
+      ...items[0]!,
+      productId: productId("pending"),
+      currentRevisionId: productRevisionId("revision-pending"),
+      sourceItemId: sourceItemId("source-pending")
+    };
+    const review = {
+      ...items[0]!,
+      productId: productId("review"),
+      currentRevisionId: productRevisionId("revision-review"),
+      sourceItemId: sourceItemId("source-review"),
+      automation: "ready" as const,
+      assetArchive: "ready" as const,
+      listing: "ready" as const,
+      canvas: "succeeded" as const,
+      usableCanvasOutputCount: 5
+    };
+    const failed = {
+      ...items[0]!,
+      productId: productId("failed"),
+      currentRevisionId: productRevisionId("revision-failed"),
+      sourceItemId: sourceItemId("source-failed"),
+      canvas: "failed" as const
+    };
+
+    let state = createWorkbenchState([pending, review, failed]);
+    state = toggleSelection(state, "pending");
+    state = toggleSelection(state, "review");
+    state = toggleSelection(state, "failed");
+
+    expect(state.batchStartCount).toBe(1);
+    expect(state.batchConfirmCount).toBe(1);
+    expect(state.batchRetryCount).toBe(1);
+    expect(selectedBatchStartIds(state)).toEqual(["pending"]);
+    expect(selectedBatchConfirmIds(state)).toEqual(["review"]);
+    expect(selectedBatchRetryIds(state)).toEqual(["failed"]);
+  });
+
   it("keeps selected rows when the drawer opens and closes", () => {
     let s: WorkbenchState = createWorkbenchState(items);
     s = toggleSelection(s, "892408514788");
@@ -120,18 +172,18 @@ describe("workbench state machine", () => {
     expect(s.scrollTop).toBe(beforeScroll);
   });
 
-  it("only selects products whose automation has not started", () => {
+  it("selects review-ready products for batch confirmation", () => {
     let s: WorkbenchState = createWorkbenchState(items);
     s = toggleSelection(s, "892408514999");
-    expect(s.selectedIds.size).toBe(0);
-    expect(s.batchButtonEnabled).toBe(false);
+    expect(s.selectedIds.size).toBe(1);
+    expect(s.batchStartCount).toBe(0);
+    expect(s.batchConfirmCount).toBe(1);
+    expect(s.batchConfirmEnabled).toBe(true);
   });
 
   it.each([
     ["source not started", { miaoshouSource: "not_started" as const }],
     ["source pending", { miaoshouSource: "pending" as const }],
-    ["source failed", { miaoshouSource: "failed" as const }],
-    ["missing canonical detail", { canonicalSuccessDetailId: null }],
     ["missing source images", { sourceImageCount: 0 }]
   ])("does not select a product when %s", (_label, override) => {
     const blocked = { ...items[0]!, ...override };
@@ -139,6 +191,28 @@ describe("workbench state machine", () => {
 
     expect(s.selectedIds.size).toBe(0);
     expect(s.batchButtonEnabled).toBe(false);
+  });
+
+  it("selects a locally captured product without a canonical Miaoshou detail id", () => {
+    const local = {
+      ...items[0]!,
+      miaoshouSource: "local_captured" as const,
+      sourceCaptureQuality: "detail_page_complete",
+      canonicalSuccessDetailId: null
+    };
+    const state = toggleSelection(createWorkbenchState([local]), String(local.productId));
+
+    expect(state.selectedIds.size).toBe(1);
+    expect(state.batchStartCount).toBe(1);
+  });
+
+  it("selects failed source products for batch retry rather than start processing", () => {
+    const failed = { ...items[0]!, miaoshouSource: "failed" as const };
+    const s = toggleSelection(createWorkbenchState([failed]), String(failed.productId));
+
+    expect(s.selectedIds.size).toBe(1);
+    expect(s.batchStartCount).toBe(0);
+    expect(s.batchRetryCount).toBe(1);
   });
 
   it("never offers start processing again for a needs-input product", () => {

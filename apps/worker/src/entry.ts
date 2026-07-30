@@ -32,6 +32,8 @@ import {
   PipelineRepository,
   createNodePinnedAssetFetch,
   pipelineRepositories,
+  type AssetFetch,
+  type AssetFetchResponse,
   type DbPool
 } from "@tk/db";
 import type { ImageSignals } from "@tk/domain/assets/score-image";
@@ -72,6 +74,39 @@ export interface WorkerApplication {
   run(input?: { workerId?: string; maxJobs?: number }): Promise<{ processed: number }>;
   counters(): ReturnType<AdapterBundle["counters"]>;
   close(): Promise<void>;
+}
+
+export function createCanvasOutputAssetFetch(input: {
+  baseUrl: string;
+  liveFetch: typeof fetch;
+  fallbackFetch: AssetFetch;
+  maxBytes?: number;
+}): AssetFetch {
+  const baseOrigin = new URL(`${input.baseUrl.replace(/\/+$/, "")}/`).origin;
+  const maxBytes = input.maxBytes ?? 20 * 1024 * 1024;
+  return async (request): Promise<AssetFetchResponse> => {
+    const url = new URL(request.url);
+    if (url.origin !== baseOrigin || !url.pathname.startsWith("/assets/output/")) {
+      return input.fallbackFetch(request);
+    }
+
+    const response = await input.liveFetch(url.toString(), {
+      headers: { accept: "image/png,image/jpeg" }
+    });
+    const headers: Record<string, string | undefined> = {};
+    response.headers.forEach((value, key) => { headers[key.toLowerCase()] = value; });
+    const declaredLength = Number(headers["content-length"] ?? 0);
+    if (Number.isFinite(declaredLength) && declaredLength > maxBytes) {
+      throw new Error("canvas output response size exceeds limit");
+    }
+    const bytes = new Uint8Array(await response.arrayBuffer());
+    if (bytes.byteLength > maxBytes) throw new Error("canvas output response size exceeds limit");
+    return {
+      status: response.status,
+      headers,
+      body: (async function* () { yield bytes; })()
+    };
+  };
 }
 
 function requiredSecret(env: NodeJS.ProcessEnv, key: string): string {
@@ -212,9 +247,16 @@ export function createWorkerApplication(input: CreateWorkerApplicationInput = {}
 
   const resolveHost = dependencies.resolveHost ?? (async (hostname: string) =>
     (await dns.lookup(hostname, { all: true, verbatim: true })).map((entry) => entry.address));
+  const fallbackAssetFetch = createNodePinnedAssetFetch();
   const store = new ContentAddressedStore({
     assetRoot: config.assetRoot,
-    fetch: createNodePinnedAssetFetch(),
+    fetch: adapters.mode === "live"
+      ? createCanvasOutputAssetFetch({
+        baseUrl: config.canvasBaseUrl,
+        liveFetch: getLiveFetch(),
+        fallbackFetch: fallbackAssetFetch
+      })
+      : fallbackAssetFetch,
     resolveHost
   });
   const pipeline = new PipelineRepository(pool, config.localOperatorId);
@@ -243,6 +285,16 @@ export function createWorkerApplication(input: CreateWorkerApplicationInput = {}
       address,
       family: address.includes(":") ? 6 as const : 4 as const
     })),
+    transport: async (url, _pinned, method) => {
+      const response = await getLiveFetch()(url, {
+        method: method === "HEAD" ? "HEAD" : "GET",
+        headers: method === "RANGE" ? { range: "bytes=0-0" } : undefined
+      });
+      const headers: Record<string, string> = {};
+      response.headers.forEach((value, key) => { headers[key.toLowerCase()] = value; });
+      const body = method === "HEAD" ? new Uint8Array() : new Uint8Array(await response.arrayBuffer());
+      return { status: response.status, headers, bytesRead: body.byteLength };
+    }
   });
   const miaoshouEditRepository = {
     loadSnapshot: (id: string) => approvals.loadSnapshot(id),
@@ -262,7 +314,15 @@ export function createWorkerApplication(input: CreateWorkerApplicationInput = {}
       canvas: adapters.canvas,
       staging: adapters.assetStaging
     },
-    repositories: { ...pipelineRepositories(pipeline), miaoshouEdit: miaoshouEditRepository },
+    repositories: {
+      ...pipelineRepositories(pipeline),
+      prepareMiaoshouWriteback: {
+        bindCanonicalAndEnqueueEdit: (
+          ...args: Parameters<ApprovalRepository["bindCanonicalAndEnqueueEdit"]>
+        ) => approvals.bindCanonicalAndEnqueueEdit(...args)
+      },
+      miaoshouEdit: miaoshouEditRepository
+    },
     reachability: { assertReachable: async (urls) => { await Promise.all(urls.map(assertStagedUrlReachable)); } },
     cleanupCodec: createStagingCleanupCodec(config.extensionToken),
     store,

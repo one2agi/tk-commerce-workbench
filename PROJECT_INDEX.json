@@ -1,0 +1,242 @@
+{
+  "name": "tk-commerce-workbench",
+  "generatedAt": "2026-07-25",
+  "packageManager": "pnpm@9.15.9",
+  "nodeVersion": ">=22 <23",
+  "type": "pnpm-monorepo",
+  "apps": [
+    {
+      "name": "@tk/extension",
+      "kind": "chrome-mv3-extension",
+      "entry": {
+        "serviceWorker": "apps/extension/src/background/index.ts",
+        "content": "apps/extension/src/content/index.ts",
+        "popup": "apps/extension/src/popup/index.ts",
+        "options": "apps/extension/src/options/index.ts"
+      },
+      "manifest": "apps/extension/public/manifest.json",
+      "build": "vite",
+      "modules": [
+        "background/capture-queue",
+        "background/chrome-capture-tab-port",
+        "background/submit-selected",
+        "content/detail-parser",
+        "content/scan-store",
+        "content/store-overlay",
+        "content/page-context-bridge",
+        "content/page-image-selection",
+        "shared/normalize-1688-url",
+        "options/token-settings"
+      ]
+    },
+    {
+      "name": "@tk/web",
+      "kind": "nextjs-app",
+      "framework": "next@16.2.10",
+      "react": "19.2.7",
+      "entry": {
+        "layout": "apps/web/src/app/layout.tsx",
+        "page": "apps/web/src/app/page.tsx"
+      },
+      "pages": [
+        "/",
+        "/products",
+        "/products/[productId]",
+        "/products/[productId]/review",
+        "/processing-rules",
+        "/write-records",
+        "/settings",
+        "/tasks",
+        "/templates"
+      ],
+      "apiRoutes": [
+        "/api/runtime-health",
+        "/api/v1/products",
+        "/api/v1/products/[productId]",
+        "/api/v1/products/[productId]/draft",
+        "/api/v1/products/[productId]/rerun",
+        "/api/v1/products/[productId]/confirm-miaoshou-edit",
+        "/api/v1/products/batch-actions",
+        "/api/v1/assets/[assetId]/content",
+        "/api/v1/automation-runs",
+        "/api/v1/ingest-links",
+        "/api/v1/local-captures",
+        "/api/v1/miaoshou-syncs",
+        "/api/v1/settings",
+        "/api/v1/tasks",
+        "/api/v1/tasks/[taskId]/actions",
+        "/api/v1/templates"
+      ],
+      "components": [
+        "components/navigation/sidebar",
+        "components/products/product-workbench",
+        "components/products/product-table",
+        "components/review/approval-actions",
+        "components/tasks",
+        "components/templates",
+        "components/settings"
+      ]
+    },
+    {
+      "name": "@tk/worker",
+      "kind": "ts-backend-worker",
+      "main": "apps/worker/src/index.ts",
+      "cli": "apps/worker/src/cli.ts",
+      "composition": "apps/worker/src/main.ts",
+      "loop": "apps/worker/src/runtime/worker-loop.ts",
+      "handlers": [
+        "miaoshou_collect",
+        "miaoshou_prepare_writeback",
+        "archive_assets",
+        "generate_listing",
+        "calculate_pricing",
+        "refresh_exchange_rate",
+        "match_template",
+        "select_images",
+        "generate_canvas",
+        "final_preview",
+        "staging_cleanup",
+        "miaoshou_edit"
+      ],
+      "runtime": [
+        "worker-loop",
+        "adapter-limiter",
+        "staging-cleanup-codec",
+        "recovery"
+      ]
+    }
+  ],
+  "packages": [
+    {
+      "name": "@tk/contracts",
+      "exports": [
+        "ids",
+        "quantities",
+        "states",
+        "errors",
+        "commands",
+        "read-models",
+        "jobs",
+        "ports",
+        "source-url",
+        "testing"
+      ],
+      "role": "cross-layer-types-and-ports",
+      "deps": ["zod"]
+    },
+    {
+      "name": "@tk/config",
+      "exports": ["env"],
+      "role": "env-loading-and-zod-validation",
+      "deps": []
+    },
+    {
+      "name": "@tk/domain",
+      "exports": [
+        "pricing/calculate-price",
+        "product/quality",
+        "product/revision",
+        "state/project-ui-stage",
+        "listing/generate-listing",
+        "listing/rule-fallback",
+        "assets/validate-remote-url",
+        "assets/score-image",
+        "assets/select-canvas-inputs",
+        "templates/match-template",
+        "automation/graph",
+        "approval/create-snapshot",
+        "approval/invalidate-approval"
+      ],
+      "role": "pure-domain-logic",
+      "deps": ["@tk/contracts", "decimal.js"]
+    },
+    {
+      "name": "@tk/db",
+      "exports": [
+        "schema",
+        "repositories/catalog-repository",
+        "repositories/job-repository",
+        "repositories/automation-run-repository",
+        "repositories/exchange-rate-repository",
+        "repositories/asset-repository",
+        "repositories/audit-repository",
+        "repositories/approval-repository",
+        "repositories/canvas-quota-repository",
+        "repositories/pipeline-repository",
+        "repositories/local-capture-repository",
+        "assets/content-addressed-store",
+        "migrations/0000_initial",
+        "integration/runner:bootTestDb",
+        "integration/guard:approveTestDatabaseUrl"
+      ],
+      "role": "drizzle-orm-data-access",
+      "deps": ["@tk/contracts", "@tk/domain", "drizzle-orm", "pg", "@electric-sql/pglite"]
+    },
+    {
+      "name": "@tk/adapters",
+      "exports": [
+        "miaoshou/client",
+        "miaoshou/source-adapter",
+        "miaoshou/edit-adapter",
+        "miaoshou/edit-mapper",
+        "miaoshou/reconcile-edit",
+        "canvas/canvas-adapter",
+        "llm/openai-compatible-adapter",
+        "exchange-rate/exchange-rate-adapter",
+        "staging/asset-staging-adapter",
+        "security/safe-image-download",
+        "factory",
+        "testing/fakes"
+      ],
+      "role": "external-port-impls-mock-and-live",
+      "deps": ["@tk/contracts", "@tk/config", "undici"]
+    }
+  ],
+  "testSummary": {
+    "unitOrComponent": 95,
+    "integration": [
+      "packages/db/test:integration (pglite)",
+      "apps/worker/test:integration"
+    ],
+    "e2e": [
+      "e2e/full-mocked-flow.spec.ts",
+      "e2e/worker-recovery.spec.ts",
+      "e2e/browser-workbench.spec.ts",
+      "e2e/ui-context.spec.ts",
+      "e2e/workbench-fixed-samples.spec.ts",
+      "e2e/collection-to-product-pool.spec.ts"
+    ],
+    "foundation": [
+      "tests/foundation/workspace.test.ts",
+      "tests/foundation/tooling-gates.test.ts"
+    ]
+  },
+  "config": {
+    "envExample": ".env.example",
+    "dockerCompose": "docker-compose.yml",
+    "eslint": "eslint.config.mjs",
+    "tsconfig": "tsconfig.base.json",
+    "vitest": "vitest.config.ts",
+    "playwright": "playwright.config.ts",
+    "pnpmWorkspace": "pnpm-workspace.yaml"
+  },
+  "scripts": {
+    "dev": "pnpm --parallel --filter @tk/web --filter @tk/worker dev",
+    "build": "pnpm -r build",
+    "test": "node scripts/run-tests.mjs",
+    "test:integration": "pnpm --filter @tk/db test:integration && pnpm --filter @tk/worker test:integration",
+    "test:e2e": "playwright test",
+    "db:generate": "pnpm --filter @tk/db db:generate",
+    "db:migrate": "pnpm --filter @tk/db db:migrate",
+    "start:local": "node scripts/start-local-production.mjs"
+  },
+  "docs": [
+    "docs/product/positioning-and-features.md",
+    "docs/operations/local-production.md",
+    "docs/operations/recovery.md",
+    "docs/operations/security.md",
+    "docs/development/local-setup.md",
+    "docs/development/extension-install.md",
+    "docs/development/agent-ownership.md"
+  ]
+}

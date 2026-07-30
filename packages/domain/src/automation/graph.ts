@@ -3,7 +3,6 @@ import type { FakePorts } from "@tk/contracts/testing";
 export const AUTOMATION_DAG = Object.freeze([
   "asset_archive",
   "listing_generate",
-  "pricing_calculate",
   "template_match",
   "image_select",
   "canvas_generate",

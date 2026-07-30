@@ -10,6 +10,7 @@ import { createExchangeRateRefreshHandler } from "./handlers/refresh-exchange-ra
 import { createImageSelectHandler } from "./handlers/select-images.js";
 import { createStagingCleanupHandler } from "./handlers/staging-cleanup.js";
 import { createMiaoshouEditHandler } from "./handlers/miaoshou-edit.js";
+import { createPrepareMiaoshouWritebackHandler } from "./handlers/prepare-miaoshou-writeback.js";
 import { AdapterLimiterSet, type AdapterLimit } from "./runtime/adapter-limiter.js";
 import { runWorkerLoop, type WorkerHandler, type WorkerJobRepository } from "./runtime/worker-loop.js";
 import type { StagingCleanupCodec } from "./runtime/staging-cleanup-codec.js";
@@ -47,6 +48,7 @@ export interface HandlerRegistryInput {
   };
   repositories: {
     collect: Parameters<typeof createCollectHandler>[0]["repository"];
+    prepareMiaoshouWriteback: Parameters<typeof createPrepareMiaoshouWritebackHandler>[0]["repository"];
     archive: Parameters<typeof createArchiveAssetsHandler>[0]["repository"];
     listing: Parameters<typeof createGenerateListingHandler>[0]["repository"];
     pricing: Parameters<typeof createPricingHandler>[0]["repository"];
@@ -92,6 +94,11 @@ export function buildHandlerRegistry(input: HandlerRegistryInput): Readonly<Reco
   };
   return Object.freeze({
     miaoshou_collect: createCollectHandler({ port: miaoshou, repository: input.repositories.collect, audit: input.audit }),
+    miaoshou_prepare_writeback: createPrepareMiaoshouWritebackHandler({
+      port: miaoshou,
+      repository: input.repositories.prepareMiaoshouWriteback,
+      audit: input.audit
+    }),
     asset_archive: createArchiveAssetsHandler({ store: input.store, analyzer: input.analyzer, repository: input.repositories.archive, audit: input.audit }),
     listing_generate: createGenerateListingHandler({ llm, repository: input.repositories.listing, audit: input.audit }),
     pricing_calculate: createPricingHandler({ repository: input.repositories.pricing }),

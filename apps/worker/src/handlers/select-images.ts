@@ -18,6 +18,6 @@ export function createImageSelectHandler(input: {
       referenceUrls: selected.referenceUrls,
       totalCount: selected.totalCount
     }, execution.fence));
-    return { next: [{ kind: "canvas_generate", businessKey: `${revisionId}:canvas`, payload: { version: 1, revisionId } }] };
+    return { next: [{ kind: "canvas_generate", businessKey: `${revisionId}:canvas`, payload: { version: 1, revisionId }, maxAttempts: 30 }] };
   };
 }

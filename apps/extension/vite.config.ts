@@ -14,6 +14,7 @@ export default defineConfig({
       input: {
         background: resolve(root, "src/background/index.ts"),
         content: resolve(root, "src/content/index.ts"),
+        "page-context": resolve(root, "src/content/page-context-bridge.ts"),
         options: resolve(root, "options.html"),
         popup: resolve(root, "popup.html")
       },

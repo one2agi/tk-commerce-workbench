@@ -1,8 +1,11 @@
+import { createServer } from "node:http";
+import type { AddressInfo } from "node:net";
+import { once } from "node:events";
 import { mkdtemp, readFile, readdir, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { ContentAddressedStore, type AssetFetch } from "./content-addressed-store.js";
+import { ContentAddressedStore, createNodePinnedAssetFetch, type AssetFetch } from "./content-addressed-store.js";
 
 const jpeg = (...payload: string[]) => Buffer.concat([
   Buffer.from([0xff, 0xd8, 0xff, 0xe0]),
@@ -23,6 +26,35 @@ async function root(): Promise<string> {
 }
 
 describe("ContentAddressedStore", () => {
+  it("node pinned fetch supports Node lookup callers that request all addresses", async () => {
+    const server = createServer((request, response) => {
+      response.writeHead(200, {
+        "content-type": "image/jpeg",
+        "x-request-host": request.headers.host ?? ""
+      });
+      response.end(jpeg("pinned"));
+    });
+    server.listen(0, "127.0.0.1");
+    await once(server, "listening");
+    try {
+      const port = (server.address() as AddressInfo).port;
+      const response = await createNodePinnedAssetFetch(3_000)({
+        url: `http://cdn.example:${port}/image.jpg`,
+        connectAddress: "127.0.0.1",
+        hostHeader: `cdn.example:${port}`
+      });
+      const chunks: Buffer[] = [];
+      for await (const chunk of response.body ?? []) chunks.push(Buffer.from(chunk));
+
+      expect(response.status).toBe(200);
+      expect(response.headers["content-type"]).toBe("image/jpeg");
+      expect(Buffer.concat(chunks)).toEqual(jpeg("pinned"));
+    } finally {
+      server.close();
+      await once(server, "close");
+    }
+  });
+
   it("streams to a temporary file then exposes one content-addressed atomic path", async () => {
     const assetRoot = await root();
     const fetch: AssetFetch = vi.fn(async () => ({
@@ -40,6 +72,28 @@ describe("ContentAddressedStore", () => {
     expect(second.path).toBe(first.path);
     expect(await readFile(first.path)).toEqual(jpeg("hello world"));
     expect((await readdir(join(assetRoot, first.sha256.slice(0, 2)))).filter((name) => name.includes(".tmp-"))).toEqual([]);
+  });
+
+  it("archives same-machine Canvas output assets without opening general private-network downloads", async () => {
+    const assetRoot = await root();
+    const fetch: AssetFetch = vi.fn(async () => ({
+      status: 200,
+      headers: { "content-type": "image/png" },
+      body: (async function* () { yield png("canvas"); })()
+    }));
+    const resolveHost = vi.fn(async () => {
+      throw new Error("public DNS validation should not run for local Canvas outputs");
+    });
+    const store = new ContentAddressedStore({ assetRoot, fetch, resolveHost });
+
+    const archived = await store.archive("http://127.0.0.1:8123/assets/output/generated.png");
+
+    expect(archived.extension).toBe("png");
+    expect(fetch).toHaveBeenCalledWith(expect.objectContaining({
+      connectAddress: "127.0.0.1",
+      hostHeader: "127.0.0.1:8123"
+    }));
+    await expect(store.archive("http://127.0.0.1:8123/not-canvas/generated.png")).rejects.toThrow(/unsafe/i);
   });
 
   it("revalidates DNS after every redirect before the next request", async () => {

@@ -28,6 +28,8 @@ export interface AppConfig {
   readonly llmConfigured: boolean;
   readonly exchangeRateConfigured: boolean;
   readonly canvasBaseUrl: string;
+  readonly canvasId: string;
+  readonly canvasWorkflowName: string;
   readonly canvasApiKey: string;
   readonly llmBaseUrl: string;
   readonly llmApiKey: string;
@@ -129,10 +131,12 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
     maxCanvasRunsPerDay: parseIntStrict(env, "MAX_CANVAS_RUNS_PER_DAY", 50),
     nodeEnv,
     miaoshouConfigured: Boolean(read(env, "MIAOSHOU_APP_KEY") && read(env, "MIAOSHOU_APP_SECRET")),
-    canvasConfigured: Boolean(read(env, "CANVAS_BASE_URL") && read(env, "CANVAS_API_KEY")),
+    canvasConfigured: Boolean(read(env, "CANVAS_BASE_URL")),
     llmConfigured: Boolean(read(env, "LLM_BASE_URL") && read(env, "LLM_API_KEY")),
     exchangeRateConfigured: Boolean(read(env, "EXCHANGE_RATE_BASE_URL")),
     canvasBaseUrl: read(env, "CANVAS_BASE_URL") ?? "",
+    canvasId: read(env, "CANVAS_ID") ?? "0f91cb2d8f2846c091829af30ea2d18d",
+    canvasWorkflowName: read(env, "CANVAS_WORKFLOW_NAME") ?? "TK工作流",
     canvasApiKey: read(env, "CANVAS_API_KEY") ?? "",
     llmBaseUrl: read(env, "LLM_BASE_URL") ?? "",
     llmApiKey: read(env, "LLM_API_KEY") ?? "",

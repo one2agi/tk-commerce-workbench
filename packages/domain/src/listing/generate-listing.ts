@@ -50,6 +50,6 @@ export async function generateListing(input: {
       warningCodes: [] as string[]
     };
   } catch {
-    return deterministicListingFallback({ ...evidence, style: input.input.style });
+    return deterministicListingFallback({ ...evidence, style: input.input.style, sourceLocale: input.input.sourceLocale, targetLocale: input.input.targetLocale });
   }
 }

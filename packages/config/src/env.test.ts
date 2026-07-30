@@ -48,6 +48,8 @@ describe("config env", () => {
     const cfg = loadConfig({
       ...BASE_ENV,
       CANVAS_BASE_URL: "https://canvas.test/",
+      CANVAS_ID: "canvas-local-1",
+      CANVAS_WORKFLOW_NAME: "TK工作流",
       CANVAS_API_KEY: "TEST_CANVAS_SECRET_DO_NOT_LOG",
       LLM_BASE_URL: "https://llm.test/v1/",
       LLM_API_KEY: "TEST_LLM_SECRET_DO_NOT_LOG",
@@ -55,10 +57,23 @@ describe("config env", () => {
       EXCHANGE_RATE_BASE_URL: "https://rates.test/"
     });
     expect(cfg.canvasBaseUrl).toBe("https://canvas.test/");
+    expect(cfg.canvasId).toBe("canvas-local-1");
+    expect(cfg.canvasWorkflowName).toBe("TK工作流");
     expect(cfg.llmModel).toBe("model-1");
     expect(cfg.canvasApiKey).toBe("TEST_CANVAS_SECRET_DO_NOT_LOG");
     const safe = JSON.stringify(getSecretStatus(cfg));
     expect(safe).not.toMatch(/TEST_(?:CANVAS|LLM)_SECRET_DO_NOT_LOG/);
     expect(JSON.parse(safe)).toEqual({ miaoshouConfigured: false, canvasConfigured: true, llmConfigured: true, exchangeRateConfigured: true });
+  });
+
+  it("treats Canvas base URL as configured when the Canvas deployment does not require an API key", () => {
+    const cfg = loadConfig({
+      ...BASE_ENV,
+      CANVAS_BASE_URL: "https://canvas.test/"
+    });
+    expect(cfg.canvasId).toBe("0f91cb2d8f2846c091829af30ea2d18d");
+    expect(cfg.canvasWorkflowName).toBe("TK工作流");
+    expect(cfg.canvasApiKey).toBe("");
+    expect(getSecretStatus(cfg).canvasConfigured).toBe(true);
   });
 });

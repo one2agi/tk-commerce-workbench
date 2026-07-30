@@ -15,6 +15,18 @@ import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const WEB_URL = "http://127.0.0.1:3000/";
+export const LOCAL_PRODUCTION_LIVE_ACK = "full-live-local-mvp";
+const REQUIRED_LIVE_ENV_KEYS = [
+  "CANVAS_BASE_URL",
+  "CANVAS_ID",
+  "CANVAS_WORKFLOW_NAME",
+  "LLM_BASE_URL",
+  "LLM_API_KEY",
+  "LLM_MODEL",
+  "EXCHANGE_RATE_BASE_URL",
+  "MIAOSHOU_APP_KEY",
+  "MIAOSHOU_APP_SECRET"
+];
 
 // Storage location for .env, data/assets, data/runtime.
 // Defaults to a Linux-native path under the user's home directory so that
@@ -34,6 +46,12 @@ export function envPathFor() {
 export function runtimeDirFor() {
   return join(resolveStorageDir(), "data", "runtime");
 }
+
+function runtimeTmpDirFor(launchId) {
+  const ownerSegment = String(process.getuid?.() ?? "user");
+  return join("/tmp", "tk-commerce-workbench-runtime", ownerSegment, launchId);
+}
+
 export const WEB_MARKER = "pnpm --filter @tk/web start";
 export const WORKER_MARKER = "pnpm --filter @tk/worker start";
 const WORKER_APPLICATION_NAME = "tk-workbench-local-worker";
@@ -49,7 +67,13 @@ const INHERITED_ENV_ALLOWLIST = [
   "LANG",
   "LC_ALL",
   "LC_CTYPE",
-  "TERM"
+  "TERM",
+  "HTTP_PROXY",
+  "HTTPS_PROXY",
+  "ALL_PROXY",
+  "http_proxy",
+  "https_proxy",
+  "all_proxy"
 ];
 
 export function readEnvFile(text) {
@@ -62,7 +86,7 @@ export function readEnvFile(text) {
     if (separator < 1) throw new Error("invalid env assignment");
     const key = line.slice(0, separator).trim();
     const value = line.slice(separator + 1);
-    if (!/^[A-Z][A-Z0-9_]*$/.test(key)) throw new Error(`invalid env key: ${key}`);
+    if (key !== "no_proxy" && !/^[A-Z][A-Z0-9_]*$/.test(key)) throw new Error(`invalid env key: ${key}`);
     if (Object.hasOwn(result, key)) throw new Error(`duplicate env key: ${key}`);
     result[key] = value;
   }
@@ -77,10 +101,20 @@ export function buildChildEnvironment(
   for (const key of INHERITED_ENV_ALLOWLIST) {
     if (hostEnv[key] !== undefined) inherited[key] = hostEnv[key];
   }
+  const liveWorkerContext = env.EXTERNAL_ADAPTER_MODE === "live"
+    ? {
+        WORKER_COMMAND_ID: `local-production-${launchId}`,
+        WORKER_IDEMPOTENCY_KEY: `local-production-${launchId}-worker`
+      }
+    : {};
   return {
     ...inherited,
     ...env,
+    ...liveWorkerContext,
     NODE_ENV: "production",
+    TMPDIR: runtimeTmpDirFor(launchId),
+    TMP: runtimeTmpDirFor(launchId),
+    TEMP: runtimeTmpDirFor(launchId),
     TK_RUNTIME_LAUNCH_ID: launchId
   };
 }
@@ -512,9 +546,35 @@ async function readRequiredEnv() {
   }
 }
 
-function assertSafeRuntimeEnv(env) {
-  if (env.EXTERNAL_ADAPTER_MODE !== "mock") {
-    throw new Error("EXTERNAL_ADAPTER_MODE must equal mock");
+export function runtimePublicInfo(env) {
+  return {
+    adapterMode: env.EXTERNAL_ADAPTER_MODE === "live" ? "live" : "mock",
+    canvasBaseUrlKind: classifyCanvasBaseUrl(env.CANVAS_BASE_URL),
+    canvasWorkflowName: env.CANVAS_WORKFLOW_NAME || ""
+  };
+}
+
+function classifyCanvasBaseUrl(value) {
+  if (!value) return "missing";
+  try {
+    const host = new URL(value).hostname.toLowerCase();
+    return /^(127\.0\.0\.1|localhost|::1|\[::1\])$/.test(host) ? "loopback" : "remote";
+  } catch {
+    return "remote";
+  }
+}
+
+export function assertSafeRuntimeEnv(env) {
+  if (env.EXTERNAL_ADAPTER_MODE === "live") {
+    if (env.LOCAL_PRODUCTION_LIVE_ACK !== LOCAL_PRODUCTION_LIVE_ACK) {
+      throw new Error(`LOCAL_PRODUCTION_LIVE_ACK must equal ${LOCAL_PRODUCTION_LIVE_ACK} for live mode`);
+    }
+    const missing = REQUIRED_LIVE_ENV_KEYS.filter((key) => !String(env[key] ?? "").trim());
+    if (missing.length > 0) {
+      throw new Error(`live mode requires ${missing.join(", ")}`);
+    }
+  } else if (env.EXTERNAL_ADAPTER_MODE !== "mock") {
+    throw new Error("EXTERNAL_ADAPTER_MODE must equal mock or live");
   }
   if (env.ALLOW_LAN !== "false") throw new Error("ALLOW_LAN must equal false");
   if (!env.DATABASE_URL) throw new Error("DATABASE_URL is required");
@@ -732,7 +792,13 @@ export async function statusLocalProduction({ waitMs = 60_000 } = {}) {
     if (webReady && workerReady) {
       await inspectLogsOrStop(metadata, childEnv);
       await assertBothProcessesManaged(metadata);
-      return { running: true, webUrl: WEB_URL, web: metadata.web, worker: metadata.worker };
+      return {
+        running: true,
+        webUrl: WEB_URL,
+        ...runtimePublicInfo(env),
+        web: metadata.web,
+        worker: metadata.worker
+      };
     }
     if (Date.now() >= deadline) {
       throw new Error("local production did not become ready before the deadline");
@@ -836,6 +902,7 @@ export async function startLocalProduction({ repoRoot, waitMs = 60_000 }) {
     ...buildChildEnvironment(env, { launchId }),
     TK_WORKER_READY_PATH: workerReadyPathFor(launchId)
   };
+  await mkdir(childEnv.TMPDIR, { recursive: true, mode: 0o700 });
   let webLog;
   let workerLog;
   let web;

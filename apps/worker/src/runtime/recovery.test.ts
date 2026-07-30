@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
+import { externalFailure } from "@tk/contracts";
 import {
   ExternalResultUnknownError,
   NeedsInputError,
@@ -236,7 +237,11 @@ describe("durable worker recovery", () => {
     expect(completed).toEqual(["good"]);
     expect(jobs.rows.map((row) => row.status)).toEqual(["failed", "succeeded"]);
     expect(JSON.stringify(jobs.rows[0]?.error)).not.toContain("bad product");
-    expect(jobs.rows[0]?.error).toMatchObject({ code: "worker.handler_failed", safeMessage: "Worker handler failed" });
+    expect(jobs.rows[0]?.error).toMatchObject({
+      kind: "fatal",
+      code: "worker.handler_failed",
+      safeMessage: "Worker handler failed"
+    });
   });
 
   it("reconciles a persisted Canvas remote id after restart without submitting twice", async () => {
@@ -293,7 +298,13 @@ describe("durable worker recovery", () => {
       maxJobs: 3
     });
     expect(fetches).toBe(1);
-    expect(jobs.rows[0]).toMatchObject({ status: "needs_input", error: { code: "reconcile_failed" } });
+    expect(jobs.rows[0]).toMatchObject({
+      status: "needs_input",
+      error: {
+        kind: "reconcile_required",
+        code: "reconcile_failed"
+      }
+    });
   });
 
   it("observes a persisted global pause rather than a runtime flag", async () => {
@@ -320,7 +331,13 @@ describe("durable worker recovery", () => {
       leaseMs: 30_000,
       maxJobs: 1
     });
-    expect(jobs.rows[0]).toMatchObject({ status: "needs_input", error: { code: "missing_weight" } });
+    expect(jobs.rows[0]).toMatchObject({
+      status: "needs_input",
+      error: {
+        kind: "needs_input",
+        code: "missing_weight"
+      }
+    });
   });
 
   it("persists retry backoff instead of spinning in process memory", async () => {
@@ -334,7 +351,70 @@ describe("durable worker recovery", () => {
       leaseMs: 30_000,
       maxJobs: 1
     });
-    expect(jobs.rows[0]).toMatchObject({ status: "queued", error: { code: "llm_timeout" }, nextAttemptAt: new Date("2026-07-16T00:00:05Z") });
+    expect(jobs.rows[0]).toMatchObject({
+      status: "queued",
+      error: {
+        kind: "retryable",
+        code: "llm_timeout"
+      },
+      nextAttemptAt: new Date("2026-07-16T00:00:05Z")
+    });
+  });
+
+  it("retries a classified external failure after the default 30 second delay", async () => {
+    const jobs = new DurableMemoryJobs();
+    await jobs.enqueue({ kind: "canvas_generate", businessKey: "canvas-capacity-network", payload: {} });
+    await runWorkerLoop({
+      jobs,
+      handlers: {
+        canvas_generate: async () => {
+          throw externalFailure("retryable", "canvas.network", "Canvas is temporarily unavailable");
+        }
+      },
+      clock,
+      workerId: "worker",
+      leaseMs: 30_000,
+      maxJobs: 1
+    });
+    expect(jobs.rows[0]).toMatchObject({
+      status: "queued",
+      error: {
+        kind: "retryable",
+        code: "canvas.network",
+        safeMessage: "Canvas is temporarily unavailable"
+      },
+      nextAttemptAt: new Date("2026-07-16T00:00:30Z")
+    });
+  });
+
+  it.each([
+    ["needs_input", "needs_input"],
+    ["reconcile_required", "needs_input"],
+    ["fatal", "failed"]
+  ] as const)("persists a classified %s external failure without unsafe retry", async (kind, status) => {
+    const jobs = new DurableMemoryJobs();
+    await jobs.enqueue({ kind: "canvas_generate", businessKey: `canvas-${kind}`, payload: {} });
+    await runWorkerLoop({
+      jobs,
+      handlers: {
+        canvas_generate: async () => {
+          throw externalFailure(kind, `canvas.${kind}`, `Safe ${kind} message`);
+        }
+      },
+      clock,
+      workerId: "worker",
+      leaseMs: 30_000,
+      maxJobs: 1
+    });
+    expect(jobs.rows[0]).toMatchObject({
+      status,
+      error: {
+        kind,
+        code: `canvas.${kind}`,
+        safeMessage: `Safe ${kind} message`
+      },
+      nextAttemptAt: null
+    });
   });
 
   it("renews the fenced lease while a handler is still running", async () => {

@@ -16,6 +16,10 @@ function item(
     productId: productId(id),
     currentRevisionId: productRevisionId(`revision-${id}`),
     sourceItemId: sourceItemId(`source-${id}`),
+    sourceUrl: `https://detail.1688.com/offer/${id}.html`,
+    thumbnailUrl: `https://img.test/${id}.jpg`,
+    collectedAt: "2026-07-22T10:00:00.000Z",
+    updatedAt: "2026-07-22T10:10:00.000Z",
     canonicalSourceTitle: id,
     targetTitle: null,
     canonicalSuccessDetailId: null,
@@ -23,6 +27,7 @@ function item(
     currency: "CNY",
     priceWire: null,
     sourceImageCount: 0,
+    sourceCaptureQuality: null,
     imageCount: 0,
     usableCanvasOutputCount: 0,
     miaoshouSource: "success",
@@ -74,10 +79,10 @@ describe("stage overview projection", () => {
     expect(Object.values(stages).map((stage) => stage.label)).toEqual([
       "全部（6）",
       "待处理（1）",
-      "处理中（1）",
+      "自动处理中（1）",
       "待确认（2）",
-      "需处理（1）",
-      "已同步妙手（1）"
+      "需要人工处理（1）",
+      "已完成（1）"
     ]);
   });
 

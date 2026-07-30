@@ -1,8 +1,8 @@
 :root {
   color-scheme: light;
   font-family:
-    Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI",
-    "Noto Sans Thai", "Noto Sans SC", sans-serif;
+    "Noto Sans Thai", "Leelawadee UI", "Tahoma", Inter, ui-sans-serif, system-ui,
+    -apple-system, BlinkMacSystemFont, "Segoe UI", "Noto Sans SC", sans-serif;
   color: #18212f;
   background: #f4f6f9;
   font-synthesis: none;
@@ -56,6 +56,16 @@ button:disabled {
   color: #94a3b8;
   background: #eef2f6;
   cursor: not-allowed;
+}
+
+.tk-task-heading-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.tk-task-heading-actions form {
+  margin: 0;
 }
 
 :focus-visible {
@@ -219,13 +229,12 @@ button:disabled {
 
 .tk-product-table th:nth-child(2),
 .tk-product-table td:nth-child(2) {
-  width: 132px;
-  font-variant-numeric: tabular-nums;
+  width: 34%;
 }
 
 .tk-product-table th:nth-child(3),
 .tk-product-table td:nth-child(3) {
-  width: 24%;
+  width: 15%;
 }
 
 .tk-product-table th:last-child,
@@ -255,12 +264,52 @@ button:disabled {
   accent-color: #2563eb;
 }
 
+.tk-product-table__product {
+  display: grid;
+  grid-template-columns: 58px minmax(0, 1fr);
+  align-items: center;
+  gap: 10px;
+  color: #172033;
+  font-weight: 650;
+  line-height: 1.35;
+  text-decoration: none;
+}
+
+.tk-product-table__product:hover span:last-child {
+  color: #1d4ed8;
+  text-decoration: underline;
+}
+
+.tk-product-table__product img,
+.tk-product-table__thumb-empty {
+  width: 58px;
+  height: 58px;
+  border: 1px solid #e2e8f0;
+  border-radius: 10px;
+  background: #f8fafc;
+  object-fit: cover;
+}
+
+.tk-product-table__thumb-empty {
+  display: inline-grid;
+  place-items: center;
+  color: #64748b;
+  font-size: 13px;
+  font-weight: 700;
+}
+
 .tk-start-status {
   display: block;
   margin-top: 4px;
   color: #2563eb;
   font-size: 12px;
   font-weight: 650;
+}
+
+.tk-batch-status {
+  min-width: 180px;
+  color: #475569;
+  font-size: 13px;
 }
 
 .tk-product-list-table {
@@ -487,6 +536,488 @@ button:disabled {
   margin-top: 8px;
   font-size: 13px;
   color: #94a3b8;
+}
+
+/* ─── Product detail / image review ───────────────────────────────── */
+
+.tk-page-heading {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 18px;
+  margin: 0 0 18px;
+}
+
+.tk-page-heading p {
+  margin: 0 0 6px;
+  color: #64748b;
+  font-size: 13px;
+  font-weight: 700;
+  letter-spacing: 0.03em;
+}
+
+.tk-page-heading h1 {
+  max-width: 920px;
+  margin: 0;
+  color: #111827;
+  font-size: clamp(22px, 2vw, 30px);
+  line-height: 1.25;
+}
+
+.tk-page-heading > span {
+  color: #94a3b8;
+  font-size: 12px;
+  word-break: break-all;
+}
+
+.tk-review {
+  max-width: 1480px;
+  margin: 0 auto;
+}
+
+.tk-review__heading {
+  padding: 18px;
+  border: 1px solid #d9e0e9;
+  border-radius: 18px;
+  background: linear-gradient(135deg, #ffffff 0%, #f8fbff 100%);
+  box-shadow: 0 8px 26px rgb(15 23 42 / 6%);
+}
+
+.tk-review__meta-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-top: 10px;
+}
+
+.tk-review__meta-row span {
+  max-width: 520px;
+  padding: 5px 9px;
+  border-radius: 999px;
+  color: #64748b;
+  font-size: 12px;
+  font-weight: 700;
+  background: #eef4fb;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.tk-review__back-link {
+  flex: 0 0 auto;
+  padding: 8px 12px;
+  border: 1px solid #cbd5e1;
+  border-radius: 10px;
+  color: #334155;
+  font-size: 13px;
+  font-weight: 800;
+  text-decoration: none;
+  background: #fff;
+}
+
+.tk-review__workspace {
+  display: grid;
+  grid-template-columns: minmax(340px, 0.95fr) minmax(0, 1.4fr) minmax(300px, 0.82fr);
+  align-items: start;
+  gap: 16px;
+}
+
+.tk-panel,
+.tk-review__images {
+  border: 1px solid #d9e0e9;
+  border-radius: 14px;
+  background: #fff;
+  box-shadow: 0 6px 20px rgb(15 23 42 / 5%);
+}
+
+.tk-panel {
+  padding: 16px;
+}
+
+.tk-review__images {
+  padding: 16px;
+  position: sticky;
+  top: 18px;
+}
+
+.tk-review__image-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 12px;
+}
+
+.tk-review__image-header p,
+.tk-review__next-step p,
+.tk-review__check p {
+  margin: 0 0 4px;
+  color: #64748b;
+  font-size: 12px;
+  font-weight: 800;
+  letter-spacing: 0.04em;
+}
+
+.tk-review__image-header > span {
+  padding: 5px 9px;
+  border-radius: 999px;
+  color: #1d4ed8;
+  font-size: 12px;
+  font-weight: 800;
+  background: #eff6ff;
+}
+
+.tk-review__image-tabs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-bottom: 12px;
+}
+
+.tk-review__image-tabs span {
+  padding: 6px 10px;
+  border: 1px solid #dbe6f1;
+  border-radius: 999px;
+  color: #475569;
+  font-size: 12px;
+  font-weight: 800;
+  background: #f8fafc;
+}
+
+.tk-panel > header,
+.tk-review__asset-order + .tk-review__canvas-grid,
+.tk-review__actions header {
+  margin-top: 0;
+}
+
+.tk-panel header,
+.tk-review__images > h2 {
+  margin-bottom: 12px;
+}
+
+.tk-panel h2,
+.tk-review__images h2 {
+  margin: 0;
+  color: #172033;
+  font-size: 16px;
+  line-height: 1.35;
+}
+
+.tk-panel header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.tk-panel header span,
+.tk-panel header strong,
+.tk-review__images header span {
+  color: #64748b;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.tk-review__asset-order {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(104px, 1fr));
+  gap: 10px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.tk-review__asset-order li {
+  display: grid;
+  gap: 6px;
+}
+
+.tk-review__asset-order span {
+  color: #475569;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.tk-review__asset-order img,
+.tk-review__canvas-grid img {
+  width: 100%;
+  aspect-ratio: 1 / 1;
+  height: auto;
+  border: 1px solid #e2e8f0;
+  border-radius: 12px;
+  object-fit: cover;
+  background: #f8fafc;
+}
+
+.tk-review__canvas-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(112px, 1fr));
+  gap: 10px;
+  margin-top: 16px;
+}
+
+.tk-review__canvas-grid figure {
+  margin: 0;
+}
+
+.tk-review__canvas-grid figcaption {
+  margin-top: 5px;
+  color: #64748b;
+  font-size: 12px;
+}
+
+.tk-review__content {
+  display: grid;
+  gap: 14px;
+}
+
+.tk-review__listings {
+  display: grid;
+  gap: 14px;
+}
+
+.tk-review__next-step {
+  display: grid;
+  grid-template-columns: minmax(0, 0.92fr) minmax(260px, 1fr);
+  gap: 14px;
+  border-color: #bfdbfe;
+  background: linear-gradient(135deg, #eff6ff 0%, #ffffff 64%);
+}
+
+.tk-review__next-step h2 {
+  font-size: 18px;
+}
+
+.tk-review__next-step > div > span {
+  display: block;
+  margin-top: 8px;
+  color: #475569;
+  font-size: 13px;
+  line-height: 1.55;
+}
+
+.tk-review__generated-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+  margin-top: 12px;
+}
+
+.tk-review__info-card {
+  min-width: 0;
+  padding: 12px;
+  border: 1px solid #e2e8f0;
+  border-radius: 12px;
+  background: #f8fafc;
+}
+
+.tk-review__info-card.is-primary {
+  border-color: #bfdbfe;
+  background: #eff6ff;
+}
+
+.tk-review__info-card p {
+  margin: 0 0 6px;
+  color: #64748b;
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.tk-review__info-card h3 {
+  margin: 0;
+  color: #111827;
+  font-size: 15px;
+  line-height: 1.45;
+}
+
+.tk-review__info-card span {
+  display: -webkit-box;
+  overflow: hidden;
+  margin-top: 8px;
+  color: #475569;
+  font-size: 12px;
+  line-height: 1.55;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 4;
+}
+
+.tk-review__info-list {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  margin-top: 14px;
+}
+
+.tk-review__raw-listings {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 14px;
+}
+
+.tk-review__raw-details {
+  border: 1px solid #e2e8f0;
+  border-radius: 14px;
+  background: #fff;
+  box-shadow: 0 6px 20px rgb(15 23 42 / 4%);
+}
+
+.tk-review__raw-details summary {
+  padding: 13px 16px;
+  color: #334155;
+  font-size: 13px;
+  font-weight: 800;
+  cursor: pointer;
+}
+
+.tk-review__raw-details[open] {
+  padding-bottom: 14px;
+}
+
+.tk-review__raw-details[open] .tk-review__raw-listings {
+  padding: 0 14px;
+}
+
+.tk-review__source p,
+.tk-review__target p,
+.tk-panel p {
+  color: #475569;
+  font-size: 13px;
+}
+
+.tk-review__source p {
+  display: -webkit-box;
+  overflow: hidden;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 5;
+}
+
+.tk-panel dl {
+  display: grid;
+  gap: 8px;
+  margin: 12px 0 0;
+}
+
+.tk-panel dl div {
+  display: grid;
+  grid-template-columns: 86px minmax(0, 1fr);
+  gap: 10px;
+}
+
+.tk-panel dt {
+  color: #64748b;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.tk-panel dd {
+  min-width: 0;
+  margin: 0;
+  color: #273449;
+  font-size: 13px;
+  overflow-wrap: anywhere;
+}
+
+.tk-price-breakdown {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.tk-price-breakdown div {
+  padding: 8px 10px;
+  border: 1px solid #edf2f7;
+  border-radius: 10px;
+  background: #f8fafc;
+}
+
+.tk-source-image-links {
+  display: grid;
+  gap: 8px;
+  margin-top: 12px;
+  padding-top: 12px;
+  border-top: 1px solid #edf1f5;
+}
+
+.tk-source-image-links strong {
+  color: #334155;
+  font-size: 13px;
+}
+
+.tk-source-image-links div {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.tk-source-image-links a {
+  padding: 4px 8px;
+  border-radius: 999px;
+  color: #1d4ed8;
+  font-size: 12px;
+  font-weight: 700;
+  text-decoration: none;
+  background: #eff6ff;
+}
+
+.tk-review__decision {
+  display: grid;
+  gap: 14px;
+  position: sticky;
+  top: 18px;
+}
+
+.tk-review__check {
+  border-color: #bbf7d0;
+  background: #f7fef9;
+}
+
+.tk-review__check header {
+  align-items: flex-start;
+}
+
+.tk-review__actions .tk-form-row {
+  display: grid;
+  gap: 10px;
+  margin-top: 12px;
+}
+
+.tk-review__actions label {
+  display: grid;
+  gap: 5px;
+  color: #475569;
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.tk-review__actions input,
+.tk-review__actions select {
+  min-height: 36px;
+  padding: 7px 10px;
+  border: 1px solid #cbd5e1;
+  border-radius: 8px;
+  background: #fff;
+}
+
+.tk-review__actions button:last-child {
+  border-color: #2563eb;
+  color: #fff;
+  background: #2563eb;
+}
+
+@media (max-width: 1180px) {
+  .tk-review__workspace {
+    grid-template-columns: 1fr;
+  }
+
+  .tk-review__images,
+  .tk-review__decision {
+    position: static;
+  }
+}
+
+@media (max-width: 760px) {
+  .tk-review__next-step,
+  .tk-review__generated-grid,
+  .tk-review__info-list,
+  .tk-review__raw-listings {
+    grid-template-columns: 1fr;
+  }
 }
 
 .tk-product-drawer {

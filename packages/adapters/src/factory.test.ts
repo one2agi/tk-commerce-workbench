@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -83,7 +84,7 @@ describe("adapter bundle factory cost boundary", () => {
     const createLiveFetch = vi.fn(() => sharedFetch);
     const bundle = createAdapterBundle({
       externalAdapterMode: "live", nodeEnv: "production", assetRoot,
-      canvasBaseUrl: "https://canvas.test", canvasApiKey: "canvas-secret",
+      canvasBaseUrl: "https://canvas.test", canvasId: "canvas-local-1", canvasWorkflowName: "Local TK", canvasApiKey: "canvas-secret",
       llmBaseUrl: "https://llm.test/v1", llmApiKey: "llm-secret", llmModel: "model-1",
       exchangeRateBaseUrl: "https://rates.test"
     }, { kind: "worker_command", commandId: "command_123", idempotencyKey: "stable:key:123" }, { createLiveFetch });
@@ -99,11 +100,79 @@ describe("adapter bundle factory cost boundary", () => {
     await bundle.assetStaging.stage({ localAssetIds: ["asset.png"], purpose: "canvas" });
     expect(sharedFetch).toHaveBeenCalledTimes(4);
     expect(requests).toEqual([
-      "https://canvas.test/api/automation/canvases/0f91cb2d8f2846c091829af30ea2d18d/workflows",
+      "https://canvas.test/api/automation/canvases/canvas-local-1/workflows",
       "https://llm.test/v1/chat/completions",
       "https://rates.test/?base=CNY&symbols=THB",
       "https://canvas.test/api/automation/upload"
     ]);
+  });
+
+  it("constructs a live Canvas adapter without an API key for no-auth Canvas deployments", async () => {
+    const sharedFetch = vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
+      expect((init?.headers as Record<string, string> | undefined)?.authorization).toBeUndefined();
+      expect(String(input)).toBe("https://canvas.test/api/automation/canvases/0f91cb2d8f2846c091829af30ea2d18d/workflows");
+      return new Response(JSON.stringify({
+        workflows: [{ workflow_id: "workflow_1", workflow_version: 1, input_image_count: 9, expected_output_count: 5 }]
+      }), { status: 200 });
+    }) as unknown as typeof fetch;
+    const bundle = createAdapterBundle({
+      externalAdapterMode: "live", nodeEnv: "production", assetRoot: "./data/assets",
+      canvasBaseUrl: "https://canvas.test",
+      llmBaseUrl: "https://llm.test/v1", llmApiKey: "llm-secret", llmModel: "model-1",
+      exchangeRateBaseUrl: "https://rates.test"
+    }, { kind: "worker_command", commandId: "command_123", idempotencyKey: "stable:key:123" }, {
+      createLiveFetch: () => sharedFetch
+    });
+
+    await expect(bundle.canvas.readWorkflowCapacity("workflow_1")).resolves.toMatchObject({
+      workflowId: "workflow_1",
+      inputCapacity: 9,
+      expectedOutputCount: 5
+    });
+    expect(sharedFetch).toHaveBeenCalledTimes(1);
+  });
+
+  it("downloads same-origin remote Canvas outputs through the shared env-aware fetch", async () => {
+    const png = new Uint8Array(24);
+    png.set([137, 80, 78, 71, 13, 10, 26, 10]);
+    new DataView(png.buffer).setUint32(16, 2);
+    new DataView(png.buffer).setUint32(20, 3);
+    const sharedFetch = vi.fn(async (input: string | URL | Request) => {
+      const url = String(input);
+      if (url.endsWith("/api/automation/workflow-runs/remote-task-1")) {
+        return new Response(JSON.stringify({ status: "succeeded", images: ["/assets/output/generated.png"] }), {
+          status: 200,
+          headers: { "content-type": "application/json" }
+        });
+      }
+      if (url === "https://canvas.test/assets/output/generated.png") {
+        return new Response(png, {
+          status: 200,
+          headers: { "content-type": "image/png", "content-length": String(png.byteLength) }
+        });
+      }
+      throw new Error(`unexpected URL ${url}`);
+    }) as unknown as typeof fetch;
+    const bundle = createAdapterBundle({
+      externalAdapterMode: "live", nodeEnv: "production", assetRoot: "./data/assets",
+      canvasBaseUrl: "https://canvas.test",
+      llmBaseUrl: "https://llm.test/v1", llmApiKey: "llm-secret", llmModel: "model-1",
+      exchangeRateBaseUrl: "https://rates.test"
+    }, { kind: "worker_command", commandId: "command_123", idempotencyKey: "stable:key:123" }, {
+      createLiveFetch: () => sharedFetch
+    });
+
+    await expect(bundle.canvas.fetchOutputs({ remoteTaskId: "remote-task-1" })).resolves.toEqual({
+      outputs: [{
+        url: "https://canvas.test/assets/output/generated.png",
+        width: 2,
+        height: 3,
+        sha256: createHash("sha256").update(png).digest("hex")
+      }]
+    });
+    expect(sharedFetch).toHaveBeenCalledWith("https://canvas.test/assets/output/generated.png", expect.objectContaining({
+      headers: expect.objectContaining({ accept: "image/png,image/jpeg" })
+    }));
   });
 
   it("exports an env-aware fetch helper without changing the global dispatcher or logging proxy credentials", async () => {

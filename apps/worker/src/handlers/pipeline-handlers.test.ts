@@ -1,11 +1,13 @@
 import { describe, expect, it, vi } from "vitest";
+import { externalFailure } from "@tk/contracts";
 import { createFakePorts } from "@tk/contracts/testing";
-import { NeedsInputError, type ClaimedWorkerJob, type WorkerExecutionContext, type WorkerHandler } from "../runtime/worker-loop.js";
+import { NeedsInputError, RetryableJobError, type ClaimedWorkerJob, type WorkerExecutionContext, type WorkerHandler } from "../runtime/worker-loop.js";
 import { createPricingHandler } from "./calculate-pricing.js";
 import { createExchangeRateRefreshHandler } from "./refresh-exchange-rate.js";
 import { createCanvasHandler } from "./generate-canvas.js";
 import { createArchiveAssetsHandler } from "./archive-assets.js";
 import { createCollectHandler } from "./collect.js";
+import { createGenerateListingHandler } from "./generate-listing.js";
 import { createTemplateMatchHandler } from "./match-template.js";
 import { createImageSelectHandler } from "./select-images.js";
 import { createFinalPreviewHandler } from "./final-preview.js";
@@ -28,6 +30,42 @@ const execution: WorkerExecutionContext = {
 };
 const invoke = (handler: WorkerHandler, claimed: ClaimedWorkerJob) => handler(claimed, execution);
 const cleanupCodec = { protect: vi.fn(() => "protected"), unprotect: vi.fn(() => ({ remoteUrls: [], expiresAt: "2026-07-16T01:00:00Z" })) };
+
+describe("listing handler", () => {
+  it("persists translated listing and continues directly to template matching without pricing", async () => {
+    const repository = {
+      loadEvidence: vi.fn(async () => ({
+        sourceLocale: "zh-CN",
+        targetLocale: "th-TH",
+        style: "marketplace",
+        sourceTitle: "源标题",
+        sourceDescription: "源描述",
+        sourceAttributes: [{ name: "材质", value: "合金" }]
+      })),
+      saveResult: vi.fn(async () => true)
+    };
+    const llm = {
+      generateListing: vi.fn(async () => ({
+        title: "translated title",
+        description: "translated description",
+        translatedAttributes: [{ name: "material", value: "alloy" }],
+        styleApplied: "marketplace",
+        fallbackUsed: false,
+        provider: "fake",
+        model: "fake"
+      }))
+    };
+    const audit = { append: vi.fn(async () => undefined) };
+
+    const result = await invoke(createGenerateListingHandler({ llm, repository, audit }), job("listing_generate", { revisionId: "rev-1" }));
+
+    expect(repository.saveResult).toHaveBeenCalledWith(expect.objectContaining({
+      revisionId: "rev-1",
+      title: "translated title"
+    }), execution.fence);
+    expect(result.next).toEqual([{ kind: "template_match", businessKey: "rev-1:template", payload: { version: 1, revisionId: "rev-1" } }]);
+  });
+});
 
 describe("pricing handler", () => {
   it.each([
@@ -165,6 +203,56 @@ describe("Canvas handler", () => {
     expect(JSON.stringify(audit.append.mock.calls)).not.toContain("authorization header leaked by provider");
   });
 
+  it("preserves a classified Canvas capacity error code in the safe audit event", async () => {
+    const ports = createFakePorts();
+    ports.canvas.readWorkflowCapacity = vi.fn(async () => {
+      throw externalFailure("retryable", "canvas.http_502", "Canvas request failed");
+    });
+    const repository = {
+      loadPlan: vi.fn(async () => ({
+        workflowId: "TKWorkflow",
+        templateVersion: 1,
+        productImages: [{
+          assetId: "a",
+          url: "local:a",
+          role: "primary" as const,
+          score: 1,
+          perceptualHash: "a"
+        }],
+        referenceAssetIds: [],
+        promptFragment: "",
+        localAssetIds: ["a"],
+        sourceLocale: "zh-CN",
+        targetLocale: "th-TH",
+        style: "clean",
+        expectedOutputCount: 5
+      })),
+      saveOutputs: vi.fn(async () => true)
+    };
+    const audit = { append: vi.fn() };
+    const handler = createCanvasHandler({
+      canvas: ports.canvas,
+      staging: ports.assetStaging,
+      store: store(),
+      repository,
+      quota: { reserve: vi.fn() },
+      audit,
+      now: () => new Date("2026-07-16T00:00:00Z"),
+      cleanupCodec,
+      maxRunsPerDay: 10
+    });
+
+    await expect(invoke(handler, job("canvas_generate", { revisionId: "rev-capacity-502" })))
+      .rejects.toMatchObject({ kind: "retryable", code: "canvas.http_502" });
+    expect(audit.append.mock.calls.at(-1)?.[0]).toMatchObject({
+      payload: {
+        state: "failed",
+        code: "canvas.http_502"
+      }
+    });
+    expect(JSON.stringify(audit.append.mock.calls)).not.toContain("Canvas request failed");
+  });
+
   it("stages template references separately and forwards locale, style and prompt evidence", async () => {
     vi.mocked(execution.persistReconciliationIntent).mockClear();
     const ports = createFakePorts();
@@ -172,7 +260,7 @@ describe("Canvas handler", () => {
       loadPlan: vi.fn(async () => ({
         workflowId: "TKWorkflow", templateVersion: 2,
         productImages: [{ assetId: "product-a", url: "/local/product.png", role: "primary" as const, score: 1, perceptualHash: "product" }],
-        referenceAssetIds: ["reference-a"], promptFragment: "summer light", localAssetIds: ["product-a"],
+        referenceAssetIds: ["reference-a"], referenceImageUrls: ["/local/reference.png"], promptFragment: "summer light", localAssetIds: ["product-a"],
         sourceLocale: "zh-CN", targetLocale: "vi-VN", style: "premium", expectedOutputCount: 5
       })),
       saveOutputs: vi.fn(async () => true)
@@ -184,11 +272,11 @@ describe("Canvas handler", () => {
     }), job("canvas_generate", { revisionId: "rev-template" }));
 
     expect(ports.assetStaging.calls[0]?.input).toEqual({
-      localAssetIds: ["product-a", "reference-a"], purpose: "canvas"
+      localAssetIds: ["/local/product.png", "/local/reference.png"], purpose: "canvas"
     });
     expect(ports.canvas.calls.find((call) => call.method === "submit")?.input).toMatchObject({
-      imageUrls: ["https://staging.test/product-a-0"],
-      referenceImageUrls: ["https://staging.test/reference-a-1"],
+      imageUrls: ["https://staging.test//local/product.png-0"],
+      referenceImageUrls: ["https://staging.test//local/reference.png-1"],
       promptContext: {
         sourceLocale: "zh-CN", targetLocale: "vi-VN",
         style: "premium\n--- template prompt ---\nsummer light"
@@ -244,7 +332,7 @@ describe("Canvas handler", () => {
           { assetId: "product-a", url: "/a.png", role: "primary" as const, score: 1, perceptualHash: "a" },
           { assetId: "product-b", url: "/b.png", role: "angle" as const, score: 0.9, perceptualHash: "b" }
         ],
-        referenceAssetIds: ["ref-1", "ref-2", "ref-3"], promptFragment: "", localAssetIds: ["product-a", "product-b"],
+        referenceAssetIds: ["ref-1", "ref-2", "ref-3"], referenceImageUrls: ["/ref-1.png", "/ref-2.png", "/ref-3.png"], promptFragment: "", localAssetIds: ["product-a", "product-b"],
         sourceLocale: "zh-CN", targetLocale: "th-TH", style: "clean", expectedOutputCount: 5
       })),
       saveOutputs: vi.fn(async () => true)
@@ -256,7 +344,7 @@ describe("Canvas handler", () => {
     }), job("canvas_generate", { revisionId: "rev-capacity" }));
 
     expect(ports.assetStaging.calls[0]?.input).toEqual({
-      localAssetIds: ["product-a", "product-b"], purpose: "canvas"
+      localAssetIds: ["/a.png", "/b.png"], purpose: "canvas"
     });
     const submission = ports.canvas.calls.find((call) => call.method === "submit")?.input as {
       imageUrls: string[]; referenceImageUrls: string[];
@@ -264,6 +352,101 @@ describe("Canvas handler", () => {
     expect(submission.imageUrls).toHaveLength(2);
     expect(submission.referenceImageUrls).toEqual([]);
     expect(submission.imageUrls.length + submission.referenceImageUrls.length).toBeLessThanOrEqual(2);
+  });
+
+  it("honors the draft Canvas input limit when it is below live workflow capacity", async () => {
+    const ports = createFakePorts();
+    ports.canvas.capacityResult = { ...ports.canvas.capacityResult, inputCapacity: 9 };
+    const repository = {
+      loadPlan: vi.fn(async () => ({
+        workflowId: "TKWorkflow", templateVersion: 2,
+        productImages: [
+          { assetId: "product-a", url: "/a.png", role: "primary" as const, score: 1, perceptualHash: "a" },
+          { assetId: "product-b", url: "/b.png", role: "angle" as const, score: 0.9, perceptualHash: "b" },
+          { assetId: "product-c", url: "/c.png", role: "detail" as const, score: 0.8, perceptualHash: "c" },
+          { assetId: "product-d", url: "/d.png", role: "sku" as const, score: 0.7, perceptualHash: "d" }
+        ],
+        referenceAssetIds: [], referenceImageUrls: [], promptFragment: "", localAssetIds: ["product-a", "product-b", "product-c", "product-d"],
+        sourceLocale: "zh-CN", targetLocale: "th-TH", style: "clean", expectedOutputCount: 5, canvasInputCapacity: 3
+      })),
+      saveOutputs: vi.fn(async () => true)
+    };
+    await invoke(createCanvasHandler({
+      canvas: ports.canvas, staging: ports.assetStaging, store: store(), repository,
+      quota: { reserve: vi.fn(async () => true) }, audit: { append: vi.fn() },
+      now: () => new Date("2026-07-16T00:00:00Z"), cleanupCodec, maxRunsPerDay: 10
+    }), job("canvas_generate", { revisionId: "rev-draft-capacity" }));
+
+    expect(ports.assetStaging.calls[0]?.input).toEqual({
+      localAssetIds: ["/a.png", "/b.png", "/c.png"], purpose: "canvas"
+    });
+  });
+
+  it("caps Canvas inputs to the live image model limit even when the workflow has more input slots", async () => {
+    const ports = createFakePorts();
+    ports.canvas.capacityResult = { ...ports.canvas.capacityResult, inputCapacity: 12 };
+    const productImages = Array.from({ length: 8 }, (_, index) => ({
+      assetId: `product-${index + 1}`,
+      url: `/product-${index + 1}.png`,
+      role: index === 0 ? "primary" as const : "detail" as const,
+      score: 1 - index * 0.05,
+      perceptualHash: `hash-${index + 1}`
+    }));
+    const repository = {
+      loadPlan: vi.fn(async () => ({
+        workflowId: "TKWorkflow", templateVersion: 2,
+        productImages,
+        referenceAssetIds: [], referenceImageUrls: [], promptFragment: "", localAssetIds: productImages.map((image) => image.assetId),
+        sourceLocale: "zh-CN", targetLocale: "th-TH", style: "clean", expectedOutputCount: 5
+      })),
+      saveOutputs: vi.fn(async () => true)
+    };
+
+    await invoke(createCanvasHandler({
+      canvas: ports.canvas, staging: ports.assetStaging, store: store(), repository,
+      quota: { reserve: vi.fn(async () => true) }, audit: { append: vi.fn() },
+      now: () => new Date("2026-07-16T00:00:00Z"), cleanupCodec, maxRunsPerDay: 10
+    }), job("canvas_generate", { revisionId: "rev-model-limit" }));
+
+    expect(ports.assetStaging.calls[0]?.input).toEqual({
+      localAssetIds: ["/product-1.png", "/product-2.png", "/product-3.png", "/product-4.png", "/product-5.png", "/product-6.png"],
+      purpose: "canvas"
+    });
+    const submission = ports.canvas.calls.find((call) => call.method === "submit")?.input as {
+      imageUrls: string[]; referenceImageUrls: string[];
+    };
+    expect(submission.imageUrls).toHaveLength(6);
+    expect(submission.referenceImageUrls).toEqual([]);
+  });
+
+  it("retries after Canvas submit when the accepted remote task is not ready yet", async () => {
+    const ports = createFakePorts();
+    ports.canvas.fetchOutputs = vi.fn(async (input) => {
+      ports.canvas.calls.push({ method: "fetchOutputs", input });
+      throw externalFailure("retryable", "canvas.not_ready", "Canvas output is not ready yet");
+    });
+    const repository = {
+      loadPlan: vi.fn(async () => ({
+        workflowId: "TKWorkflow", templateVersion: 2,
+        productImages: [
+          { assetId: "product-a", url: "/a.png", role: "primary" as const, score: 1, perceptualHash: "a" }
+        ],
+        referenceAssetIds: [], referenceImageUrls: [], promptFragment: "", localAssetIds: ["product-a"],
+        sourceLocale: "zh-CN", targetLocale: "th-TH", style: "clean", expectedOutputCount: 5
+      })),
+      saveOutputs: vi.fn(async () => true)
+    };
+
+    vi.mocked(execution.persistRemoteTask).mockClear();
+    const outcome = invoke(createCanvasHandler({
+      canvas: ports.canvas, staging: ports.assetStaging, store: store(), repository,
+      quota: { reserve: vi.fn(async () => true) }, audit: { append: vi.fn() },
+      now: () => new Date("2026-07-16T00:00:00Z"), cleanupCodec, maxRunsPerDay: 10
+    }), job("canvas_generate", { revisionId: "rev-not-ready" }));
+    await expect(outcome).rejects.toBeInstanceOf(RetryableJobError);
+    await expect(outcome).rejects.toMatchObject({ code: "canvas.not_ready" });
+    expect(execution.persistRemoteTask).toHaveBeenCalledWith("canvas_task_01");
+    expect(ports.assetStaging.calls.map((call) => call.method)).toEqual(["stage"]);
   });
 
   it("maps incomplete immutable template references to needs_input before quota or Canvas", async () => {
@@ -307,6 +490,49 @@ describe("Canvas handler", () => {
     }), execution.fence);
     expect(result.next).toEqual([{ kind: "final_preview", businessKey: "rev-1:preview", payload: { version: 1, revisionId: "rev-1" } }]);
     expect(audit.append.mock.calls.map(([event]) => event.action)).toEqual(["canvas.fetch.call", "canvas.fetch.result"]);
+  });
+
+  it("keeps polling a persisted Canvas remote task while outputs are not ready", async () => {
+    const ports = createFakePorts();
+    ports.canvas.fetchOutputs = vi.fn(async (input) => {
+      ports.canvas.calls.push({ method: "fetchOutputs", input });
+      throw externalFailure("retryable", "canvas.not_ready", "Canvas output is not ready yet");
+    });
+    const repository = {
+      loadPlan: vi.fn(async () => ({ workflowId: "TKWorkflow", templateVersion: 1, productImages: [], referenceAssetIds: [], promptFragment: "", localAssetIds: [], sourceLocale: "zh-CN", targetLocale: "th-TH", style: "clean", expectedOutputCount: 5 })),
+      saveOutputs: vi.fn(async () => true)
+    };
+    const audit = { append: vi.fn() };
+    const handler = createCanvasHandler({ canvas: ports.canvas, staging: ports.assetStaging, store: store(), repository, quota: { reserve: vi.fn() }, audit, now: () => new Date("2026-07-16T00:00:00Z"), cleanupCodec, maxRunsPerDay: 10 });
+
+    await expect(invoke(handler, job("canvas_generate", { revisionId: "rev-polling" }, "remote-existing"))).rejects.toMatchObject({
+      code: "canvas.not_ready"
+    });
+    expect(repository.saveOutputs).not.toHaveBeenCalled();
+    expect(ports.canvas.calls.map((call) => call.method)).toEqual(["fetchOutputs"]);
+  });
+
+  it("retries a classified transient fetch failure after Canvas already accepted the task", async () => {
+    const ports = createFakePorts();
+    ports.canvas.fetchOutputs = vi.fn(async (input) => {
+      ports.canvas.calls.push({ method: "fetchOutputs", input });
+      throw externalFailure("retryable", "canvas.network", "Canvas is temporarily unavailable");
+    });
+    const repository = {
+      loadPlan: vi.fn(async () => ({ workflowId: "TKWorkflow", templateVersion: 1, productImages: [], referenceAssetIds: [], promptFragment: "", localAssetIds: [], sourceLocale: "zh-CN", targetLocale: "th-TH", style: "clean", expectedOutputCount: 5 })),
+      saveOutputs: vi.fn(async () => true)
+    };
+    const audit = { append: vi.fn() };
+    const handler = createCanvasHandler({ canvas: ports.canvas, staging: ports.assetStaging, store: store(), repository, quota: { reserve: vi.fn() }, audit, now: () => new Date("2026-07-16T00:00:00Z"), cleanupCodec, maxRunsPerDay: 10 });
+
+    await expect(invoke(handler, job("canvas_generate", { revisionId: "rev-transient-fetch" }, "remote-existing"))).rejects.toMatchObject({
+      kind: "retryable",
+      code: "canvas.network"
+    });
+    expect(repository.saveOutputs).not.toHaveBeenCalled();
+    expect(audit.append.mock.calls.at(-1)?.[0]).toMatchObject({
+      payload: { state: "failed", code: "canvas.network" }
+    });
   });
 
   it("keeps locally archived Canvas outputs in order and marks a failed sibling partial", async () => {
@@ -385,6 +611,34 @@ describe("Miaoshou collection handler", () => {
     expect(order).toEqual(["miaoshou.collect.call", "external", "miaoshou.collect.result"]);
     expect(audit.append.mock.calls.at(-1)?.[0]).toMatchObject({ payload: { state: "result_unknown", code: "reconcile_required" } });
     expect(JSON.stringify(audit.append.mock.calls)).not.toContain("secret raw response body");
+  });
+
+  it("automatically retries when Miaoshou accepted the source item but the collect-box detail is not ready yet", async () => {
+    const port = {
+      fetchItem: vi.fn(async () => {
+        throw externalFailure("retryable", "miaoshou.detail_pending", "Miaoshou detail is not ready yet");
+      }),
+      resolveCanonicalSuccessDetail: vi.fn()
+    };
+    const audit = { append: vi.fn() };
+    const handler = createCollectHandler({ port, repository: { saveCollected: vi.fn() }, audit });
+
+    await expect(invoke(handler, job("miaoshou_collect", {
+      version: 1,
+      sourceUrl: "https://detail.1688.com/offer/1064528025655.html",
+      batchId: "batch-1",
+      idempotencyKey: "key-1"
+    }))).rejects.toBeInstanceOf(RetryableJobError);
+
+    await expect(invoke(handler, job("miaoshou_collect", {
+      version: 1,
+      sourceUrl: "https://detail.1688.com/offer/1064528025655.html",
+      batchId: "batch-1",
+      idempotencyKey: "key-1"
+    }))).rejects.toMatchObject({ code: "miaoshou.detail_pending", delayMs: 10_000 });
+    expect(audit.append.mock.calls.map(([event]) => event)).not.toContainEqual(
+      expect.objectContaining({ payload: expect.objectContaining({ code: "reconcile_required" }) })
+    );
   });
 });
 
@@ -477,7 +731,7 @@ describe("persisted ready-preview DAG nodes", () => {
     };
     const result = await invoke(createImageSelectHandler({ repository }), job("image_select", { revisionId: "rev-1" }));
     expect(repository.saveSelection).toHaveBeenCalledWith(expect.objectContaining({ assetIds: ["a"] }), execution.fence);
-    expect(result.next[0]).toMatchObject({ kind: "canvas_generate", businessKey: "rev-1:canvas" });
+    expect(result.next[0]).toMatchObject({ kind: "canvas_generate", businessKey: "rev-1:canvas", maxAttempts: 30 });
   });
 
   it("marks final preview ready with a fenced business write", async () => {

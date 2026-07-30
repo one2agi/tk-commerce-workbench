@@ -41,8 +41,32 @@ describe("generateListing", () => {
 
     const result = await generateListing({ port: ports.llm, input });
 
-    expect(result.title).toBe("女士纯棉 T恤");
+    expect(result.title).not.toBe("女士纯棉 T恤");
+    expect(result.title).toContain("เสื้อยืด");
     expect(result).toMatchObject({ provider: "rules", degraded: true, fallbackUsed: true });
     expect(result.warningCodes).toContain("llm_rule_fallback");
+  });
+
+  it("uses a conservative Thai fallback for jewelry when cross-locale LLM generation is unavailable", async () => {
+    const ports = createFakePorts();
+    ports.llm.generateListing = async () => {
+      throw new Error("provider unavailable");
+    };
+
+    const result = await generateListing({
+      port: ports.llm,
+      input: {
+        ...input,
+        evidence: {
+          sourceTitle: "四叶草轻奢ins风钛钢不掉色女项链夏季百搭",
+          sourceDescription: "钛钢不掉色，日常百搭",
+          sourceAttributes: [{ name: "材质", value: "钛钢" }, { name: "风格", value: "ins风" }]
+        }
+      }
+    });
+
+    expect(result.title).toContain("สร้อยคอ");
+    expect(result.title).toContain("โคลเวอร์");
+    expect(result.description).toContain("สแตนเลสไทเทเนียม");
   });
 });

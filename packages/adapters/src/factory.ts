@@ -6,6 +6,7 @@ import { createCanvasAdapter } from "./canvas/canvas-adapter.js";
 import { createExchangeRateAdapter } from "./exchange-rate/exchange-rate-adapter.js";
 import { createEnvAwareFetch } from "./env-aware-fetch.js";
 import { createOpenAiCompatibleAdapter } from "./llm/openai-compatible-adapter.js";
+import { createSafeImageDownloader } from "./security/safe-image-download.js";
 import { createAssetStagingAdapter } from "./staging/asset-staging-adapter.js";
 import { createDeterministicAdapterFakes, type AdapterCallCounters } from "./testing/fakes.js";
 
@@ -25,7 +26,7 @@ export interface LiveCommandContext {
 }
 
 export type AdapterFactoryConfig = Partial<Pick<AppConfig,
-  "canvasBaseUrl" | "canvasApiKey" | "llmBaseUrl" | "llmApiKey" | "llmModel" | "exchangeRateBaseUrl"
+  "canvasBaseUrl" | "canvasId" | "canvasWorkflowName" | "canvasApiKey" | "llmBaseUrl" | "llmApiKey" | "llmModel" | "exchangeRateBaseUrl"
 >> & Pick<AppConfig, "externalAdapterMode" | "nodeEnv" | "assetRoot"> & {
   readonly processKind?: "app" | "test" | "integration" | "e2e";
 };
@@ -51,13 +52,20 @@ export function createAdapterBundle(config: AdapterFactoryConfig, commandContext
 }
 
 function constructLiveAdapters(config: AdapterFactoryConfig, _context: LiveCommandContext, createLiveFetch: () => typeof fetch): AdapterBundle {
-  if (!config.canvasBaseUrl || !config.canvasApiKey || !config.llmBaseUrl || !config.llmApiKey || !config.llmModel || !config.exchangeRateBaseUrl) {
+  if (!config.canvasBaseUrl || !config.llmBaseUrl || !config.llmApiKey || !config.llmModel || !config.exchangeRateBaseUrl) {
     throw new Error("adapter factory: live adapter configuration is incomplete");
   }
   const fetchImpl = createLiveFetch();
   return {
     mode: "live",
-    canvas: createCanvasAdapter({ baseUrl: config.canvasBaseUrl, apiKey: config.canvasApiKey, canvasId: "0f91cb2d8f2846c091829af30ea2d18d", workflowName: "TK工作流", fetchImpl }),
+    canvas: createCanvasAdapter({
+      baseUrl: config.canvasBaseUrl,
+      apiKey: config.canvasApiKey,
+      canvasId: config.canvasId ?? "0f91cb2d8f2846c091829af30ea2d18d",
+      workflowName: config.canvasWorkflowName ?? "TK工作流",
+      fetchImpl,
+      downloadImage: createCanvasOutputDownloader(fetchImpl, config.canvasBaseUrl)
+    }),
     llm: createOpenAiCompatibleAdapter({ baseUrl: config.llmBaseUrl, apiKey: config.llmApiKey, model: config.llmModel, fetchImpl }),
     exchangeRate: createExchangeRateAdapter({ baseUrl: config.exchangeRateBaseUrl, fetchImpl }),
     assetStaging: createAssetStagingAdapter({
@@ -74,6 +82,40 @@ function constructLiveAdapters(config: AdapterFactoryConfig, _context: LiveComma
       }
     }),
     counters: () => Object.freeze({ canvas: 0, llm: 0, exchangeRate: 0, assetStaging: 0 })
+  };
+}
+
+function createCanvasOutputDownloader(fetchImpl: typeof fetch, canvasBaseUrl: string) {
+  const fallback = createSafeImageDownloader();
+  const baseOrigin = new URL(`${canvasBaseUrl.replace(/\/+$/, "")}/`).origin;
+  const maxBytes = 12 * 1024 * 1024;
+  return async (value: string): Promise<{ bytes: Uint8Array; finalUrl: string }> => {
+    const url = new URL(value);
+    if (url.origin !== baseOrigin || !url.pathname.startsWith("/assets/output/")) {
+      return fallback(value);
+    }
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 30_000);
+    try {
+      const response = await fetchImpl(url.toString(), {
+        headers: { accept: "image/png,image/jpeg" },
+        signal: controller.signal
+      });
+      if (!response.ok) throw new Error(`canvas output download failed with status ${response.status}`);
+      const contentType = (response.headers.get("content-type") ?? "").split(";", 1)[0]?.trim().toLowerCase();
+      if (contentType !== "image/png" && contentType !== "image/jpeg") {
+        throw new Error("canvas output Content-Type must be image/png or image/jpeg");
+      }
+      const declaredLength = Number(response.headers.get("content-length") ?? 0);
+      if (Number.isFinite(declaredLength) && declaredLength > maxBytes) {
+        throw new Error("canvas output response size exceeds limit");
+      }
+      const bytes = new Uint8Array(await response.arrayBuffer());
+      if (bytes.byteLength > maxBytes) throw new Error("canvas output response size exceeds limit");
+      return { bytes, finalUrl: url.toString() };
+    } finally {
+      clearTimeout(timer);
+    }
   };
 }
 

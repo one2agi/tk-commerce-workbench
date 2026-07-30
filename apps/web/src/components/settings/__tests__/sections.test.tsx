@@ -5,9 +5,9 @@
  * from previous renders in the same test file when using vmForks pool.
  */
 import "@testing-library/jest-dom/vitest";
-import { fireEvent, render, screen, within } from "@testing-library/react";
+import { cleanup, fireEvent, render, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import type { WorkspaceSettingsView } from "../../../server/services/settings-service";
 import { BasicSettingsSection } from "../sections/basic-settings-section";
@@ -15,6 +15,7 @@ import { PricingFormulaSection } from "../sections/pricing-formula-section";
 import { ProviderOptionsSection } from "../sections/provider-options-section";
 import { RetryPolicySection } from "../sections/retry-policy-section";
 import { SecretStatusSection } from "../sections/secret-status-section";
+import { SystemDiagnosticsSection } from "../sections/system-diagnostics-section";
 
 function viewFixture(overrides: Partial<WorkspaceSettingsView> = {}): WorkspaceSettingsView {
   return {
@@ -41,6 +42,10 @@ function viewFixture(overrides: Partial<WorkspaceSettingsView> = {}): WorkspaceS
     ...overrides
   };
 }
+
+afterEach(() => {
+  cleanup();
+});
 
 describe("BasicSettingsSection", () => {
   it("renders all six controls with values from draft", () => {
@@ -116,7 +121,7 @@ describe("PricingFormulaSection", () => {
 });
 
 describe("ProviderOptionsSection", () => {
-  it("renders three provider fields", () => {
+  it("renders provider fields and explains the Canvas runtime boundary", () => {
     const { container } = render(
       <ProviderOptionsSection
         draft={viewFixture()}
@@ -127,7 +132,23 @@ describe("ProviderOptionsSection", () => {
     const ctx = within(container);
     expect(ctx.getByDisplayValue("miaoshou")).toBeInTheDocument();
     expect(ctx.getByDisplayValue("v3")).toBeInTheDocument();
-    expect(ctx.getByDisplayValue("wf-1")).toBeInTheDocument();
+    expect(ctx.getByText(/Canvas 当前运行工作流为/)).toBeInTheDocument();
+    expect(ctx.getByText(/Worker 实际运行依赖启动配置/)).toBeInTheDocument();
+    expect(ctx.queryByDisplayValue("wf-1")).not.toBeInTheDocument();
+    expect(ctx.queryByText("参考图")).not.toBeInTheDocument();
+    expect(ctx.queryByText("生图风格")).not.toBeInTheDocument();
+  });
+});
+
+describe("SystemDiagnosticsSection", () => {
+  it("links to task logs and shows safe configured status", () => {
+    const { container } = render(<SystemDiagnosticsSection draft={viewFixture()} />);
+    const ctx = within(container);
+    expect(ctx.getByRole("link", { name: "打开任务日志" })).toHaveAttribute("href", "/tasks");
+    expect(ctx.getByText("Canvas")).toBeInTheDocument();
+    expect(ctx.getByText("妙手")).toBeInTheDocument();
+    expect(ctx.getByText("LLM")).toBeInTheDocument();
+    expect(ctx.getByText(/TK工作流/)).toBeInTheDocument();
   });
 });
 
@@ -153,9 +174,10 @@ describe("SecretStatusSection", () => {
     );
     expect(container.querySelectorAll(".tk-pill.is-ok")).toHaveLength(3);
     expect(container.querySelectorAll(".tk-pill.is-warn")).toHaveLength(1);
-    expect(screen.getByText("妙手")).toBeInTheDocument();
-    expect(screen.getByText("Canvas")).toBeInTheDocument();
-    expect(screen.getByText("LLM")).toBeInTheDocument();
-    expect(screen.getByText("汇率")).toBeInTheDocument();
+    const ctx = within(container);
+    expect(ctx.getByText("妙手")).toBeInTheDocument();
+    expect(ctx.getByText("Canvas")).toBeInTheDocument();
+    expect(ctx.getByText("LLM")).toBeInTheDocument();
+    expect(ctx.getByText("汇率")).toBeInTheDocument();
   });
 });

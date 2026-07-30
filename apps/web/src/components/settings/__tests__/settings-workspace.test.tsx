@@ -1,6 +1,6 @@
 /** @vitest-environment jsdom */
 import "@testing-library/jest-dom/vitest";
-import { act, fireEvent, render, waitFor, within } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -42,19 +42,30 @@ describe("SettingsWorkspace", () => {
   });
 
   afterEach(() => {
+    cleanup();
     addEventListenerSpy.mockRestore();
     removeEventListenerSpy.mockRestore();
   });
 
-  it("renders all five cards with the initial values and no save bar", () => {
+  it("renders the approved settings cards with diagnostics and no save bar", () => {
     const { container } = render(<SettingsWorkspace initial={baseline()} />);
     const ctx = within(container);
     expect(ctx.getByText("基础设置")).toBeInTheDocument();
-    expect(ctx.getByText("定价公式")).toBeInTheDocument();
-    expect(ctx.getByText("Provider 默认值")).toBeInTheDocument();
+    expect(ctx.queryByText("定价公式")).not.toBeInTheDocument();
+    expect(ctx.getByText("处理运行边界")).toBeInTheDocument();
     expect(ctx.getByText("重试策略")).toBeInTheDocument();
     expect(ctx.getByText("密钥配置状态")).toBeInTheDocument();
+    expect(ctx.getByRole("region", { name: "系统诊断" })).toBeInTheDocument();
     expect(ctx.queryByRole("region", { name: "保存栏" })).toBeNull();
+  });
+
+  it("exposes task logs through system diagnostics instead of template-style controls", () => {
+    const { container } = render(<SettingsWorkspace initial={baseline()} />);
+    const ctx = within(container);
+    expect(ctx.getByRole("region", { name: "系统诊断" })).toBeInTheDocument();
+    expect(ctx.getByRole("link", { name: "打开任务日志" })).toHaveAttribute("href", "/tasks");
+    expect(ctx.queryByText("参考图")).not.toBeInTheDocument();
+    expect(ctx.queryByText("生图风格")).not.toBeInTheDocument();
   });
 
   it("shows save bar with dirty count after editing one field", async () => {
@@ -76,12 +87,11 @@ describe("SettingsWorkspace", () => {
     const ctx = within(container);
     const localeSelect = ctx.getAllByRole("combobox")[0];
     await user.selectOptions(localeSelect, "en-US");
-    // The "ending" field is a spinbutton; find the one with value "9"
-    const allSpinbuttons = ctx.getAllByRole("spinbutton");
-    const endingInput = allSpinbuttons.find((el) => (el as HTMLInputElement).value === "9");
-    if (!endingInput) throw new Error("Could not find ending input with value 9");
-    await user.clear(endingInput);
-    await user.type(endingInput, "5");
+    const maxAttemptsInput = ctx.getAllByRole("spinbutton")
+      .find((element) => (element as HTMLInputElement).value === "5");
+    if (!maxAttemptsInput) throw new Error("Could not find max-attempts input with value 5");
+    await user.clear(maxAttemptsInput);
+    await user.type(maxAttemptsInput, "6");
 
     const saveBar = ctx.getByRole("region", { name: "保存栏" });
     expect(saveBar).toHaveTextContent(/2/);
@@ -89,7 +99,7 @@ describe("SettingsWorkspace", () => {
     await user.click(ctx.getByRole("button", { name: "放弃修改" }));
 
     expect(ctx.getByDisplayValue("zh-CN")).toBeInTheDocument();
-    expect(ctx.getByDisplayValue("9")).toBeInTheDocument();
+    expect(maxAttemptsInput).toHaveValue(5);
     expect(ctx.queryByRole("region", { name: "保存栏" })).toBeNull();
   });
 

@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useReducer, type ReactElement } from "react";
+import { useCallback, useEffect, useMemo, useReducer, useState, type ReactElement } from "react";
 import type { ProductPoolItemV1 } from "@tk/contracts/read-models";
 
 import { StageOverview } from "./stage-overview";
@@ -10,6 +10,7 @@ import { AutomationProgress } from "./automation-progress";
 import {
   buildAutomationProgress,
   buildStageOverview,
+  productStage,
   type StageKey
 } from "./product-workbench.selectors";
 import {
@@ -20,6 +21,8 @@ import {
   openDrawer,
   recordScroll,
   refreshItems,
+  selectedBatchConfirmIds,
+  selectedBatchRetryIds,
   setStage,
   selectedStartableProductIds,
   toggleSelection,
@@ -27,14 +30,22 @@ import {
 } from "./product-workbench.state";
 import {
   createHttpApiClient,
+  dispatchBatchProductAction,
   dispatchStartAutomation,
+  fetchProductPool,
+  summarizeBatchProductActionResult,
   type ApiClient
 } from "../../lib/api-client";
 
 type Props = Readonly<{
   initialItems: ReadonlyArray<ProductPoolItemV1>;
   apiClient?: ApiClient;
+  batchActionFetcher?: typeof fetch;
+  productFetcher?: typeof fetch;
+  refreshIntervalMs?: number | null;
   onStartAutomation?: (productIds: ReadonlyArray<string>) => void;
+  onBatchConfirm?: (productIds: ReadonlyArray<string>) => void;
+  onBatchRetry?: (productIds: ReadonlyArray<string>) => void;
 }>;
 
 type Action =
@@ -73,13 +84,19 @@ const defaultApiClient = createHttpApiClient();
 export function ProductWorkbench({
   initialItems,
   apiClient = defaultApiClient,
-  onStartAutomation
+  batchActionFetcher = fetch,
+  productFetcher = fetch,
+  refreshIntervalMs = 3_000,
+  onStartAutomation,
+  onBatchConfirm,
+  onBatchRetry
 }: Props): ReactElement {
   const [state, dispatch] = useReducer(
     reducer,
     initialItems,
     createWorkbenchState
   );
+  const [batchStatus, setBatchStatus] = useState<string | null>(null);
 
   useEffect(() => {
     dispatch({ type: "refresh", items: initialItems });
@@ -113,6 +130,29 @@ export function ProductWorkbench({
     return state.items.find((item) => String(item.productId) === selectedId) ?? null;
   }, [drawerItem, state.items, state.selectedIds]);
 
+  const refreshProductPool = useCallback(async () => {
+    const result = await fetchProductPool(productFetcher);
+    dispatch({ type: "refresh", items: result.items });
+  }, [productFetcher]);
+
+  const hasProcessingRows = useMemo(() => {
+    return state.items.some((item) => {
+      const id = String(item.productId);
+      return productStage(item) === "processing" ||
+        buildAutomationProgress(item).some((node) => node.state === "running") ||
+        state.startStatusById.get(id) === "pending" ||
+        state.startStatusById.get(id) === "success";
+    });
+  }, [state.items, state.startStatusById]);
+
+  useEffect(() => {
+    if (refreshIntervalMs === null || !hasProcessingRows) return;
+    const interval = window.setInterval(() => {
+      void refreshProductPool().catch(() => undefined);
+    }, refreshIntervalMs);
+    return () => window.clearInterval(interval);
+  }, [hasProcessingRows, refreshIntervalMs, refreshProductPool]);
+
   const startProducts = useCallback(async (productIds: ReadonlyArray<string>) => {
     dispatch({ type: "start-pending", productIds: [...productIds] });
     onStartAutomation?.(productIds);
@@ -127,11 +167,12 @@ export function ProductWorkbench({
           revisionIds: [String(item.currentRevisionId)]
         });
         dispatch({ type: "start-result", productId, result: "success" });
+        void refreshProductPool().catch(() => undefined);
       } catch {
         dispatch({ type: "start-result", productId, result: "failure" });
       }
     }));
-  }, [apiClient, state.items, onStartAutomation]);
+  }, [apiClient, refreshProductPool, state.items, onStartAutomation]);
 
   const handleStart = useCallback((productId: string) => {
     void startProducts([productId]);
@@ -142,6 +183,26 @@ export function ProductWorkbench({
     if (productIds.length === 0) return;
     void startProducts(productIds);
   }, [startProducts, state]);
+
+  const handleBatchConfirm = useCallback(() => {
+    const productIds = selectedBatchConfirmIds(state);
+    if (productIds.length === 0) return;
+    onBatchConfirm?.(productIds);
+    setBatchStatus("批量确认写回：正在提交…");
+    void dispatchBatchProductAction(batchActionFetcher, { action: "confirm_miaoshou_edit", productIds })
+      .then((result) => setBatchStatus(summarizeBatchProductActionResult("批量确认写回", result)))
+      .catch(() => setBatchStatus("批量确认写回：提交失败，请稍后重试"));
+  }, [batchActionFetcher, onBatchConfirm, state]);
+
+  const handleBatchRetry = useCallback(() => {
+    const productIds = selectedBatchRetryIds(state);
+    if (productIds.length === 0) return;
+    onBatchRetry?.(productIds);
+    setBatchStatus("批量重试：正在提交…");
+    void dispatchBatchProductAction(batchActionFetcher, { action: "retry_from_failure", productIds })
+      .then((result) => setBatchStatus(summarizeBatchProductActionResult("批量重试", result)))
+      .catch(() => setBatchStatus("批量重试：提交失败，请稍后重试"));
+  }, [batchActionFetcher, onBatchRetry, state]);
 
   return (
     <section className="tk-product-workbench" aria-label="商品工作台">
@@ -175,11 +236,27 @@ export function ProductWorkbench({
       <footer className="tk-product-workbench__footer">
         <button
           type="button"
-          aria-label={state.batchButtonLabel}
-          disabled={!state.batchButtonEnabled}
+          aria-label={state.batchStartLabel}
+          disabled={!state.batchStartEnabled}
           onClick={handleBatchStart}
         >
-          {state.batchButtonLabel}
+          {state.batchStartLabel}
+        </button>
+        <button
+          type="button"
+          aria-label={state.batchConfirmLabel}
+          disabled={!state.batchConfirmEnabled}
+          onClick={handleBatchConfirm}
+        >
+          {state.batchConfirmLabel}
+        </button>
+        <button
+          type="button"
+          aria-label={state.batchRetryLabel}
+          disabled={!state.batchRetryEnabled}
+          onClick={handleBatchRetry}
+        >
+          {state.batchRetryLabel}
         </button>
         {progressItem ? (
           <AutomationProgress
@@ -189,6 +266,7 @@ export function ProductWorkbench({
         ) : (
           <span className="tk-automation-progress__empty">选择一个商品查看真实进度</span>
         )}
+        {batchStatus ? <span className="tk-batch-status" role="status" aria-live="polite">{batchStatus}</span> : null}
       </footer>
     </section>
   );

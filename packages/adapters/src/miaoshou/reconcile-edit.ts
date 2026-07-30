@@ -6,61 +6,28 @@ import { mapApprovalSnapshotToMiaoshouEdit, type MiaoshouEditableDetail } from "
 export type MiaoshouEditExpectation = Readonly<{
   version: 1;
   title: string;
-  itemNum?: string;
   notesText: string;
   notes: string;
-  price: number;
-  stock: number;
-  weight: number;
-  packageLength?: number;
-  packageWidth?: number;
-  packageHeight?: number;
   imgUrlSha256: readonly string[];
   sourceAttrs: MiaoshouEditableDetail["sourceAttrs"];
-  skuMap: Readonly<Record<string, Readonly<{
-    itemNum: string;
-    price: number;
-    stock: number;
-    weight: number;
-    imgUrlSha256?: string;
-  }>>>;
 }>;
 
 export type MiaoshouExactObservableProjection = Readonly<{
   title: string;
-  itemNum?: string;
   notesText: string;
   notes: string;
-  price: number;
-  stock: number;
-  weight: number;
-  packageLength?: number;
-  packageWidth?: number;
-  packageHeight?: number;
   imgUrlSha256: readonly string[];
   sourceAttrs: MiaoshouEditableDetail["sourceAttrs"];
-  skuMap: Readonly<Record<string, Readonly<{ price: number; stock: number }>>>;
 }>;
 
 /** Fields the verified Miaoshou GET detail endpoint actually echoes after edit. */
 export function exactObservableProjection(expected: MiaoshouEditExpectation): MiaoshouExactObservableProjection {
   return Object.freeze({
     title: expected.title,
-    ...(expected.itemNum === undefined ? {} : { itemNum: expected.itemNum }),
     notesText: expected.notesText,
     notes: expected.notes,
-    price: expected.price,
-    stock: expected.stock,
-    weight: expected.weight,
-    ...(expected.packageLength === undefined ? {} : { packageLength: expected.packageLength }),
-    ...(expected.packageWidth === undefined ? {} : { packageWidth: expected.packageWidth }),
-    ...(expected.packageHeight === undefined ? {} : { packageHeight: expected.packageHeight }),
     imgUrlSha256: expected.imgUrlSha256,
-    sourceAttrs: expected.sourceAttrs,
-    skuMap: Object.freeze(Object.fromEntries(Object.entries(expected.skuMap).map(([key, sku]) => [key, Object.freeze({
-      price: sku.price,
-      stock: sku.stock
-    })])))
+    sourceAttrs: expected.sourceAttrs
   });
 }
 
@@ -84,24 +51,10 @@ export function fingerprintMiaoshouEditableDetail(detail: MiaoshouEditableDetail
   return Object.freeze({
     version: 1,
     title: detail.title,
-    ...(detail.itemNum === undefined ? {} : { itemNum: detail.itemNum }),
     notesText: detail.notesText,
     notes: detail.notes,
-    price: detail.price,
-    stock: detail.stock,
-    weight: detail.weight,
-    ...(detail.packageLength === undefined ? {} : { packageLength: detail.packageLength }),
-    ...(detail.packageWidth === undefined ? {} : { packageWidth: detail.packageWidth }),
-    ...(detail.packageHeight === undefined ? {} : { packageHeight: detail.packageHeight }),
     imgUrlSha256: Object.freeze(detail.imgUrls.map(sha256Text)),
-    sourceAttrs: detail.sourceAttrs,
-    skuMap: Object.freeze(Object.fromEntries(Object.entries(detail.skuMap).map(([key, sku]) => [key, Object.freeze({
-      itemNum: sku.itemNum,
-      price: sku.price,
-      stock: sku.stock,
-      weight: sku.weight,
-      ...(sku.imgUrl ? { imgUrlSha256: sha256Text(sku.imgUrl) } : {})
-    })])))
+    sourceAttrs: detail.sourceAttrs
   });
 }
 
@@ -115,16 +68,7 @@ export function fingerprintApprovalSnapshot(
   }
   const placeholders = orderedRemoteAssetUrlSha256.map((hash) => `https://fingerprint.invalid/${hash}`);
   const base = fingerprintMiaoshouEditableDetail(mapApprovalSnapshotToMiaoshouEdit(snapshot, placeholders));
-  const hashByAsset = new Map(snapshot.orderedFinalAssetIds.map((id, index) => [String(id), orderedRemoteAssetUrlSha256[index]!]));
-  const skuMap = Object.fromEntries(Object.entries(base.skuMap).map(([key, sku]) => {
-    const sourceSku = snapshot.skus.find((candidate) => {
-      const values = Object.values(candidate.attributes);
-      return `;${(values.length > 0 ? values : [candidate.skuId]).join(";")};` === key;
-    });
-    const imageHash = sourceSku?.assetIds.map((id) => hashByAsset.get(String(id))).find(Boolean);
-    return [key, Object.freeze({ ...sku, ...(imageHash ? { imgUrlSha256: imageHash } : {}) })];
-  }));
-  return Object.freeze({ ...base, imgUrlSha256: Object.freeze([...orderedRemoteAssetUrlSha256]), skuMap: Object.freeze(skuMap) });
+  return Object.freeze({ ...base, imgUrlSha256: Object.freeze([...orderedRemoteAssetUrlSha256]) });
 }
 
 export const MIAOSHOU_DETAIL_PATH = "/open/v1/product/common_collect_box/common_collect_box/get_common_collect_box_detail";
@@ -193,31 +137,13 @@ function remoteMatchesExpected(remote: Record<string, unknown>, expected: Miaosh
   const scalarPairs: Array<[unknown, unknown]> = [
     [remote.title, observable.title],
     [remote.notesText, observable.notesText],
-    [remote.notes, observable.notes],
-    [remote.price, observable.price],
-    [remote.stock, observable.stock],
-    [remote.weight, observable.weight]
+    [remote.notes, observable.notes]
   ];
-  if (observable.itemNum !== undefined) scalarPairs.push([remote.itemNum, observable.itemNum]);
-  if (observable.packageLength !== undefined) scalarPairs.push([remote.packageLength, observable.packageLength]);
-  if (observable.packageWidth !== undefined) scalarPairs.push([remote.packageWidth, observable.packageWidth]);
-  if (observable.packageHeight !== undefined) scalarPairs.push([remote.packageHeight, observable.packageHeight]);
   if (scalarPairs.some(([actual, wanted]) => String(actual) !== String(wanted))) return false;
   const remoteImageHashes = Array.isArray(remote.imgUrls) && remote.imgUrls.every((url) => typeof url === "string")
     ? remote.imgUrls.map((url) => sha256Text(String(url)))
     : [];
   if (JSON.stringify(remoteImageHashes) !== JSON.stringify(observable.imgUrlSha256)) return false;
   if (JSON.stringify(remote.sourceAttrs ?? []) !== JSON.stringify(observable.sourceAttrs)) return false;
-
-  const remoteSkus = remote.skuMap && typeof remote.skuMap === "object"
-    ? remote.skuMap as Record<string, Record<string, unknown>>
-    : {};
-  const expectedKeys = Object.keys(observable.skuMap).sort();
-  if (JSON.stringify(Object.keys(remoteSkus).sort()) !== JSON.stringify(expectedKeys)) return false;
-  return Object.entries(observable.skuMap).every(([dimensionKey, wanted]) => {
-    const actual = remoteSkus[dimensionKey];
-    return actual
-      && String(actual.price) === String(wanted.price)
-      && String(actual.stock) === String(wanted.stock);
-  });
+  return true;
 }

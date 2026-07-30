@@ -45,6 +45,25 @@ export class AutomationRunRepository {
     try {
       await client.query("BEGIN");
 
+      const revision = await client.query<{
+        source_payload: Record<string, unknown>;
+        state_source: string;
+      }>(
+        `SELECT revision.source_payload, product.state_source
+         FROM ${schema.productRevisions} revision
+         JOIN ${schema.products} product ON product.id = revision.product_id
+         WHERE revision.id = $1
+         FOR UPDATE OF revision, product`,
+        [input.revisionId]
+      );
+      assert(revision.rows[0], "revision must exist");
+      if (
+        revision.rows[0].state_source === "local_captured"
+        && revision.rows[0].source_payload?.captureQuality !== "detail_page_complete"
+      ) {
+        throw new Error("local_capture_quality_invalid");
+      }
+
       // INSERT ... ON CONFLICT is the concurrency boundary. A prior SELECT cannot
       // protect a missing row: two transactions could both observe absence.
       const candidateRunId = newId("ar");
@@ -69,11 +88,6 @@ export class AutomationRunRepository {
       }
 
       if (created) {
-        const revision = await client.query<{ source_payload: Record<string, unknown> }>(
-          `SELECT source_payload FROM ${schema.productRevisions} WHERE id = $1`,
-          [input.revisionId]
-        );
-        assert(revision.rows[0], "revision must exist");
         const remoteUrls = extractRemoteUrls(revision.rows[0].source_payload ?? {});
         const jobId = newId("job");
         const businessKey = `automation:${runId}:boot`;

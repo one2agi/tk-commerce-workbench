@@ -1,5 +1,7 @@
-import type { IdempotencyKey, MiaoshouSourcePort } from "@tk/contracts";
-import { LeaseLostError, NeedsInputError, type LeaseFence, type WorkerHandler } from "../runtime/worker-loop.js";
+import type { ExternalFailure, IdempotencyKey, MiaoshouSourcePort } from "@tk/contracts";
+import { LeaseLostError, NeedsInputError, RetryableJobError, type LeaseFence, type WorkerHandler } from "../runtime/worker-loop.js";
+
+const MIAOSHOU_DETAIL_PENDING_RETRY_MS = 10_000;
 
 function requireCollectPayload(payload: Record<string, unknown>): {
   batchId: string;
@@ -21,6 +23,16 @@ function requireCollectPayload(payload: Record<string, unknown>): {
   return { batchId, sourceUrl, idempotencyKey: idempotencyKey as IdempotencyKey };
 }
 
+function isExternalFailure(value: unknown): value is ExternalFailure {
+  if (!value || typeof value !== "object") return false;
+  const candidate = value as Record<string, unknown>;
+  return (
+    ["retryable", "needs_input", "reconcile_required", "fatal"].includes(String(candidate.kind)) &&
+    typeof candidate.code === "string" &&
+    typeof candidate.safeMessage === "string"
+  );
+}
+
 export function createCollectHandler(input: {
   port: MiaoshouSourcePort;
   repository: { saveCollected(value: Record<string, unknown>, fence: LeaseFence): Promise<{ revisionId: string } | null> };
@@ -33,7 +45,10 @@ export function createCollectHandler(input: {
     let result;
     try {
       result = await input.port.fetchItem({ sourceUrl, idempotencyKey });
-    } catch {
+    } catch (error) {
+      if (isExternalFailure(error) && error.kind === "retryable" && error.code === "miaoshou.detail_pending") {
+        throw new RetryableJobError(error.code, error.safeMessage, MIAOSHOU_DETAIL_PENDING_RETRY_MS);
+      }
       try {
         await input.audit.append({
           action: "miaoshou.collect.result",

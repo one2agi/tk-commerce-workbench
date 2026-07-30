@@ -47,7 +47,6 @@ describe("approval action submission safety", () => {
         revisionId="revision-1"
         draftVersion={1}
         listingRunId="listing-1"
-        pricingRunId="pricing-1"
         templateVersion={1}
         orderedFinalAssetIds={["asset-1"]}
         targetLocale="th-TH"
@@ -56,7 +55,7 @@ describe("approval action submission safety", () => {
       />
     );
 
-    const button = screen.getByRole("button", { name: "确认并推送妙手" });
+    const button = screen.getByRole("button", { name: "确认写回妙手" });
     await user.dblClick(button);
 
     expect(confirm).toHaveBeenCalledTimes(1);
@@ -85,14 +84,13 @@ describe("approval action submission safety", () => {
       revisionId="revision-1"
       draftVersion={1}
       listingRunId="listing-1"
-      pricingRunId="pricing-1"
       templateVersion={1}
       orderedFinalAssetIds={["asset-1"]}
       targetLocale="th-TH"
       translationStyle="marketplace"
       actions={actions}
     />);
-    const button = screen.getByRole("button", { name: "确认并推送妙手" });
+    const button = screen.getByRole("button", { name: "确认写回妙手" });
 
     await user.click(button);
 

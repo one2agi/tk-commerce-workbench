@@ -6,7 +6,10 @@
 import { describe, expect, it, vi } from "vitest";
 import {
   createHttpApiClient,
+  dispatchBatchProductAction,
   dispatchStartAutomation,
+  fetchProductPool,
+  summarizeBatchProductActionResult,
   type ApiClient
 } from "../../lib/api-client";
 import { StartAutomationV1 } from "@tk/contracts/commands";
@@ -46,5 +49,49 @@ describe("api-client.startAutomation dispatch", () => {
     expect(fetcher).toHaveBeenCalledWith("/api/v1/automation-runs", expect.objectContaining({
       method: "POST"
     }));
+  });
+});
+
+describe("api-client.batchProductAction dispatch", () => {
+  it("uses the controlled local batch action endpoint", async () => {
+    const fetcher = vi.fn(async () => Response.json({
+      results: [{ productId: "product-1", ok: true }]
+    }, { status: 202 }));
+
+    await expect(dispatchBatchProductAction(fetcher, {
+      action: "confirm_miaoshou_edit",
+      productIds: ["product-1"]
+    })).resolves.toMatchObject({ results: [{ productId: "product-1", ok: true }] });
+    expect(fetcher).toHaveBeenCalledWith("/api/v1/products/batch-actions", expect.objectContaining({
+      method: "POST",
+      body: JSON.stringify({ action: "confirm_miaoshou_edit", productIds: ["product-1"] })
+    }));
+  });
+
+  it("does not expose a TikTok publish batch action", async () => {
+    const source = await import("../../lib/api-client");
+    expect(Object.keys(source).join("\n")).not.toMatch(/publish|claim|TikTok/i);
+  });
+
+  it("loads the latest product pool through the controlled local endpoint", async () => {
+    const fetcher = vi.fn(async () => Response.json({
+      items: [{ productId: "product-1", automation: "queued" }]
+    }));
+
+    await expect(fetchProductPool(fetcher)).resolves.toMatchObject({
+      items: [{ productId: "product-1", automation: "queued" }]
+    });
+    expect(fetcher).toHaveBeenCalledWith("/api/v1/products", expect.objectContaining({
+      method: "GET"
+    }));
+  });
+
+  it("summarizes mixed batch results in product-facing Chinese", () => {
+    expect(summarizeBatchProductActionResult("批量确认写回", {
+      results: [
+        { productId: "product-a", ok: true },
+        { productId: "product-b", ok: false, code: "approval_preview_not_ready" }
+      ]
+    })).toBe("批量确认写回：1 个成功，1 个失败（product-b：审批快照尚未准备好）");
   });
 });

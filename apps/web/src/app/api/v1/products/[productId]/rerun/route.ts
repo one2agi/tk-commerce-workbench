@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 import pg from "pg";
 import { RerunDownstreamV1, type RerunDownstreamV1 as RerunCommand } from "@tk/contracts";
 import { rejectNonLoopback, rejectUnsafeBrowserMutation } from "../../../../../../server/auth/loopback";
-import { loadRuntimeConfig } from "../../../../../../server/composition";
+import { loadConfig } from "@tk/config";
 import {
   createPgApprovalInvalidationPort,
   type ApprovalInvalidationPort
@@ -33,22 +33,24 @@ export function createPostHandler(dependencies: { reruns: RerunPort }) {
 
 let pool: pg.Pool | undefined;
 function database(): pg.Pool {
-  pool ??= new pg.Pool({ connectionString: loadRuntimeConfig().databaseUrl });
+  pool ??= new pg.Pool({ connectionString: loadConfig().databaseUrl });
   return pool;
 }
 
 export type RerunInvalidation = Readonly<{ invalidatedNodes: string[]; preservedNodes: string[] }>;
 const downstream: Record<RerunCommand["startNode"], RerunInvalidation> = {
-  listing: { invalidatedNodes: ["listing", "pricing", "template", "canvas", "approval"], preservedNodes: ["collection", "asset_archive"] },
-  pricing: { invalidatedNodes: ["pricing", "template", "canvas", "approval"], preservedNodes: ["collection", "asset_archive", "listing"] },
-  template: { invalidatedNodes: ["template", "canvas", "approval"], preservedNodes: ["collection", "asset_archive", "listing", "pricing"] },
-  canvas: { invalidatedNodes: ["canvas", "approval"], preservedNodes: ["collection", "asset_archive", "listing", "pricing", "template"] }
+  listing: { invalidatedNodes: ["listing", "template", "canvas", "approval"], preservedNodes: ["collection", "asset_archive"] },
+  template: { invalidatedNodes: ["template", "canvas", "approval"], preservedNodes: ["collection", "asset_archive", "listing"] },
+  canvas: { invalidatedNodes: ["canvas", "approval"], preservedNodes: ["collection", "asset_archive", "listing", "template"] }
 };
 export function buildRerunInvalidation(startNode: RerunCommand["startNode"]): RerunInvalidation {
   return downstream[startNode];
 }
 const firstJob: Record<RerunCommand["startNode"], string> = {
-  listing: "listing_generate", pricing: "pricing_calculate", template: "template_match", canvas: "canvas_generate"
+  listing: "listing_generate", template: "template_match", canvas: "canvas_generate"
+};
+const rerunMaxAttempts: Partial<Record<RerunCommand["startNode"], number>> = {
+  canvas: 30
 };
 
 export function createPgRerunPort(
@@ -90,7 +92,7 @@ export function createPgRerunPort(
       const nextDraft: Record<string, unknown> = { ...oldDraft };
       delete nextDraft.finalAssetOrder;
       delete nextDraft.approvalPreview;
-      if (["listing", "pricing", "template"].includes(command.startNode)) {
+      if (["listing", "template"].includes(command.startNode)) {
         delete nextDraft.templateMatch;
         delete nextDraft.imageSelection;
       } else if (nextDraft.imageSelection && typeof nextDraft.imageSelection === "object") {
@@ -116,7 +118,9 @@ export function createPgRerunPort(
         [newRevisionId, productId, newDraftVersion, previous.source_title,
           JSON.stringify(previous.source_payload ?? {}), JSON.stringify(nextDraft)]
       );
+      let copiedListingRunId: string | null = null;
       if (command.startNode !== "listing") {
+        copiedListingRunId = `listing_${randomUUID()}`;
         const listing = await client.query(
           `INSERT INTO listing_drafts
            (id, product_id, revision_id, draft_version, target_locale, style, title, description,
@@ -125,22 +129,17 @@ export function createPgRerunPort(
                   attributes, provider, model, fallback_used
            FROM listing_drafts WHERE revision_id = $4
            ORDER BY created_at DESC LIMIT 1`,
-          [`listing_${randomUUID()}`, newRevisionId, newDraftVersion, command.revisionId]
+          [copiedListingRunId, newRevisionId, newDraftVersion, command.revisionId]
         );
         if (listing.rowCount !== 1) throw Object.assign(new Error("listing_prerequisite_missing"), { code: "listing_prerequisite_missing" });
       }
-      if (["template", "canvas"].includes(command.startNode)) {
-        const pricing = await client.query(
-          `INSERT INTO pricing_runs
-           (id, product_id, revision_id, draft_version, state, breakdown, final_price_minor,
-            final_currency, ending, exchange_rate_snapshot_id)
-           SELECT $1, product_id, $2, $3, state, breakdown, final_price_minor,
-                  final_currency, ending, exchange_rate_snapshot_id
-           FROM pricing_runs WHERE revision_id = $4
-           ORDER BY created_at DESC LIMIT 1`,
-          [`pricing_${randomUUID()}`, newRevisionId, newDraftVersion, command.revisionId]
+      if (copiedListingRunId) {
+        await client.query(
+          `UPDATE product_revisions
+           SET working_draft = working_draft || $2::jsonb
+           WHERE id = $1`,
+          [newRevisionId, JSON.stringify({ listingRunId: copiedListingRunId })]
         );
-        if (pricing.rowCount !== 1) throw Object.assign(new Error("pricing_prerequisite_missing"), { code: "pricing_prerequisite_missing" });
       }
       for (const asset of oldAssets.rows) {
         await client.query(
@@ -164,11 +163,11 @@ export function createPgRerunPort(
       const jobId = `job_${randomUUID()}`;
       const businessKey = `${newRevisionId}:rerun:${newDraftVersion}:${command.startNode}`;
       const inserted = await client.query<{ id: string }>(
-        `INSERT INTO jobs (id, kind, business_key, idempotency_key, payload, status)
-         VALUES ($1, $2, $3, $3, $4::jsonb, 'queued')
+        `INSERT INTO jobs (id, kind, business_key, idempotency_key, payload, status, max_attempts)
+         VALUES ($1, $2, $3, $3, $4::jsonb, 'queued', COALESCE($5, 3))
          ON CONFLICT (kind, business_key) DO UPDATE SET updated_at = jobs.updated_at
          RETURNING id`,
-        [jobId, firstJob[command.startNode], businessKey, JSON.stringify({ version: 1, revisionId: newRevisionId })]
+        [jobId, firstJob[command.startNode], businessKey, JSON.stringify({ version: 1, revisionId: newRevisionId }), rerunMaxAttempts[command.startNode] ?? null]
       );
       await client.query(
         `INSERT INTO audit_events (id, actor_type, action, target_kind, target_id, payload, redacted)

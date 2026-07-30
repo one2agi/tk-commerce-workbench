@@ -25,6 +25,6 @@ export function createGenerateListingHandler(input: {
     execution.assertLease();
     requireFencedWrite(await input.repository.saveResult({ revisionId, ...result }, execution.fence));
     await input.audit.append({ action: "listing.generate.result", targetKind: "product_revision", targetId: revisionId, payload: { provider: result.provider, degraded: result.degraded }, redacted: true });
-    return { next: [{ kind: "pricing_calculate", businessKey: `${revisionId}:pricing`, payload: { version: 1, revisionId } }] };
+    return { next: [{ kind: "template_match", businessKey: `${revisionId}:template`, payload: { version: 1, revisionId } }] };
   };
 }

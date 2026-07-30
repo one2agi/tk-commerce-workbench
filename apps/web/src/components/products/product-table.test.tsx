@@ -43,6 +43,10 @@ function item(overrides: Partial<ProductPoolItemV1> = {}): ProductPoolItemV1 {
     productId: productId("892408514788"),
     currentRevisionId: productRevisionId("revision-892408514788"),
     sourceItemId: sourceItemId("s-1"),
+    sourceUrl: "https://detail.1688.com/offer/892408514788.html",
+    thumbnailUrl: "https://img.test/892408514788.jpg",
+    collectedAt: "2026-07-22T10:00:00.000Z",
+    updatedAt: "2026-07-22T10:10:00.000Z",
     canonicalSourceTitle: "测试商品",
     targetTitle: null,
     canonicalSuccessDetailId: miaoshouDetailId("detail-1"),
@@ -50,6 +54,7 @@ function item(overrides: Partial<ProductPoolItemV1> = {}): ProductPoolItemV1 {
     currency: "CNY",
     priceWire: null,
     sourceImageCount: 6,
+    sourceCaptureQuality: null,
     imageCount: 0,
     usableCanvasOutputCount: 0,
     miaoshouSource: "success",
@@ -91,6 +96,51 @@ function renderTable(props: {
 }
 
 describe("ProductTable row-level start action", () => {
+  it("shows the collected CNY source price and blocks partial local captures", () => {
+    const { screen } = renderTable({
+      item: item({
+        sourcePriceWire: { amountMinor: "1350", currency: "CNY" },
+        sourceCaptureQuality: "detail_page_partial",
+        miaoshouSource: "local_captured",
+        canonicalSuccessDetailId: null
+      })
+    });
+
+    expect(screen.getByText("¥13.50")).toBeInTheDocument();
+    expect(screen.getAllByText("本地采集不完整，请重新采集").length).toBeGreaterThan(0);
+    expect(screen.queryAllByRole("button", { name: /开始处理 892408514788/ })).toHaveLength(0);
+    expect(screen.getByRole("link", { name: /查看原因 892408514788/ })).toBeInTheDocument();
+  });
+
+  it("opens the product detail image review page from image and View action", () => {
+    const { screen } = renderTable({
+      item: item({
+        thumbnailUrl: "https://img.test/main.jpg",
+        automation: "ready",
+        assetArchive: "ready",
+        listing: "ready",
+        canvas: "succeeded",
+        usableCanvasOutputCount: 5,
+        targetTitle: "สร้อยคอจี้โคลเวอร์"
+      })
+    });
+
+    expect(screen.getByRole("link", { name: /查看商品图片 892408514788/ })).toHaveAttribute("href", "/products/892408514788");
+    expect(screen.getByRole("link", { name: /查看并确认 892408514788/ })).toHaveAttribute("href", "/products/892408514788");
+  });
+
+  it("renders the original 1688 CDN thumbnail returned by the product API", () => {
+    const originalImage = "https://cbu01.alicdn.com/img/ibank/O1CN01jvaVp11Bx5Oi48xYl_!!2212215930011-0-cib.jpg";
+    const { screen } = renderTable({
+      item: item({
+        thumbnailUrl: originalImage
+      })
+    });
+
+    expect(screen.getByRole("img", { name: "商品缩略图" })).toHaveAttribute("src", originalImage);
+    expect(screen.queryByText("图")).toBeNull();
+  });
+
   it("shows a row-level start button for a collected product before local assets are archived", async () => {
     const { screen, onStart } = renderTable({
       item: item()
@@ -105,28 +155,24 @@ describe("ProductTable row-level start action", () => {
     expect(onStart).toHaveBeenCalledWith("892408514788");
   });
 
-  it("disables the row start button while start is pending and shows 处理中 label", async () => {
+  it("shows a progress link while start is pending", async () => {
     const { screen } = renderTable({
       item: item(),
       startStatus: "pending"
     });
 
-    const startButton = screen.getByRole("button", {
-      name: /处理中 892408514788/
-    });
-    expect(startButton).toBeDisabled();
+    expect(screen.getByRole("link", { name: /查看进度 892408514788/ })).toHaveAttribute("href", "/products/892408514788");
+    expect(screen.queryByRole("button", { name: /处理中 892408514788/ })).toBeNull();
   });
 
-  it("disables the row start button after start succeeded and shows 已开始 label", async () => {
+  it("shows a progress link after start succeeded", async () => {
     const { screen } = renderTable({
       item: item(),
       startStatus: "success"
     });
 
-    const startButton = screen.getByRole("button", {
-      name: /已开始 892408514788/
-    });
-    expect(startButton).toBeDisabled();
+    expect(screen.getByRole("link", { name: /查看进度 892408514788/ })).toHaveAttribute("href", "/products/892408514788");
+    expect(screen.queryByRole("button", { name: /已开始 892408514788/ })).toBeNull();
   });
 
   it("shows 重试处理 label and keeps the button enabled after a previous failure", async () => {
@@ -158,10 +204,10 @@ describe("ProductTable row-level start action", () => {
       name: /开始处理 892408514788/
     });
     expect(startButton).toBeDisabled();
-    expect(screen.getByText(/妙手原始数据没有可用图片/)).toBeInTheDocument();
+    expect(screen.getAllByText(/1688 详情数据没有可用图片/).length).toBeGreaterThan(0);
   });
 
-  it("disables the row start button when canonical success detail id is missing", async () => {
+  it("allows processing before the late Miaoshou detail id is created", async () => {
     const { screen } = renderTable({
       item: item({
         canonicalSuccessDetailId: null,
@@ -174,8 +220,8 @@ describe("ProductTable row-level start action", () => {
     const startButton = screen.getByRole("button", {
       name: /开始处理 892408514788/
     });
-    expect(startButton).toBeDisabled();
-    expect(screen.getByText(/缺少妙手采集箱详情 ID/)).toBeInTheDocument();
+    expect(startButton).toBeEnabled();
+    expect(screen.queryByText(/缺少妙手采集箱详情 ID/)).toBeNull();
   });
 
   it("disables the row start button when collect has not succeeded yet", async () => {
@@ -187,10 +233,7 @@ describe("ProductTable row-level start action", () => {
       })
     });
 
-    const startButton = screen.getByRole("button", {
-      name: /开始处理 892408514788/
-    });
-    expect(startButton).toBeDisabled();
-    expect(screen.getByText(/采集尚未成功/)).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: /查看进度 892408514788/ })).toHaveAttribute("href", "/products/892408514788");
+    expect(screen.queryByRole("button", { name: /开始处理 892408514788/ })).toBeNull();
   });
 });

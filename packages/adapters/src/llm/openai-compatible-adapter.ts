@@ -14,12 +14,6 @@ export function createOpenAiCompatibleAdapter(config: OpenAiCompatibleAdapterCon
   const baseUrl = config.baseUrl.replace(/\/+$/, "");
   return {
     async generateListing(input): Promise<LlmStructuredOutputV1> {
-      if (input.sourceLocale.toLowerCase() !== input.targetLocale.toLowerCase()) {
-        // A local validator cannot prove arbitrary cross-language semantic equivalence. Do not
-        // spend money on output that cannot be deterministically grounded; Core must select its
-        // reviewed rules fallback for cross-locale generation.
-        throw externalFailure("needs_input", "llm.cross_locale_requires_rules", "Cross-language listing generation requires the reviewed rules fallback");
-      }
       const controller = new AbortController();
       const timer = setTimeout(() => controller.abort(), config.timeoutMs ?? 30_000);
       let response: Response;
@@ -32,7 +26,7 @@ export function createOpenAiCompatibleAdapter(config: OpenAiCompatibleAdapterCon
             model: config.model,
             temperature: 0,
             messages: [
-              { role: "system", content: "Return only source-backed fields. For every output field provide evidenceMappings with its exact sourcePath and exact sourceQuote. Do not translate, paraphrase, style, or add any token. Return JSON only." },
+              { role: "system", content: "Generate marketplace listing fields in targetLocale using only the supplied evidence. Translate when sourceLocale differs from targetLocale. Do not add claims, quantities, certifications, materials, brands, sizes, or benefits absent from evidence. For every output field provide evidenceMappings with its exact sourcePath and exact sourceQuote. Return JSON only." },
               { role: "user", content: JSON.stringify({ sourceLocale: input.sourceLocale, targetLocale: input.targetLocale, style: input.style, evidence: input.evidence }) }
             ],
             response_format: { type: "json_schema", json_schema: { name: "listing_candidate", strict: true, schema: listingSchema } }
@@ -59,7 +53,7 @@ export function createOpenAiCompatibleAdapter(config: OpenAiCompatibleAdapterCon
         throw externalFailure("fatal", "llm.invalid_response", "Listing model returned invalid structured output");
       }
       const parsed = parseListing(candidate, input.style);
-      assertGrounded(parsed.output, parsed.evidenceMappings, input.evidence, input.style);
+      assertGrounded(parsed.output, parsed.evidenceMappings, input.evidence, input.style, input.sourceLocale, input.targetLocale);
       return Object.freeze(parsed.output);
     }
   };
@@ -89,10 +83,11 @@ function parseListing(value: unknown, requestedStyle: string): { output: LlmStru
   return { output: { title: item.title.trim(), description: item.description.trim(), translatedAttributes: attrs, styleApplied: typeof item.styleApplied === "string" ? item.styleApplied : requestedStyle, fallbackUsed: false }, evidenceMappings: item.evidenceMappings };
 }
 
-function assertGrounded(output: LlmStructuredOutputV1, mappings: EvidenceMapping[], evidence: Parameters<LlmPort["generateListing"]>[0]["evidence"], requestedStyle: string): void {
+function assertGrounded(output: LlmStructuredOutputV1, mappings: EvidenceMapping[], evidence: Parameters<LlmPort["generateListing"]>[0]["evidence"], requestedStyle: string, sourceLocale: string, targetLocale: string): void {
   const sourceByPath = new Map<string, string>([["sourceTitle", evidence.sourceTitle], ["sourceDescription", evidence.sourceDescription]]);
   const outputByPath = new Map<string, string>([["title", output.title], ["description", output.description]]);
   const expectedSourcePath = new Map<string, string>([["title", "sourceTitle"], ["description", "sourceDescription"]]);
+  const sameLocale = sourceLocale.toLowerCase() === targetLocale.toLowerCase();
   evidence.sourceAttributes.forEach((attribute, index) => {
     sourceByPath.set(`sourceAttributes.${index}.name`, attribute.name);
     sourceByPath.set(`sourceAttributes.${index}.value`, attribute.value);
@@ -109,7 +104,8 @@ function assertGrounded(output: LlmStructuredOutputV1, mappings: EvidenceMapping
   for (const mapping of mappings) {
     const sourceValue = sourceByPath.get(mapping.sourcePath);
     const outputValue = outputByPath.get(mapping.outputPath);
-    if (mapped.has(mapping.outputPath) || expectedSourcePath.get(mapping.outputPath) !== mapping.sourcePath || sourceValue === undefined || outputValue === undefined || mapping.sourceQuote !== sourceValue || outputValue !== sourceValue) throwUngrounded();
+    if (mapped.has(mapping.outputPath) || expectedSourcePath.get(mapping.outputPath) !== mapping.sourcePath || sourceValue === undefined || outputValue === undefined || mapping.sourceQuote !== sourceValue) throwUngrounded();
+    if (sameLocale && outputValue !== sourceValue) throwUngrounded();
     mapped.add(mapping.outputPath);
   }
   if ([...outputByPath.keys()].some((path) => !mapped.has(path))) throwUngrounded();

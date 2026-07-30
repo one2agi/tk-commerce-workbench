@@ -25,6 +25,13 @@ function object(value: unknown): Record<string, unknown> {
   return value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : {};
 }
 
+function explicitCanvasInputCapacity(value: unknown): number | undefined {
+  const numeric = Number(value ?? 0);
+  return Number.isInteger(numeric) && numeric > 1 ? numeric : undefined;
+}
+
+const DEFAULT_CANVAS_INPUT_CAPACITY = 5;
+
 function minorToMajor(amountMinor: string): string | null {
   if (!/^-?\d+$/.test(amountMinor)) return null;
   const negative = amountMinor.startsWith("-");
@@ -359,7 +366,7 @@ export class PipelineRepository {
     return {
       candidates: rows.rows.map((row) => ({ assetId: row.id, url: row.local_path, role: row.chosen_role, score: row.visual_score, perceptualHash: row.perceptual_hash })),
       referenceUrls: referenceIds.flatMap((id) => referencePaths.has(id) ? [referencePaths.get(id)!] : []),
-      capacity: Number(object(revision.rows[0].working_draft).canvasInputCapacity ?? 9)
+      capacity: explicitCanvasInputCapacity(object(revision.rows[0].working_draft).canvasInputCapacity) ?? DEFAULT_CANVAS_INPUT_CAPACITY
     };
   }
 
@@ -401,8 +408,8 @@ export class PipelineRepository {
     const referenceIds = Array.isArray(template.rows[0].reference_asset_ids)
       ? [...new Set(template.rows[0].reference_asset_ids.map(String))]
       : [];
-    const referenceRows = referenceIds.length === 0 ? { rows: [] } : await this.pool.query<{ id: string }>(
-      `SELECT id FROM ${schema.assets}
+    const referenceRows = referenceIds.length === 0 ? { rows: [] } : await this.pool.query<{ id: string; local_path: string }>(
+      `SELECT id, local_path FROM ${schema.assets}
        WHERE id = ANY($1::text[]) AND state = 'ready' AND rejection_reason IS NULL AND local_path IS NOT NULL`,
       [referenceIds]
     );
@@ -421,7 +428,9 @@ export class PipelineRepository {
       targetLocale: template.rows[0].target_locale,
       style: template.rows[0].visual_style || "neutral",
       promptFragment: template.rows[0].prompt_fragment || "",
-      expectedOutputCount: Number(draft.expectedOutputCount ?? 5)
+      expectedOutputCount: Number(draft.expectedOutputCount ?? 5),
+      canvasInputCapacity: explicitCanvasInputCapacity(draft.canvasInputCapacity),
+      referenceImageUrls: referenceRows.rows.map((row) => row.local_path)
     };
   }
 

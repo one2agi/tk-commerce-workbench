@@ -1,8 +1,52 @@
 <!doctype html>
 <html lang="zh-CN">
-  <head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"><title>TK 采集器</title></head>
+  <head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>TK 采集器</title>
+    <style>
+      :root { color-scheme: light; font-family: Inter, "Microsoft YaHei", sans-serif; }
+      body { width: 340px; margin: 0; color: #172033; background: #f5f7fb; }
+      main { padding: 18px; }
+      h1 { margin: 0 0 6px; font-size: 18px; }
+      .hint { margin: 0 0 16px; color: #667085; font-size: 12px; line-height: 1.6; }
+      .status { padding: 12px; margin-bottom: 12px; border: 1px solid #d9e0ec; border-radius: 10px; background: white; font-size: 13px; line-height: 1.55; }
+      .status[data-tone="error"] { border-color: #f3b4b4; background: #fff5f5; color: #a12626; }
+      .status[data-tone="success"] { border-color: #a7ddbd; background: #f1fbf5; color: #176c3a; }
+      button, a.button { box-sizing: border-box; width: 100%; min-height: 40px; border: 0; border-radius: 9px; font-weight: 700; cursor: pointer; }
+      #capture { color: white; background: #1769e0; }
+      #capture:disabled { cursor: not-allowed; background: #aeb9ca; }
+      .secondary { margin-top: 8px; color: #344054; background: #e7ebf2; }
+      #summary { display: none; padding: 12px; margin: 12px 0 0; border-radius: 10px; background: white; }
+      #summary h2 { margin: 0 0 8px; font-size: 14px; line-height: 1.45; }
+      #summary dl { display: grid; grid-template-columns: 80px 1fr; gap: 5px; margin: 0; font-size: 12px; }
+      #summary dt { color: #667085; }
+      #summary dd { margin: 0; font-weight: 600; }
+      #warnings { margin: 8px 0 0; padding-left: 18px; color: #a15c00; font-size: 12px; }
+      #open-product { display: none; margin-top: 10px; }
+    </style>
+  </head>
   <body>
-    <main><p>打开 1688 商品列表页即可勾选采集。</p><button type="button">连接设置</button></main>
+    <main>
+      <h1>TK 1688 采集器</h1>
+      <p class="hint">仅采集当前打开的1688商品详情页，并写入本地工作台。</p>
+      <div id="status" class="status" role="status">正在检查当前页面…</div>
+      <button id="capture" type="button" disabled>一键采集到工作台</button>
+      <button id="settings" class="secondary" type="button">连接设置</button>
+      <section id="summary" aria-live="polite">
+        <h2 id="summary-title"></h2>
+        <dl>
+          <dt>采集质量</dt><dd id="summary-quality"></dd>
+          <dt>来源价格</dt><dd id="summary-price"></dd>
+          <dt>总库存</dt><dd id="summary-stock"></dd>
+          <dt>SKU数量</dt><dd id="summary-skus"></dd>
+          <dt>主图数量</dt><dd id="summary-main-images"></dd>
+          <dt>详情图数量</dt><dd id="summary-detail-images"></dd>
+        </dl>
+        <ul id="warnings"></ul>
+        <button id="open-product" type="button">打开工作台商品</button>
+      </section>
+    </main>
     <script type="module" src="/src/popup/index.ts"></script>
   </body>
 </html>

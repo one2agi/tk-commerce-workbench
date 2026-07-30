@@ -14,6 +14,7 @@ import { createRuntimeHealthHandler } from "../../apps/web/src/app/api/runtime-h
 
 import {
   assertLogsAreRedacted,
+  assertSafeRuntimeEnv,
   buildChildEnvironment,
   buildWorkerCommand,
   buildWorkerProbeClientConfig,
@@ -29,6 +30,7 @@ import {
   readEnvFile,
   resolveStorageDir,
   runtimeDirFor,
+  runtimePublicInfo,
   secretNeedles,
   startLocalProduction,
   statusLocalProduction,
@@ -69,12 +71,22 @@ async function waitForManagedProcess(pid, marker) {
 }
 
 test("runtime health endpoint exposes a non-secret launch id without authentication", async () => {
-  const handler = createRuntimeHealthHandler({ launchId: "launch-123" });
+  const handler = createRuntimeHealthHandler({
+    launchId: "launch-123",
+    adapterMode: "live",
+    canvasBaseUrlKind: "loopback",
+    canvasWorkflowName: "TK工作流"
+  });
   const response = await handler(
     new Request("http://127.0.0.1/api/runtime-health")
   );
   assert.equal(response.status, 200);
-  assert.deepEqual(await response.json(), { launchId: "launch-123" });
+  assert.deepEqual(await response.json(), {
+    launchId: "launch-123",
+    adapterMode: "live",
+    canvasBaseUrlKind: "loopback",
+    canvasWorkflowName: "TK工作流"
+  });
 });
 
 async function spawnManagedDummy(
@@ -119,9 +131,10 @@ async function forceStopGroup(pid) {
 }
 
 test("env parser treats values as data rather than shell", () => {
-  assert.deepEqual(readEnvFile("SAFE=$(touch /tmp/never-run)\nMODE=mock\n"), {
+  assert.deepEqual(readEnvFile("SAFE=$(touch /tmp/never-run)\nMODE=mock\nno_proxy=127.0.0.1,localhost\n"), {
     SAFE: "$(touch /tmp/never-run)",
-    MODE: "mock"
+    MODE: "mock",
+    no_proxy: "127.0.0.1,localhost"
   });
 });
 
@@ -141,6 +154,8 @@ test("child environment inherits only an allowlist plus the env file", () => {
         PATH: "/usr/bin",
         HOME: "/tmp/home",
         LANG: "C.UTF-8",
+        HTTP_PROXY: "http://127.0.0.1:6984",
+        HTTPS_PROXY: "http://127.0.0.1:6984",
         AWS_SECRET_ACCESS_KEY: "ambient-secret",
         NODE_OPTIONS: "--inspect"
       }
@@ -151,10 +166,126 @@ test("child environment inherits only an allowlist plus the env file", () => {
     PATH: "/usr/bin",
     HOME: "/tmp/home",
     LANG: "C.UTF-8",
+    HTTP_PROXY: "http://127.0.0.1:6984",
+    HTTPS_PROXY: "http://127.0.0.1:6984",
     DATABASE_URL: "postgresql://local",
     APP_SECRET: "configured-secret",
     NODE_ENV: "production",
+    TMPDIR: join("/tmp", "tk-commerce-workbench-runtime", String(process.getuid?.() ?? "user"), "launch-123"),
+    TMP: join("/tmp", "tk-commerce-workbench-runtime", String(process.getuid?.() ?? "user"), "launch-123"),
+    TEMP: join("/tmp", "tk-commerce-workbench-runtime", String(process.getuid?.() ?? "user"), "launch-123"),
     TK_RUNTIME_LAUNCH_ID: "launch-123"
+  });
+});
+
+test("child environment uses a Linux-native runtime tmp directory", async () => {
+  await withTestStorageDir(async (storageDir) => {
+    const childEnv = buildChildEnvironment(
+      { DATABASE_URL: "postgresql://local" },
+      {
+        launchId: "launch-123",
+        hostEnv: {
+          PATH: "/usr/bin",
+          TMPDIR: "/mnt/c/Users/morav/AppData/Local/Temp",
+          TMP: "/mnt/c/Users/morav/AppData/Local/Temp",
+          TEMP: "/mnt/c/Users/morav/AppData/Local/Temp"
+        }
+      }
+    );
+
+    assert.ok(storageDir);
+    assert.equal(
+      childEnv.TMPDIR,
+      join("/tmp", "tk-commerce-workbench-runtime", String(process.getuid?.() ?? "user"), "launch-123")
+    );
+    assert.equal(childEnv.TMP, childEnv.TMPDIR);
+    assert.equal(childEnv.TEMP, childEnv.TMPDIR);
+  });
+});
+
+test("live child environment injects stable worker command context", () => {
+  const childEnv = buildChildEnvironment(
+    {
+      EXTERNAL_ADAPTER_MODE: "live",
+      LOCAL_PRODUCTION_LIVE_ACK: "full-live-local-mvp"
+    },
+    { launchId: "launch-live-123", hostEnv: {} }
+  );
+
+  assert.equal(childEnv.WORKER_COMMAND_ID, "local-production-launch-live-123");
+  assert.equal(childEnv.WORKER_IDEMPOTENCY_KEY, "local-production-launch-live-123-worker");
+});
+
+test("runtime safety keeps mock as default and requires explicit full-live acknowledgement", () => {
+  assert.doesNotThrow(() => assertSafeRuntimeEnv({
+    EXTERNAL_ADAPTER_MODE: "mock",
+    ALLOW_LAN: "false",
+    DATABASE_URL: "postgresql://fixture-user:fixture-password@127.0.0.1/db"
+  }));
+
+  assert.throws(() => assertSafeRuntimeEnv({
+    EXTERNAL_ADAPTER_MODE: "live",
+    ALLOW_LAN: "false",
+    DATABASE_URL: "postgresql://fixture-user:fixture-password@127.0.0.1/db"
+  }), /LOCAL_PRODUCTION_LIVE_ACK/);
+});
+
+test("runtime safety validates all full-live external configuration without printing values", () => {
+  const base = {
+    EXTERNAL_ADAPTER_MODE: "live",
+    LOCAL_PRODUCTION_LIVE_ACK: "full-live-local-mvp",
+    ALLOW_LAN: "false",
+    DATABASE_URL: "postgresql://fixture-user:fixture-password@127.0.0.1/db",
+    CANVAS_BASE_URL: "http://127.0.0.1:8123",
+    CANVAS_ID: "canvas-id",
+    CANVAS_WORKFLOW_NAME: "TK工作流",
+    LLM_BASE_URL: "https://llm.test/v1",
+    LLM_API_KEY: "llm-secret",
+    LLM_MODEL: "model-id",
+    EXCHANGE_RATE_BASE_URL: "https://rates.test/latest",
+    MIAOSHOU_APP_KEY: "miaoshou-key",
+    MIAOSHOU_APP_SECRET: "miaoshou-secret"
+  };
+  assert.doesNotThrow(() => assertSafeRuntimeEnv(base));
+
+  for (const key of [
+    "CANVAS_BASE_URL", "CANVAS_ID", "CANVAS_WORKFLOW_NAME", "LLM_BASE_URL",
+    "LLM_API_KEY", "LLM_MODEL", "EXCHANGE_RATE_BASE_URL",
+    "MIAOSHOU_APP_KEY", "MIAOSHOU_APP_SECRET"
+  ]) {
+    const env = { ...base, [key]: "" };
+    assert.throws(
+      () => assertSafeRuntimeEnv(env),
+      (error) => {
+        assert.match(error.message, new RegExp(key));
+        assert.equal(error.message.includes("llm-secret"), false);
+        assert.equal(error.message.includes("miaoshou-secret"), false);
+        return true;
+      }
+    );
+  }
+});
+
+test("runtime public info exposes only non-secret adapter and Canvas fields", () => {
+  assert.deepEqual(runtimePublicInfo({
+    EXTERNAL_ADAPTER_MODE: "live",
+    CANVAS_BASE_URL: "http://127.0.0.1:8123",
+    CANVAS_WORKFLOW_NAME: "TK工作流",
+    CANVAS_API_KEY: "canvas-secret"
+  }), {
+    adapterMode: "live",
+    canvasBaseUrlKind: "loopback",
+    canvasWorkflowName: "TK工作流"
+  });
+
+  assert.deepEqual(runtimePublicInfo({
+    EXTERNAL_ADAPTER_MODE: "mock",
+    CANVAS_BASE_URL: "https://canvas.example.test",
+    CANVAS_WORKFLOW_NAME: "remote-workflow"
+  }), {
+    adapterMode: "mock",
+    canvasBaseUrlKind: "remote",
+    canvasWorkflowName: "remote-workflow"
   });
 });
 

@@ -7,10 +7,10 @@ import { computeDirtyFields, setNestedField } from "./dirty";
 import { InfoBanner } from "./info-banner";
 import { SaveBar } from "./save-bar";
 import { BasicSettingsSection } from "./sections/basic-settings-section";
-import { PricingFormulaSection } from "./sections/pricing-formula-section";
 import { ProviderOptionsSection } from "./sections/provider-options-section";
 import { RetryPolicySection } from "./sections/retry-policy-section";
 import { SecretStatusSection } from "./sections/secret-status-section";
+import { SystemDiagnosticsSection } from "./sections/system-diagnostics-section";
 import { SettingsCard } from "./settings-card";
 import { useSaveSettings, type SaveState } from "./settings-api";
 
@@ -92,9 +92,7 @@ export function SettingsWorkspace({ initial, fetcher }: SettingsWorkspaceProps):
   // Per-card dirty counts
   const basicDirty = ["defaultLocale", "defaultCurrency", "externalAdapterMode", "workerConcurrency", "maxCanvasRunsPerDay", "assetRoot"]
     .filter((k) => dirtyFields.has(k)).length;
-  const pricingDirty = ["domesticShippingCny", "crossBorderCostCny", "fixedTargetCostThb", "platformFeeRate", "paymentFeeRate", "targetProfitRate", "ending"]
-    .filter((k) => dirtyFields.has(`pricingDefaults.${k}`)).length;
-  const providerDirty = ["listingProvider", "listingModel", "canvasWorkflow"]
+  const providerDirty = ["listingProvider", "listingModel"]
     .filter((k) => dirtyFields.has(`providerOptions.${k}`)).length;
   const retryDirty = ["maxAttempts", "initialDelaySeconds"]
     .filter((k) => dirtyFields.has(`retryPolicy.${k}`)).length;
@@ -107,11 +105,7 @@ export function SettingsWorkspace({ initial, fetcher }: SettingsWorkspaceProps):
         <BasicSettingsSection draft={draft} dirtyFields={dirtyFields} onFieldChange={handleFieldChange} />
       </SettingsCard>
 
-      <SettingsCard title="定价公式" hint="影响每个商品的售价建议" ariaLabel="定价公式" dirtyCount={pricingDirty}>
-        <PricingFormulaSection draft={draft} dirtyFields={dirtyFields} onFieldChange={handleFieldChange} />
-      </SettingsCard>
-
-      <SettingsCard title="Provider 默认值" hint="非密钥 Provider 的默认配置" ariaLabel="Provider 默认值" dirtyCount={providerDirty}>
+      <SettingsCard title="处理运行边界" hint="Provider 默认值与 Worker 运行说明" ariaLabel="处理运行边界" dirtyCount={providerDirty}>
         <ProviderOptionsSection draft={draft} dirtyFields={dirtyFields} onFieldChange={handleFieldChange} />
       </SettingsCard>
 
@@ -121,6 +115,10 @@ export function SettingsWorkspace({ initial, fetcher }: SettingsWorkspaceProps):
 
       <SettingsCard title="密钥配置状态" hint="密钥不会进入浏览器或保存到本页面" ariaLabel="密钥配置状态">
         <SecretStatusSection draft={draft} />
+      </SettingsCard>
+
+      <SettingsCard title="系统诊断" hint="任务日志、运行边界和失败排查入口" ariaLabel="系统诊断">
+        <SystemDiagnosticsSection draft={draft} />
       </SettingsCard>
 
       <SaveBar

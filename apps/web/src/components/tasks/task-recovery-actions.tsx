@@ -52,9 +52,9 @@ export function TaskRecoveryActions({ taskId, status, errorKind }: {
   return <div className="tk-task-actions">
     {status === "queued" && <button type="button" disabled={pending} onClick={() => void act("pause")}>暂停</button>}
     {status === "paused" && <button type="button" disabled={pending} onClick={() => void act("resume")}>继续</button>}
-    {retryAllowed && <button type="button" disabled={pending} onClick={() => void act("retry")}>安全重试</button>}
+    {retryAllowed && <button type="button" disabled={pending} onClick={() => void act("retry")}>继续处理</button>}
     {["queued", "paused"].includes(status) && <button type="button" disabled={pending} onClick={() => void act("cancel")}>取消</button>}
-    {errorKind === "reconcile_required" && <span>外部结果未知，仅允许人工对账</span>}
+    {errorKind === "reconcile_required" && <span>外部结果未知，请人工对账后重新采集或处理新任务</span>}
     <output aria-live="polite">{message}</output>
   </div>;
 }

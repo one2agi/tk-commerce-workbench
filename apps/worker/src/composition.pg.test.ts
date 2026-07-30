@@ -1,5 +1,5 @@
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
-import { mkdtemp, rm, stat } from "node:fs/promises";
+import { mkdtemp, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createFakePorts } from "@tk/contracts/testing";
@@ -104,7 +104,11 @@ describe("real PostgreSQL worker composition", () => {
     }) };
     const makeRuntime = () => buildWorkerRuntime({
       ports: { miaoshou: ports.miaoshouSource, miaoshouEdit: ports.miaoshouEdit, llm: ports.llm, exchangeRate: ports.exchangeRate, canvas: ports.canvas, staging: ports.assetStaging },
-      repositories: { ...pipelineRepositories(pipeline), miaoshouEdit: {} as never },
+      repositories: {
+        ...pipelineRepositories(pipeline),
+        prepareMiaoshouWriteback: {} as never,
+        miaoshouEdit: {} as never
+      },
       reachability: { assertReachable: async () => undefined },
       cleanupCodec: { protect: () => "protected", unprotect: () => ({ remoteUrls: [], expiresAt: "2026-07-16T01:00:00Z" }) },
       store: localStore,
@@ -160,7 +164,7 @@ describe("real PostgreSQL worker composition", () => {
     expect(product.rows[0]?.state_automation).toBe("ready");
     const dag = await handle.pool.query("SELECT kind, status, batch_key FROM jobs WHERE kind <> 'miaoshou_collect' ORDER BY created_at ASC");
     expect(dag.rows.filter((row) => row.kind !== "staging_cleanup").map((row) => row.kind)).toEqual([
-      "asset_archive", "listing_generate", "pricing_calculate", "template_match", "image_select", "canvas_generate", "final_preview"
+      "asset_archive", "listing_generate", "template_match", "image_select", "canvas_generate", "final_preview"
     ]);
     expect(dag.rows.filter((row) => row.kind !== "staging_cleanup").every((row) => row.status === "succeeded" && row.batch_key === "batch-1")).toBe(true);
     expect(ports.canvas.calls.filter((call) => call.method === "submit")).toHaveLength(1);
@@ -168,7 +172,7 @@ describe("real PostgreSQL worker composition", () => {
       imageUrls: string[]; referenceImageUrls: string[]; promptContext: Record<string, string>; idempotencyKey: string;
     };
     expect(canvasSubmission).toMatchObject({
-      referenceImageUrls: [expect.stringContaining("template-reference")],
+      referenceImageUrls: [expect.stringContaining("reference.png")],
       promptContext: {
         sourceLocale: "zh-CN", targetLocale: "vi-VN",
         style: "premium\n--- template prompt ---\nsummer light"
@@ -278,6 +282,17 @@ describe("real PostgreSQL worker composition", () => {
       `INSERT INTO product_revisions (id, product_id, draft_version, source_payload, working_draft)
        VALUES ($1, $2, 1, '{}'::jsonb, '{}'::jsonb)`,
       [revisionId, productId]
+    );
+    const assetRoot = await mkdtemp(join(tmpdir(), "tk-edit-recovery-assets-"));
+    assetRoots.push(assetRoot);
+    const finalAssetPath = join(assetRoot, "asset-edit.png");
+    await writeFile(finalAssetPath, Buffer.from([0x89, 0x50, 0x4e, 0x47]));
+    await handle.pool.query(
+      `INSERT INTO assets
+       (id, product_id, revision_id, remote_url, kind, state, local_path, extension)
+       VALUES ('asset-edit', $1, $2, 'https://canvas.test/asset-edit.png',
+               'generated', 'ready', $3, 'png')`,
+      [productId, revisionId, finalAssetPath]
     );
     await handle.pool.query(
       `INSERT INTO approval_snapshots

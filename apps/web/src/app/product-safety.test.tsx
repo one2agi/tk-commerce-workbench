@@ -15,14 +15,13 @@ describe("product safety boundary", () => {
       revisionId="revision-safe"
       draftVersion={1}
       listingRunId="listing-safe"
-      pricingRunId="pricing-safe"
       templateVersion={1}
       orderedFinalAssetIds={["asset-safe"]}
       targetLocale="th-TH"
       translationStyle="marketplace"
     />);
     const labels = Array.from(html.matchAll(/<button[^>]*>(.*?)<\/button>/g), (match) => match[1]);
-    expect(labels).toEqual(expect.arrayContaining(["保存草稿设置", "开始局部重跑", "确认并推送妙手"]));
+    expect(labels).toEqual(expect.arrayContaining(["保存草稿设置", "开始局部重跑", "确认写回妙手"]));
     expect(labels.some((label) => /claim|publish|TikTok/i.test(label))).toBe(false);
   });
 
@@ -40,8 +39,10 @@ describe("product safety boundary", () => {
       "PATCH templates",
       "POST automation-runs",
       "POST ingest-links",
+      "POST local-captures",
       "POST products/[productId]/confirm-miaoshou-edit",
       "POST products/[productId]/rerun",
+      "POST products/batch-actions",
       "POST tasks/[taskId]/actions",
       "POST templates"
     ]);
@@ -64,15 +65,15 @@ describe("product safety boundary", () => {
   it("logically invalidates only downstream projections while preserving run history", () => {
     expect(buildRerunInvalidation("canvas")).toEqual({
       invalidatedNodes: ["canvas", "approval"],
-      preservedNodes: ["collection", "asset_archive", "listing", "pricing", "template"]
+      preservedNodes: ["collection", "asset_archive", "listing", "template"]
     });
-    expect(buildRerunInvalidation("pricing").preservedNodes).toContain("listing");
+    expect(buildRerunInvalidation("template").preservedNodes).toContain("listing");
 
     const source = readFileSync(new URL("./api/v1/products/[productId]/rerun/route.ts", import.meta.url), "utf8");
     expect(source).not.toMatch(/DELETE\s+FROM\s+(listing_drafts|pricing_runs|canvas_runs)/i);
     expect(source).toMatch(/INSERT INTO product_revisions/);
     expect(source).toMatch(/INSERT INTO listing_drafts/);
-    expect(source).toMatch(/INSERT INTO pricing_runs/);
+    expect(source).not.toMatch(/INSERT INTO pricing_runs/);
     expect(source).toMatch(/approvalInvalidation\.invalidateInTransaction/);
     expect(source).not.toMatch(/UPDATE approval_snapshots SET state = 'invalidated'/);
 

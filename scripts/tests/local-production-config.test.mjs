@@ -6,7 +6,8 @@ import test from "node:test";
 
 import {
   initializeLocalProduction,
-  parseMiaoshouCredentials
+  parseMiaoshouCredentials,
+  syncLiveProductionEnv
 } from "../local-production-config.mjs";
 
 test("parses labeled Miaoshou credentials across CRLF or whitespace", () => {
@@ -74,4 +75,51 @@ test("refuses to overwrite an existing env", async () => {
     () => initializeLocalProduction({ credentialFile, storageDir }),
     /already exists/
   );
+});
+
+test("sync-live copies only allowed runtime keys, preserves loopback safety, and writes explicit live ack", async () => {
+  const storageDir = await mkdtemp(join(tmpdir(), "tk-local-production-live-"));
+  const sourceEnvFile = join(storageDir, "source.env");
+  await writeFile(sourceEnvFile, [
+    "DATABASE_URL=postgresql://user:pass@127.0.0.1:5432/tk_workbench",
+    "TEST_DATABASE_URL=postgresql://user:pass@127.0.0.1:5432/tk_workbench_test",
+    "LOCAL_OPERATOR_ID=local-operator",
+    "EXTENSION_TOKEN=extension-secret",
+    "NO_PROXY=127.0.0.1,localhost",
+    "no_proxy=127.0.0.1,localhost",
+    "ALLOW_LAN=true",
+    "EXTERNAL_ADAPTER_MODE=mock",
+    "MIAOSHOU_APP_KEY=miaoshou-key",
+    "MIAOSHOU_APP_SECRET=miaoshou-secret",
+    "CANVAS_BASE_URL=http://127.0.0.1:8123",
+    "CANVAS_API_KEY=",
+    "CANVAS_ID=canvas-id",
+    "CANVAS_WORKFLOW_NAME=TK工作流",
+    "LLM_BASE_URL=https://api.siliconflow.cn/v1",
+    "LLM_API_KEY=llm-secret",
+    "LLM_MODEL=deepseek-ai/DeepSeek-V4-Flash",
+    "EXCHANGE_RATE_BASE_URL=https://rates.test/latest",
+    "ASSET_ROOT=/tmp/tk-assets",
+    "WORKER_CONCURRENCY=2",
+    "MAX_CANVAS_RUNS_PER_DAY=50",
+    "UNRELATED_SECRET=must-not-copy"
+  ].join("\n"));
+
+  const result = await syncLiveProductionEnv({ sourceEnvFile, storageDir });
+  const env = await readFile(join(storageDir, ".env"), "utf8");
+
+  assert.match(env, /^EXTERNAL_ADAPTER_MODE=live$/m);
+  assert.match(env, /^LOCAL_PRODUCTION_LIVE_ACK=full-live-local-mvp$/m);
+  assert.match(env, /^ALLOW_LAN=false$/m);
+  assert.match(env, /^NO_PROXY=127\.0\.0\.1,localhost$/m);
+  assert.match(env, /^no_proxy=127\.0\.0\.1,localhost$/m);
+  assert.match(env, /^CANVAS_BASE_URL=http:\/\/127\.0\.0\.1:8123$/m);
+  assert.match(env, /^CANVAS_ID=canvas-id$/m);
+  assert.match(env, /^CANVAS_WORKFLOW_NAME=TK工作流$/m);
+  assert.match(env, /^LLM_MODEL=deepseek-ai\/DeepSeek-V4-Flash$/m);
+  assert.equal(env.includes("UNRELATED_SECRET"), false);
+  assert.equal(JSON.stringify(result).includes("llm-secret"), false);
+  assert.equal(JSON.stringify(result).includes("miaoshou-secret"), false);
+  assert.equal(result.status.LLM_API_KEY, "set");
+  assert.equal(result.status.CANVAS_API_KEY, "empty");
 });

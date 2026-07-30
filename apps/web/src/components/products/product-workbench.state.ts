@@ -9,6 +9,7 @@ import {
   canStartAutomation,
   type StageKey
 } from "./product-workbench.selectors";
+import { buildProductRowView } from "./product-row-view";
 
 export type ProductPoolItem = ProductPoolItemV1;
 export type StartStatus = "idle" | "pending" | "success" | "failure";
@@ -25,6 +26,15 @@ export type WorkbenchState = Readonly<{
   // aria-label={state.batchButtonLabel}> without recomputing.
   batchButtonLabel: string;
   batchButtonEnabled: boolean;
+  batchStartLabel: string;
+  batchStartEnabled: boolean;
+  batchStartCount: number;
+  batchConfirmLabel: string;
+  batchConfirmEnabled: boolean;
+  batchConfirmCount: number;
+  batchRetryLabel: string;
+  batchRetryEnabled: boolean;
+  batchRetryCount: number;
   drawerStartButtonLabel: string;
   drawerStartButtonEnabled: boolean;
 }>;
@@ -53,12 +63,19 @@ function isStartable(item: ProductPoolItem, status: StartStatus): boolean {
   return canStartAutomation(item) && (status === "idle" || status === "failure");
 }
 
+function isSelectable(item: ProductPoolItem, status: StartStatus): boolean {
+  const view = buildProductRowView(item, status);
+  return view.canBatchStart || view.canBatchConfirm || view.canBatchRetry;
+}
+
 function derive(s: Internal): WorkbenchState {
   const filtered = applyStageFilter(s.items, s.activeStage);
-  const count = s.items.filter((item) =>
-    s.selectedIds.has(String(item.productId)) &&
-    isStartable(item, s.startStatusById.get(String(item.productId)) ?? "idle")
-  ).length;
+  const selectedViews = s.items
+    .filter((item) => s.selectedIds.has(String(item.productId)))
+    .map((item) => buildProductRowView(item, s.startStatusById.get(String(item.productId)) ?? "idle"));
+  const startCount = selectedViews.filter((view) => view.canBatchStart).length;
+  const confirmCount = selectedViews.filter((view) => view.canBatchConfirm).length;
+  const retryCount = selectedViews.filter((view) => view.canBatchRetry).length;
   const drawerItem = s.drawerProductId
     ? s.items.find((item) => String(item.productId) === s.drawerProductId)
     : undefined;
@@ -70,8 +87,17 @@ function derive(s: Internal): WorkbenchState {
     drawerProductId: s.drawerProductId,
     scrollTop: s.scrollTop,
     startStatusById: s.startStatusById,
-    batchButtonLabel: `批量开始处理（${count}）`,
-    batchButtonEnabled: count > 0,
+    batchButtonLabel: `批量开始处理（${startCount}）`,
+    batchButtonEnabled: startCount > 0,
+    batchStartLabel: `批量开始处理（${startCount}）`,
+    batchStartEnabled: startCount > 0,
+    batchStartCount: startCount,
+    batchConfirmLabel: `批量确认写回（${confirmCount}）`,
+    batchConfirmEnabled: confirmCount > 0,
+    batchConfirmCount: confirmCount,
+    batchRetryLabel: `批量重试（${retryCount}）`,
+    batchRetryEnabled: retryCount > 0,
+    batchRetryCount: retryCount,
     drawerStartButtonLabel: drawerItem && s.startStatusById.get(String(drawerItem.productId)) === "failure"
       ? "重试处理"
       : "开始处理",
@@ -87,7 +113,7 @@ export function toggleSelection(s: WorkbenchState, productId: string): Workbench
   if (next.has(productId)) {
     next.delete(productId);
   } else {
-    if (!item || !isStartable(item, s.startStatusById.get(productId) ?? "idle")) return s;
+    if (!item || !isSelectable(item, s.startStatusById.get(productId) ?? "idle")) return s;
     next.add(productId);
   }
   return derive({
@@ -194,9 +220,31 @@ export function markStartResult(
 }
 
 export function selectedStartableProductIds(s: WorkbenchState): string[] {
+  return selectedBatchStartIds(s);
+}
+
+export function selectedBatchStartIds(s: WorkbenchState): string[] {
   return s.items.flatMap((item) => {
     const id = String(item.productId);
-    return s.selectedIds.has(id) && isStartable(item, s.startStatusById.get(id) ?? "idle")
+    return s.selectedIds.has(id) && buildProductRowView(item, s.startStatusById.get(id) ?? "idle").canBatchStart
+      ? [id]
+      : [];
+  });
+}
+
+export function selectedBatchConfirmIds(s: WorkbenchState): string[] {
+  return s.items.flatMap((item) => {
+    const id = String(item.productId);
+    return s.selectedIds.has(id) && buildProductRowView(item, s.startStatusById.get(id) ?? "idle").canBatchConfirm
+      ? [id]
+      : [];
+  });
+}
+
+export function selectedBatchRetryIds(s: WorkbenchState): string[] {
+  return s.items.flatMap((item) => {
+    const id = String(item.productId);
+    return s.selectedIds.has(id) && buildProductRowView(item, s.startStatusById.get(id) ?? "idle").canBatchRetry
       ? [id]
       : [];
   });

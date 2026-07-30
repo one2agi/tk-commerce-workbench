@@ -16,10 +16,15 @@ export function OriginalListingPanel({ listing, skuCount }: {
           </div>)}
         </dl>
         <p className="tk-metric">{skuCount === null ? "SKU 数量未知" : `SKU ${skuCount} 个`}</p>
-        {(listing.mainImages.length > 0 || listing.detailImages.length > 0) && <div aria-label="1688 原图证据">
-          {[...listing.mainImages, ...listing.detailImages].map((url, index) =>
-            <img key={`${url}:${index}`} src={url} alt={`1688 原图 ${index + 1}`} width="160" height="160" loading="lazy" />)}
-        </div>}
+        {(listing.mainImages.length > 0 || listing.detailImages.length > 0) && (
+          <div aria-label="1688 原图证据" className="tk-source-image-links">
+            <strong>1688 原图 {[...listing.mainImages, ...listing.detailImages].length} 张</strong>
+            <div>
+              {[...listing.mainImages, ...listing.detailImages].slice(0, 9).map((url, index) =>
+                <a key={`${url}:${index}`} href={url} target="_blank" rel="noreferrer">原图 {index + 1}</a>)}
+            </div>
+          </div>
+        )}
       </> : <p>原始 Listing 尚未采集完成</p>}
     </section>
   );

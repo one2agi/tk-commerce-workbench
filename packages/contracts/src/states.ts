@@ -12,6 +12,7 @@ export type CollectionState =
 
 export type MiaoshouSourceState =
   | "not_started"
+  | "local_captured"
   | "submitted"
   | "pending"
   | "success"

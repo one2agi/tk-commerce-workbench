@@ -74,21 +74,23 @@ describe("task recovery safety projection", () => {
     async (errorKind) => {
       const { render, screen } = await testing();
       render(<TaskRecoveryActions taskId="job-1" status="needs_input" errorKind={errorKind} />);
-      expect(screen.queryByRole("button", { name: "安全重试" })).not.toBeInTheDocument();
+      expect(screen.queryByRole("button", { name: "继续处理" })).not.toBeInTheDocument();
     }
   );
 
   it("exposes safe retry only for a retryable failure in an allowed status", async () => {
     const { render, screen } = await testing();
     render(<TaskRecoveryActions taskId="job-1" status="failed" errorKind="retryable" />);
-    expect(screen.getByRole("button", { name: "安全重试" })).toBeEnabled();
+    expect(screen.getByRole("button", { name: "继续处理" })).toBeEnabled();
+    expect(screen.queryByRole("button", { name: "安全重试" })).not.toBeInTheDocument();
   });
 
   it("describes reconcile-required state without claiming a remote task ID exists", async () => {
     const { render, screen } = await testing();
     render(<TaskRecoveryActions taskId="job-1" status="needs_input" errorKind="reconcile_required" />);
-    expect(screen.getByText("外部结果未知，仅允许人工对账")).toBeInTheDocument();
+    expect(screen.getByText("外部结果未知，请人工对账后重新采集或处理新任务")).toBeInTheDocument();
     expect(screen.queryByText(/已存在远端任务/)).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "继续处理" })).not.toBeInTheDocument();
   });
 });
 
@@ -99,7 +101,7 @@ describe("task recovery request handling", () => {
     const user = userEvent.setup({ document: globalThis.document });
     render(<TaskRecoveryActions taskId="job-1" status="failed" errorKind="retryable" />);
 
-    const retry = screen.getByRole("button", { name: "安全重试" });
+    const retry = screen.getByRole("button", { name: "继续处理" });
     await user.click(retry);
 
     await waitFor(() => {
@@ -114,7 +116,7 @@ describe("task recovery request handling", () => {
     const user = userEvent.setup({ document: globalThis.document });
     render(<TaskRecoveryActions taskId="job-1" status="failed" errorKind="retryable" />);
 
-    await user.click(screen.getByRole("button", { name: "安全重试" }));
+    await user.click(screen.getByRole("button", { name: "继续处理" }));
 
     expect(await screen.findByRole("status")).toHaveTextContent("当前状态不允许此操作");
   });
@@ -126,7 +128,7 @@ describe("task recovery request handling", () => {
     vi.stubGlobal("fetch", fetcher);
     const user = userEvent.setup({ document: globalThis.document });
     render(<TaskRecoveryActions taskId="job-1" status="failed" errorKind="retryable" />);
-    const retry = screen.getByRole("button", { name: "安全重试" });
+    const retry = screen.getByRole("button", { name: "继续处理" });
 
     await user.dblClick(retry);
 
@@ -146,10 +148,10 @@ describe("task recovery request handling", () => {
     vi.stubGlobal("fetch", fetcher);
     const user = userEvent.setup({ document: globalThis.document });
     const view = render(<TaskRecoveryActions taskId="job-1" status="failed" errorKind="retryable" />);
-    await user.click(screen.getByRole("button", { name: "安全重试" }));
+    await user.click(screen.getByRole("button", { name: "继续处理" }));
 
     view.rerender(<TaskRecoveryActions taskId="job-2" status="failed" errorKind="retryable" />);
-    const currentRetry = screen.getByRole("button", { name: "安全重试" });
+    const currentRetry = screen.getByRole("button", { name: "继续处理" });
     await waitFor(() => expect(currentRetry).toBeEnabled());
     await user.click(currentRetry);
     second.resolve(new Response(null, { status: 202 }));

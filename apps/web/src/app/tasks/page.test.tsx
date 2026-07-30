@@ -63,4 +63,9 @@ describe("tasks page", () => {
     expect(html).toContain("集中查看");
     expect(html).toContain("远端结果的任务只做对账");
   });
+
+  it("renders a refresh action in the task-center heading", () => {
+    const html = renderToStaticMarkup(renderTasksPage({ items: [] }));
+    expect(html).toContain("刷新");
+  });
 });
