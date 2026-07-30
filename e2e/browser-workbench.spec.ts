@@ -25,9 +25,9 @@ test.beforeAll(async () => {
       (id, product_id, draft_version, source_title, source_payload, working_draft)
     VALUES
       ('revision_browser_a', 'product_browser_a', 1, '轻薄防晒男士夹克',
-       '{"mainImages":[{"url":"https://assets.example/source-a.jpg"}],"detailImages":[]}'::jsonb, '{}'),
+       '{"mainImages":[{"url":"https://cbu01.alicdn.com/img/ibank/source-a-1.jpg"},{"url":"https://cbu01.alicdn.com/img/ibank/source-a-2.jpg"}],"detailImages":[{"url":"https://cbu01.alicdn.com/img/ibank/source-a-2.jpg"},{"url":"https://cbu01.alicdn.com/img/ibank/source-a-3.jpg"}]}'::jsonb, '{}'),
       ('revision_browser_b', 'product_browser_b', 1, '运动短裤',
-       '{"mainImages":[{"url":"https://assets.example/source-b.jpg"}],"detailImages":[]}'::jsonb, '{}');
+       '{"mainImages":[{"url":"https://cbu01.alicdn.com/img/ibank/source-b.jpg"}],"detailImages":[]}'::jsonb, '{}');
     INSERT INTO listing_drafts
       (id, product_id, revision_id, draft_version, target_locale, style, title, description)
     VALUES
@@ -37,6 +37,11 @@ test.beforeAll(async () => {
     VALUES
       ('asset_browser_a', 'product_browser_a', 'revision_browser_a', 'https://assets.example/a.jpg', 'main', 'ready'),
       ('asset_browser_b', 'product_browser_b', 'revision_browser_b', 'https://assets.example/b.jpg', 'main', 'ready');
+    INSERT INTO canvas_runs
+      (id, product_id, revision_id, template_id, template_version, state, outputs)
+    VALUES
+      ('canvas_browser_a', 'product_browser_a', 'revision_browser_a', 'template_browser', 1, 'success',
+       '["https://canvas.example/product-a-1.jpg","https://canvas.example/product-a-2.jpg"]'::jsonb);
   `);
 });
 
@@ -114,4 +119,58 @@ test("真实桌面页面保留高密度工作台布局、筛选勾选与批量�
   await page.getByRole("button", { name: "批量开始处理（2）" }).click();
   await expect.poll(() => startedRevisionIds.length).toBe(2);
   expect(startedRevisionIds.sort()).toEqual(["revision_browser_a", "revision_browser_b"]);
+});
+
+test("商品列表直接按商品分开展示全部采集原图与洗图结果", async ({ page }) => {
+  const imageBody = Buffer.from(
+    "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=",
+    "base64"
+  );
+  await page.route("**/api/v1/source-images?**", (route) =>
+    route.fulfill({ status: 200, contentType: "image/png", body: imageBody })
+  );
+  await page.route("https://canvas.example/**", (route) =>
+    route.fulfill({ status: 200, contentType: "image/png", body: imageBody })
+  );
+
+  await page.goto("/products/");
+
+  const productGallery = page.getByRole("group", {
+    name: "商品 product_browser_a 图片"
+  });
+  const originalRegion = productGallery.getByRole("region", {
+    name: "商品 product_browser_a 原产品图"
+  });
+  const processedRegion = productGallery.getByRole("region", {
+    name: "商品 product_browser_a 洗图后的图"
+  });
+
+  await expect(originalRegion.getByRole("button", { name: /放大原产品图/ })).toHaveCount(3);
+  await expect(processedRegion.getByRole("button", { name: /放大洗图后的图/ })).toHaveCount(2);
+  await expect(page.getByRole("group", {
+    name: "商品 product_browser_b 图片"
+  }).getByRole("button", { name: /放大原产品图/ })).toHaveCount(1);
+
+  const sectionHeights = await productGallery
+    .locator(".tk-product-image-gallery__section")
+    .evaluateAll((sections) => sections.map((section) => section.getBoundingClientRect().height));
+  expect(sectionHeights).toHaveLength(2);
+  expect(Math.max(...sectionHeights)).toBeLessThanOrEqual(140);
+
+  const firstOriginal = originalRegion.getByRole("button", { name: "放大原产品图 1/3" });
+  await firstOriginal.click();
+  const dialog = page.getByRole("dialog", { name: "原产品图预览" });
+  await expect(dialog).toBeVisible();
+  await expect(dialog).toContainText("1 / 3");
+  await page.keyboard.press("ArrowRight");
+  await expect(dialog).toContainText("2 / 3");
+  await page.keyboard.press("Escape");
+  await expect(dialog).toBeHidden();
+  await expect(firstOriginal).toBeFocused();
+
+  const viewport = await page.evaluate(() => ({
+    width: window.innerWidth,
+    scrollWidth: document.documentElement.scrollWidth
+  }));
+  expect(viewport.scrollWidth).toBeLessThanOrEqual(viewport.width);
 });
