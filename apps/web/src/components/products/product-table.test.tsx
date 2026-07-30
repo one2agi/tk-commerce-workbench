@@ -1,7 +1,7 @@
 import "@testing-library/jest-dom/vitest";
 // @ts-expect-error The workspace provides the jsdom runtime without @types/jsdom.
 import { JSDOM } from "jsdom";
-import { cleanup, fireEvent, render } from "@testing-library/react";
+import { cleanup, fireEvent, render, within } from "@testing-library/react";
 import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 
 import {
@@ -45,6 +45,8 @@ function item(overrides: Partial<ProductPoolItemV1> = {}): ProductPoolItemV1 {
     sourceItemId: sourceItemId("s-1"),
     sourceUrl: "https://detail.1688.com/offer/892408514788.html",
     thumbnailUrl: "https://img.test/892408514788.jpg",
+    originalImageUrls: ["https://img.test/892408514788.jpg"],
+    processedImageUrls: [],
     collectedAt: "2026-07-22T10:00:00.000Z",
     updatedAt: "2026-07-22T10:10:00.000Z",
     canonicalSourceTitle: "测试商品",
@@ -139,6 +141,30 @@ describe("ProductTable row-level start action", () => {
 
     expect(screen.getByRole("img", { name: "商品缩略图" })).toHaveAttribute("src", originalImage);
     expect(screen.queryByText("图")).toBeNull();
+  });
+
+  it("shows original and processed galleries under the matching product row", () => {
+    const { screen } = renderTable({
+      item: item({
+        originalImageUrls: ["/source-1.jpg", "/source-2.jpg"],
+        processedImageUrls: ["/canvas-1.jpg"]
+      })
+    });
+
+    const productGallery = screen.getByRole("group", {
+      name: "商品 892408514788 图片"
+    });
+    expect(within(productGallery).getByRole("region", {
+      name: "商品 892408514788 原产品图"
+    })).toBeInTheDocument();
+    expect(within(productGallery).getByRole("region", {
+      name: "商品 892408514788 洗图后的图"
+    })).toBeInTheDocument();
+    expect(within(productGallery).getAllByRole("button", {
+      name: /放大原产品图/
+    })).toHaveLength(2);
+    expect(screen.getByRole("link", { name: /查看详情 892408514788/ })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /开始处理 892408514788/ })).toBeInTheDocument();
   });
 
   it("shows a row-level start button for a collected product before local assets are archived", async () => {

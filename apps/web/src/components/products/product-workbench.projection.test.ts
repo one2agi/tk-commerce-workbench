@@ -18,6 +18,8 @@ function item(
     sourceItemId: sourceItemId(`source-${id}`),
     sourceUrl: `https://detail.1688.com/offer/${id}.html`,
     thumbnailUrl: `https://img.test/${id}.jpg`,
+    originalImageUrls: [`https://img.test/${id}.jpg`],
+    processedImageUrls: [],
     collectedAt: "2026-07-22T10:00:00.000Z",
     updatedAt: "2026-07-22T10:10:00.000Z",
     canonicalSourceTitle: id,

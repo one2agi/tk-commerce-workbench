@@ -12,6 +12,8 @@ function item(overrides: Partial<ProductPoolItemV1> = {}): ProductPoolItemV1 {
     sourceItemId: sourceItemId("source-a"),
     sourceUrl: "https://detail.1688.com/offer/database-product-a.html",
     thumbnailUrl: "https://img.test/database-product-a.jpg",
+    originalImageUrls: ["https://img.test/database-product-a.jpg"],
+    processedImageUrls: [],
     collectedAt: "2026-07-22T10:00:00.000Z",
     updatedAt: "2026-07-22T10:10:00.000Z",
     canonicalSourceTitle: "数据库源标题 A",

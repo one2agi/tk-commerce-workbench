@@ -298,6 +298,314 @@ button:disabled {
   font-weight: 700;
 }
 
+.tk-product-table__gallery-row > td:first-child {
+  width: auto;
+  padding: 0;
+  text-align: left;
+  background: #fff;
+}
+
+.tk-product-table__gallery-row:hover {
+  background: #fff;
+}
+
+.tk-product-image-gallery {
+  display: grid;
+}
+
+.tk-product-image-gallery__section {
+  display: grid;
+  grid-template-columns: 168px minmax(0, 1fr) 44px;
+  align-items: center;
+  gap: 14px;
+  min-height: 122px;
+  padding: 14px 16px;
+}
+
+.tk-product-image-gallery__section + .tk-product-image-gallery__section {
+  border-top: 1px solid #edf0f4;
+  background: #fbfaff;
+}
+
+.tk-product-image-gallery__label {
+  align-self: stretch;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  padding-right: 14px;
+  border-right: 1px solid #edf0f4;
+}
+
+.tk-product-image-gallery__label > div {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 6px;
+}
+
+.tk-product-image-gallery__label h2 {
+  margin: 0;
+  font-size: 15px;
+}
+
+.tk-product-image-gallery__label span {
+  display: inline-grid;
+  place-items: center;
+  min-width: 23px;
+  height: 23px;
+  padding: 0 7px;
+  border-radius: 999px;
+  color: #1769e0;
+  background: #eaf2ff;
+  font-size: 12px;
+  font-weight: 750;
+}
+
+.tk-product-image-gallery__section.is-processed .tk-product-image-gallery__label span {
+  color: #7857d8;
+  background: #f1edff;
+}
+
+.tk-product-image-gallery__label p {
+  margin: 0;
+  color: #697586;
+  font-size: 12px;
+  line-height: 1.55;
+}
+
+.tk-product-image-gallery__scroller {
+  min-width: 0;
+  overflow-x: auto;
+  overscroll-behavior-inline: contain;
+  scrollbar-color: #b9c4d2 transparent;
+  scrollbar-width: thin;
+}
+
+.tk-product-image-gallery__strip {
+  display: flex;
+  gap: 10px;
+  width: max-content;
+  min-width: 100%;
+  padding: 4px 2px 8px;
+}
+
+.tk-product-image-gallery__tile {
+  position: relative;
+  width: 86px;
+  height: 86px;
+  flex: 0 0 86px;
+  padding: 0;
+  overflow: hidden;
+  border: 1px solid #d8e0e9;
+  border-radius: 10px;
+  background: #edf1f5;
+}
+
+.tk-product-image-gallery__tile:hover,
+.tk-product-image-gallery__tile:focus-visible {
+  border-color: #1769e0;
+  outline: 3px solid rgb(23 105 224 / 14%);
+}
+
+.tk-product-image-gallery__section.is-processed .tk-product-image-gallery__tile:hover,
+.tk-product-image-gallery__section.is-processed .tk-product-image-gallery__tile:focus-visible {
+  border-color: #7857d8;
+  outline-color: rgb(120 87 216 / 16%);
+}
+
+.tk-product-image-gallery__tile img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.tk-product-image-gallery__tile > span {
+  display: grid;
+  place-items: center;
+  width: 100%;
+  height: 100%;
+  padding: 8px;
+  color: #c93434;
+  background: #fff0f0;
+  font-size: 11px;
+  text-align: center;
+}
+
+.tk-product-image-gallery__tile small {
+  position: absolute;
+  right: 5px;
+  bottom: 5px;
+  display: grid;
+  place-items: center;
+  min-width: 21px;
+  height: 21px;
+  padding: 0 5px;
+  border-radius: 6px;
+  color: #fff;
+  background: rgb(15 25 38 / 72%);
+  font-size: 11px;
+  font-weight: 750;
+}
+
+.tk-product-image-gallery__controls {
+  display: grid;
+  gap: 7px;
+}
+
+.tk-product-image-gallery__controls button {
+  width: 34px;
+  height: 34px;
+  border: 1px solid #cfd8e3;
+  border-radius: 8px;
+  color: #42526a;
+  background: #fff;
+}
+
+.tk-product-image-gallery__empty {
+  min-height: 84px;
+  display: flex;
+  align-items: center;
+  padding: 0 16px;
+  border: 1px dashed #d7d0ee;
+  border-radius: 10px;
+  color: #675b83;
+  background: #faf8ff;
+  font-size: 13px;
+}
+
+.tk-image-preview__backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 1000;
+  display: grid;
+  place-items: center;
+  padding: 32px;
+  background: rgb(6 13 23 / 72%);
+  backdrop-filter: blur(3px);
+}
+
+.tk-image-preview {
+  width: min(1040px, calc(100vw - 64px));
+  height: min(820px, calc(100vh - 64px));
+  display: grid;
+  grid-template-rows: 66px minmax(0, 1fr) 116px;
+  overflow: hidden;
+  border-radius: 16px;
+  color: #fff;
+  background: #0e1724;
+  box-shadow: 0 30px 90px rgb(3 9 18 / 48%);
+}
+
+.tk-image-preview__header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 20px;
+  padding: 0 20px;
+  border-bottom: 1px solid rgb(255 255 255 / 11%);
+  background: #121d2c;
+}
+
+.tk-image-preview__header > div {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.tk-image-preview__kind {
+  padding: 5px 9px;
+  border-radius: 999px;
+  color: #cfe0ff;
+  background: rgb(57 123 230 / 23%);
+  font-size: 12px;
+  font-weight: 750;
+}
+
+.tk-image-preview__header button {
+  width: 38px;
+  height: 38px;
+  border: 1px solid rgb(255 255 255 / 18%);
+  border-radius: 9px;
+  color: #fff;
+  background: rgb(255 255 255 / 6%);
+  font-size: 24px;
+}
+
+.tk-image-preview__stage {
+  position: relative;
+  min-height: 0;
+  display: grid;
+  place-items: center;
+  padding: 24px 76px;
+  background:
+    radial-gradient(circle at center, rgb(48 66 88 / 46%), transparent 58%),
+    #09111c;
+}
+
+.tk-image-preview__stage > img {
+  max-width: 100%;
+  max-height: 100%;
+  border-radius: 8px;
+  object-fit: contain;
+  box-shadow: 0 16px 45px rgb(0 0 0 / 38%);
+}
+
+.tk-image-preview__previous,
+.tk-image-preview__next {
+  position: absolute;
+  top: 50%;
+  width: 46px;
+  height: 60px;
+  border: 1px solid rgb(255 255 255 / 18%);
+  border-radius: 10px;
+  color: #fff;
+  background: rgb(15 29 46 / 72%);
+  font-size: 30px;
+  transform: translateY(-50%);
+}
+
+.tk-image-preview__previous {
+  left: 18px;
+}
+
+.tk-image-preview__next {
+  right: 18px;
+}
+
+.tk-image-preview__filmstrip {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  padding: 14px 18px;
+  overflow-x: auto;
+  border-top: 1px solid rgb(255 255 255 / 10%);
+  background: #121d2c;
+}
+
+.tk-image-preview__filmstrip button {
+  width: 76px;
+  height: 76px;
+  flex: 0 0 76px;
+  padding: 2px;
+  overflow: hidden;
+  border: 2px solid transparent;
+  border-radius: 9px;
+  background: rgb(255 255 255 / 7%);
+}
+
+.tk-image-preview__filmstrip button.is-active {
+  border-color: #5c9dff;
+}
+
+.tk-image-preview__filmstrip img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  border-radius: 5px;
+  object-fit: cover;
+}
+
 .tk-start-status {
   display: block;
   margin-top: 4px;
