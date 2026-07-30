@@ -25,6 +25,10 @@ export type ProductPoolItemV1 = Readonly<{
   sourceItemId: SourceItemId | null;
   sourceUrl: string;
   thumbnailUrl: string | null;
+  /** Collected source images, main images first and detail images second. */
+  originalImageUrls: string[];
+  /** Valid outputs from the latest Canvas run; never includes source images. */
+  processedImageUrls: string[];
   collectedAt: string;
   updatedAt: string;
   canonicalSourceTitle: string | null;

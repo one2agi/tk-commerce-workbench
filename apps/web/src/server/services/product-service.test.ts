@@ -17,10 +17,27 @@ function poolRow(overrides: Record<string, unknown> = {}): Record<string, unknow
     currency: "THB",
     price_minor: null,
     thumbnail_url: "https://img.test/1.jpg",
+    source_main_images: [
+      { url: "https://cbu01.alicdn.com/main-1.jpg" },
+      "https://cbu01.alicdn.com/main-2.jpg"
+    ],
+    source_detail_images: [
+      { url: "https://cbu01.alicdn.com/main-1.jpg" },
+      { url: "https://img.alicdn.com/detail-1.jpg" },
+      { url: "https://example.com/rejected.jpg" }
+    ],
+    archived_source_images: [{
+      remoteUrl: "https://cbu01.alicdn.com/main-1.jpg",
+      localUrl: "/api/v1/assets/asset-main-1/content"
+    }],
     source_image_count: 5,
     source_capture_quality: null,
     image_count: 0,
-    canvas_outputs: [],
+    canvas_outputs: [
+      "asset_canvas_1",
+      "https://canvas.example/output-2.png",
+      "invalid-output"
+    ],
     state_source: "success",
     state_automation: "not_started",
     state_asset_archive: "pending",
@@ -40,6 +57,30 @@ function poolRow(overrides: Record<string, unknown> = {}): Record<string, unknow
 }
 
 describe("ProductService.list runtime projection", () => {
+  it("projects ordered original images separately from processed images", async () => {
+    const query = vi.fn().mockResolvedValue({ rows: [poolRow()] });
+
+    const result = await new ProductService({ query }).list();
+
+    expect(result.items[0]).toMatchObject({
+      thumbnailUrl: "/api/v1/assets/asset-main-1/content",
+      originalImageUrls: [
+        "/api/v1/assets/asset-main-1/content",
+        "/api/v1/source-images?url=https%3A%2F%2Fcbu01.alicdn.com%2Fmain-2.jpg",
+        "/api/v1/source-images?url=https%3A%2F%2Fimg.alicdn.com%2Fdetail-1.jpg"
+      ],
+      processedImageUrls: [
+        "/api/v1/assets/asset_canvas_1/content",
+        "https://canvas.example/output-2.png"
+      ]
+    });
+
+    const sql = query.mock.calls[0]?.[0] as string;
+    expect(sql).toContain("archived_source_images");
+    expect(sql).toContain("source_main_images");
+    expect(sql).toContain("source_detail_images");
+  });
+
   it("restores processing state from a queued automation run after browser refresh", async () => {
     const query = vi.fn().mockResolvedValue({
       rows: [poolRow({ latest_automation_run_state: "queued" })]
@@ -81,6 +122,10 @@ describe("ProductService.list runtime projection", () => {
     const query = vi.fn().mockResolvedValue({
       rows: [poolRow({
         thumbnail_url: "/api/v1/assets/asset-main/content",
+        archived_source_images: [{
+          remoteUrl: "https://cbu01.alicdn.com/main-1.jpg",
+          localUrl: "/api/v1/assets/asset-main/content"
+        }],
         image_count: 5,
         state_asset_archive: "ready"
       })]

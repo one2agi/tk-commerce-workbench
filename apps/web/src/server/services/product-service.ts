@@ -14,6 +14,7 @@ import type {
   ProductWorkspaceV1
 } from "@tk/contracts/read-models";
 import type { ReviewWorkspaceView } from "../../components/review/review-workspace-view";
+import { sourceImageProxyPath } from "../source-image-url";
 
 export interface QueryPort {
   query(text: string, values?: readonly unknown[]): Promise<{ rows: Array<Record<string, unknown>> }>;
@@ -33,6 +34,9 @@ SELECT p.id AS product_id,
        p.currency,
        pricing.final_price_minor AS price_minor,
        revision.source_payload #>> '{sourcePriceWire,amountMinor}' AS source_price_minor,
+       revision.source_payload->'mainImages' AS source_main_images,
+       revision.source_payload->'detailImages' AS source_detail_images,
+       COALESCE(archived_source_images.items, '[]'::jsonb) AS archived_source_images,
 	       COALESCE(
 	         final_thumbnail.preview_url,
 	         archived_thumbnail.preview_url,
@@ -151,8 +155,24 @@ LEFT JOIN LATERAL (
 	    AND candidate.local_path IS NOT NULL
 	  ORDER BY CASE WHEN candidate.kind = 'main' THEN 0 ELSE 1 END, candidate.created_at ASC, candidate.id
 	  LIMIT 1
-	) archived_thumbnail ON true
+		) archived_thumbnail ON true
 	LEFT JOIN LATERAL (
+	  SELECT COALESCE(
+	    jsonb_agg(
+	      jsonb_build_object(
+	        'remoteUrl', candidate.remote_url,
+	        'localUrl', '/api/v1/assets/' || candidate.id || '/content'
+	      )
+	      ORDER BY candidate.created_at ASC, candidate.id
+	    ),
+	    '[]'::jsonb
+	  ) AS items
+	  FROM assets candidate
+	  WHERE candidate.revision_id = revision.id
+	    AND candidate.state = 'ready'
+	    AND candidate.local_path IS NOT NULL
+	) archived_source_images ON true
+		LEFT JOIN LATERAL (
 	  SELECT count(*)::integer AS image_count FROM assets candidate
 	  WHERE candidate.revision_id = revision.id
 ) asset_totals ON true
@@ -200,6 +220,44 @@ function imageUrls(value: unknown): string[] {
     try {
       const url = new URL(raw);
       return url.protocol === "http:" || url.protocol === "https:" ? [raw] : [];
+    } catch {
+      return [];
+    }
+  });
+}
+
+function archivedSourceImageMap(value: unknown): ReadonlyMap<string, string> {
+  if (!Array.isArray(value)) return new Map();
+  const entries = value.flatMap((item): Array<[string, string]> => {
+    if (!item || typeof item !== "object") return [];
+    const row = item as Record<string, unknown>;
+    return typeof row.remoteUrl === "string" && typeof row.localUrl === "string"
+      ? [[row.remoteUrl, row.localUrl]]
+      : [];
+  });
+  return new Map(entries);
+}
+
+function originalImageUrls(row: Record<string, unknown>): string[] {
+  const archived = archivedSourceImageMap(row.archived_source_images);
+  const ordered = [
+    ...imageUrls(row.source_main_images),
+    ...imageUrls(row.source_detail_images)
+  ];
+  return [...new Set(ordered)].flatMap((url) => {
+    const visible = archived.get(url) ?? sourceImageProxyPath(url);
+    return visible ? [visible] : [];
+  });
+}
+
+function processedImageUrls(value: unknown): string[] {
+  return strings(value).flatMap((raw) => {
+    if (/^asset_[A-Za-z0-9_-]+$/.test(raw)) {
+      return [`/api/v1/assets/${encodeURIComponent(raw)}/content`];
+    }
+    try {
+      const url = new URL(raw);
+      return url.protocol === "http:" || url.protocol === "https:" ? [url.href] : [];
     } catch {
       return [];
     }
@@ -295,6 +353,8 @@ function dimensionEvidence(value: unknown): ReviewWorkspaceView["reviewFacts"]["
 function toPoolItem(row: Record<string, unknown>): ProductPoolItemV1 {
   const currency = requiredString(row, "currency") as MoneyCurrency;
   const priceMinor = optionalString(row, "price_minor");
+  const originalImages = originalImageUrls(row);
+  const processedImages = processedImageUrls(row.canvas_outputs);
   const blockingCode = jsonErrorCode(row.latest_blocking_job_error);
   const warningCodes = strings(row.warning_codes);
   const combinedWarningCodes = blockingCode && !warningCodes.includes(blockingCode)
@@ -307,7 +367,9 @@ function toPoolItem(row: Record<string, unknown>): ProductPoolItemV1 {
       ? sourceItemId(optionalString(row, "source_item_id")!)
       : null,
     sourceUrl: requiredString(row, "source_url"),
-    thumbnailUrl: optionalString(row, "thumbnail_url"),
+    thumbnailUrl: originalImages[0] ?? optionalString(row, "thumbnail_url"),
+    originalImageUrls: originalImages,
+    processedImageUrls: processedImages,
     collectedAt: requiredIsoTimestamp(row, "collected_at"),
     updatedAt: requiredIsoTimestamp(row, "updated_at"),
     canonicalSourceTitle: optionalString(row, "canonical_source_title"),
