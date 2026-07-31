@@ -497,4 +497,149 @@ describe("durable worker recovery", () => {
     await run;
     expect(maximumActive).toBe(2);
   });
+
+  // ----- image_generate_slot restart recovery tests -----
+
+  it("image_generate_slot: restart after intent-without-result stays needs_input without resubmitting", async () => {
+    const jobs = new DurableMemoryJobs();
+    await jobs.enqueue({
+      kind: "image_generate_slot",
+      businessKey: "slot:batch:1",
+      payload: {
+        version: 1,
+        batchId: "batch_1",
+        slotId: "slot_1",
+        slotNumber: 1,
+        reconciliationIntent: { version: 1, operation: "image_generate_slot", idempotencyKey: "slot:batch:1" }
+      }
+    });
+    let submitCalls = 0;
+    await runWorkerLoop({
+      jobs,
+      handlers: {
+        image_generate_slot: async () => {
+          submitCalls++;
+          throw new ExternalResultUnknownError("remote-img-1", "submitted but result unknown");
+        }
+      },
+      clock,
+      workerId: "old-worker",
+      leaseMs: 30_000,
+      maxJobs: 1
+    });
+    expect(submitCalls).toBe(1);
+
+    // New worker after restart: must not call submit again
+    await runWorkerLoop({
+      jobs,
+      handlers: {
+        image_generate_slot: async () => {
+          throw new ExternalResultUnknownError("remote-img-1", "still unknown");
+        }
+      },
+      clock,
+      workerId: "new-worker",
+      leaseMs: 30_000,
+      maxJobs: 1
+    });
+    expect(submitCalls).toBe(1); // no new submit
+    expect(jobs.rows[0]).toMatchObject({
+      status: "needs_input",
+      error: { kind: "reconcile_required", code: "reconcile_failed" }
+    });
+  });
+
+  it("image_generate_slot: restart after remote-task persistence recovers by polling without submitting again", async () => {
+    const jobs = new DurableMemoryJobs();
+    await jobs.enqueue({
+      kind: "image_generate_slot",
+      businessKey: "slot:batch:2",
+      payload: { version: 1, batchId: "batch_1", slotId: "slot_2", slotNumber: 2 }
+    });
+    let submitCalls = 0;
+    const firstHandlers = {
+      image_generate_slot: async () => {
+        submitCalls++;
+        throw new ExternalResultUnknownError("remote-img-2", "accepted but process stopped");
+      }
+    };
+    await runWorkerLoop({ jobs, handlers: firstHandlers, clock, workerId: "old", leaseMs: 30_000, maxJobs: 1 });
+    expect(submitCalls).toBe(1);
+
+    // After restart, remote task is persisted — recovery by polling
+    await runWorkerLoop({
+      jobs,
+      handlers: {
+        image_generate_slot: async (job) => {
+          expect(job.remoteTaskId).toBe("remote-img-2");
+          return { next: [] };
+        }
+      },
+      clock,
+      workerId: "new",
+      leaseMs: 30_000,
+      maxJobs: 1
+    });
+    expect(submitCalls).toBe(1); // no resubmit
+    expect(jobs.rows[0]?.status).toBe("succeeded");
+  });
+
+  it("image_generate_slot: during polling, process stop results in retryable and re-queues", async () => {
+    const jobs = new DurableMemoryJobs();
+    // Directly push a row with remoteTaskId set to simulate restart during polling
+    const jobId = "job-slot-3";
+    jobs.rows.push({
+      kind: "image_generate_slot",
+      businessKey: "slot:batch:3",
+      payload: { version: 1, batchId: "batch_1", slotId: "slot_3", slotNumber: 3 },
+      jobId,
+      status: "queued",
+      owner: null,
+      leaseToken: null,
+      leaseExpiresAt: null,
+      remoteTaskId: "remote-img-3",
+      error: null,
+      nextAttemptAt: null,
+      maxAttempts: 3,
+      batchKey: "batch_1",
+      delayMs: undefined
+    });
+
+    await runWorkerLoop({
+      jobs,
+      handlers: {
+        image_generate_slot: async (job) => {
+          expect(job.remoteTaskId).toBe("remote-img-3");
+          throw new RetryableJobError("image_pending", "Still pending", 30_000);
+        }
+      },
+      clock,
+      workerId: "worker",
+      leaseMs: 30_000,
+      maxJobs: 1
+    });
+    expect(jobs.rows[0]?.status).toBe("queued");
+    expect(jobs.rows[0]?.error).toMatchObject({ kind: "retryable", code: "image_pending" });
+  });
+
+  it("image_generate_slot: submit count remains one across restart", async () => {
+    const jobs = new DurableMemoryJobs();
+    await jobs.enqueue({
+      kind: "image_generate_slot",
+      businessKey: "slot:batch:4",
+      payload: { version: 1, batchId: "batch_1", slotId: "slot_4", slotNumber: 4 }
+    });
+    const submitCalls: string[] = [];
+    const firstHandlers = {
+      image_generate_slot: async () => {
+        submitCalls.push("first");
+        return { next: [] };
+      }
+    };
+    await runWorkerLoop({ jobs, handlers: firstHandlers, clock, workerId: "worker", leaseMs: 30_000, maxJobs: 1 });
+    expect(submitCalls).toEqual(["first"]);
+    // Second run: job succeeded so won't be re-claimed
+    await runWorkerLoop({ jobs, handlers: firstHandlers, clock, workerId: "worker", leaseMs: 30_000, maxJobs: 1 });
+    expect(submitCalls).toEqual(["first"]);
+  });
 });
