@@ -8,5 +8,6 @@ export * from "./llm/openai-compatible-adapter.js";
 export * from "./exchange-rate/exchange-rate-adapter.js";
 export * from "./staging/asset-staging-adapter.js";
 export * from "./security/safe-image-download.js";
+export * from "./image-generation/openai-image-planner.js";
 export * from "./factory.js";
 export * from "./testing/fakes.js";
