@@ -194,3 +194,22 @@ export type MiaoshouSyncStatusV1 = Readonly<{
   lastReconciledAt: string | null;
   error: ExternalFailure | null;
 }>;
+
+export type ImageGenerationTemplateViewV1 = Readonly<{
+  templateId: TemplateId;
+  name: string;
+  categoryKey: string;
+  parentCategoryKey: string | null;
+  version: number;
+  lifecycleState: "draft" | "active" | "archived";
+  recipe: Readonly<{
+    inputCounts: { default: number; min: number; max: number };
+    outputCounts: { default: number; min: number; max: number };
+    mustPreserve: string[];
+    visualDirection: string;
+    forbidden: string[];
+    roles: Array<{ key: string; instruction: string }>;
+  }>;
+  activatedAt: string | null;
+  createdAt: string;
+}>;
