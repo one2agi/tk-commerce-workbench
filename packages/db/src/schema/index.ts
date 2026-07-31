@@ -28,6 +28,10 @@ export interface SchemaTables {
   readonly auditEvents: "audit_events";
   readonly templates: "templates";
   readonly workspaceSettings: "workspace_settings";
+  readonly imageGenerationTemplates: "image_generation_templates";
+  readonly imageGenerationTemplateVersions: "image_generation_template_versions";
+  readonly imageGenerationBatches: "image_generation_batches";
+  readonly imageGenerationSlots: "image_generation_slots";
 }
 
 export const schema: SchemaTables = Object.freeze({
@@ -52,7 +56,11 @@ export const schema: SchemaTables = Object.freeze({
   workerInstances: "worker_instances",
   auditEvents: "audit_events",
   templates: "templates",
-  workspaceSettings: "workspace_settings"
+  workspaceSettings: "workspace_settings",
+  imageGenerationTemplates: "image_generation_templates",
+  imageGenerationTemplateVersions: "image_generation_template_versions",
+  imageGenerationBatches: "image_generation_batches",
+  imageGenerationSlots: "image_generation_slots"
 });
 
 // Brand-shaped row types are kept structural (interfaces). Repositories don't need
@@ -180,3 +188,64 @@ export interface ApprovalSnapshotRow {
 
 // A single, frozen pool type signature that consumers can grab to type their own helpers.
 export type DbPool = Pool;
+
+export interface ImageGenerationTemplateRow {
+  id: string;
+  name: string;
+  categoryKey: string;
+  parentCategoryKey: string | null;
+  activeVersionId: string | null;
+  enabled: boolean;
+  archivedAt: Date | null;
+  createdAt: Date;
+  updatedAt: Date;
+}
+
+export interface ImageGenerationTemplateVersionRow {
+  id: string;
+  templateId: string;
+  version: number;
+  lifecycleState: "draft" | "active" | "archived";
+  recipe: Record<string, unknown>;
+  activatedAt: Date | null;
+  createdAt: Date;
+}
+
+export interface ImageGenerationBatchRow {
+  id: string;
+  productId: string;
+  revisionId: string;
+  idempotencyKey: string;
+  selectedAssetIds: string[];
+  requestedOutputCount: number;
+  categoryKey: string;
+  templateId: string;
+  templateVersionId: string;
+  templateVersion: number;
+  recipeSnapshot: Record<string, unknown>;
+  productFactsSnapshot: Record<string, unknown>;
+  productFactsDigest: string;
+  state: string;
+  acceptedAssetIds: string[];
+  createdAt: Date;
+  updatedAt: Date;
+}
+
+export interface ImageGenerationSlotRow {
+  id: string;
+  batchId: string;
+  slotNumber: number;
+  role: string;
+  prompt: Record<string, unknown> | null;
+  promptHash: string | null;
+  businessKey: string | null;
+  state: string;
+  attempt: number;
+  remoteTaskId: string | null;
+  remoteOutputUrl: string | null;
+  archivedAssetId: string | null;
+  error: unknown;
+  excludedAt: Date | null;
+  createdAt: Date;
+  updatedAt: Date;
+}
