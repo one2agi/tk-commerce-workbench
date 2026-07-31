@@ -8,3 +8,4 @@ export * from "./read-models.js";
 export * from "./jobs.js";
 export * from "./ports.js";
 export * from "./source-url.js";
+export * from "./image-generation.js";

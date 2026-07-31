@@ -18,7 +18,9 @@ export type JobKind =
   | "canvas_generate"
   | "final_preview"
   | "staging_cleanup"
-  | "miaoshou_edit";
+  | "miaoshou_edit"
+  | "image_prompt_plan"
+  | "image_generate_slot";
 
 export const JOB_KIND_VERSION: Readonly<Record<JobKind, number>> = Object.freeze({
   miaoshou_collect: 1,
@@ -32,7 +34,9 @@ export const JOB_KIND_VERSION: Readonly<Record<JobKind, number>> = Object.freeze
   canvas_generate: 1,
   final_preview: 1,
   staging_cleanup: 1,
-  miaoshou_edit: 1
+  miaoshou_edit: 1,
+  image_prompt_plan: 1,
+  image_generate_slot: 1
 });
 
 export type MiaoshouCollectPayloadV1 = Readonly<{
@@ -95,6 +99,17 @@ export type MiaoshouEditPayloadV1 = Readonly<{
   canonicalSuccessDetailId: string;
 }>;
 
+export type ImagePromptPlanPayloadV1 = Readonly<{
+  version: 1;
+  batchId: string;
+}>;
+
+export type ImageGenerateSlotPayloadV1 = Readonly<{
+  version: 1;
+  batchId: string;
+  slotId: string;
+}>;
+
 export type MiaoshouCollectJob = { kind: "miaoshou_collect"; payload: MiaoshouCollectPayloadV1 };
 export type MiaoshouPrepareWritebackJob = {
   kind: "miaoshou_prepare_writeback";
@@ -110,6 +125,8 @@ export type CanvasGenerateJob = { kind: "canvas_generate"; payload: CanvasGenera
 export type FinalPreviewJob = { kind: "final_preview"; payload: FinalPreviewPayloadV1 };
 export type StagingCleanupJob = { kind: "staging_cleanup"; payload: StagingCleanupPayloadV1 };
 export type MiaoshouEditJob = { kind: "miaoshou_edit"; payload: MiaoshouEditPayloadV1 };
+export type ImagePromptPlanJob = { kind: "image_prompt_plan"; payload: ImagePromptPlanPayloadV1 };
+export type ImageGenerateSlotJob = { kind: "image_generate_slot"; payload: ImageGenerateSlotPayloadV1 };
 
 export type JobSnapshot = Readonly<{
   jobId: string;

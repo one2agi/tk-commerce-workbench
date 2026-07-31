@@ -149,6 +149,18 @@ export interface ExchangeRatePort {
   }): Promise<ExchangeRateSnapshotWire>;
 }
 
+// ----- Image prompt planning -----
+
+export type { ImagePromptPlannerPort } from "./image-generation.js";
+
+export type { PlannedImagePromptV1 } from "./image-generation.js";
+
+// ----- Image generation -----
+
+export type { ImageGenerationPort } from "./image-generation.js";
+
+export type { ImageGenerationRecipeV1 } from "./image-generation.js";
+
 // ----- Asset staging -----
 
 export type StagedAsset = Readonly<{
