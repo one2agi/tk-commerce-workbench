@@ -286,7 +286,7 @@ export class JobRepository {
       }
       await client.query(
         `UPDATE ${schema.miaoshouSyncs} sync
-         SET state = 'result_unknown', error = $2::jsonb, updated_at = now()
+         SET state = 'result_unknown', error = COALESCE(sync.error, $2::jsonb), updated_at = now()
          WHERE sync.approval_snapshot_id = (
            SELECT payload->>'approvalSnapshotId' FROM ${schema.jobs} WHERE id = $1
          )

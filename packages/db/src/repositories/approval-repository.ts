@@ -65,6 +65,13 @@ export class ApprovalSyncInProgressError extends Error {
   }
 }
 
+export class MiaoshouRetryConflictError extends Error {
+  constructor(readonly code: "retry_not_allowed" | "revision_changed" | "writeback_in_progress") {
+    super(code);
+    this.name = "MiaoshouRetryConflictError";
+  }
+}
+
 /** Kept as a compatibility export for callers compiled against Wave 1. */
 export class ApprovalNotReadyError extends Error {
   readonly code = "approval_mapping_not_ready";
@@ -615,6 +622,203 @@ export class ApprovalRepository {
     }
   }
 
+  async retryMiaoshouEditAfterNoChange(productId: string): Promise<{
+    approvalSnapshotId: string;
+    syncId: string;
+    jobId: string;
+  }> {
+    const client = await this.pool.connect();
+    try {
+      await client.query("BEGIN");
+      const productResult = await client.query<{
+        id: string;
+        current_revision_id: string;
+        current_draft_version: number;
+      }>(
+        `SELECT product.id,
+                revision.id AS current_revision_id,
+                revision.draft_version AS current_draft_version
+         FROM ${schema.products} product
+         JOIN LATERAL (
+           SELECT candidate.id, candidate.draft_version
+           FROM ${schema.productRevisions} candidate
+           WHERE candidate.product_id = product.id
+           ORDER BY candidate.draft_version DESC, candidate.created_at DESC
+           LIMIT 1
+         ) revision ON true
+         WHERE product.id = $1
+         FOR UPDATE OF product`,
+        [productId]
+      );
+      const product = productResult.rows[0];
+      if (!product) throw new MiaoshouRetryConflictError("retry_not_allowed");
+
+      const approvalResult = await client.query<{
+        id: string;
+        revision_id: string;
+        draft_version: number;
+        canonical_success_detail_id: string | null;
+      }>(
+        `SELECT id, revision_id, draft_version, canonical_success_detail_id
+         FROM ${schema.approvalSnapshots}
+         WHERE product_id = $1 AND state = 'approved'
+         ORDER BY created_at DESC, id DESC
+         LIMIT 1
+         FOR UPDATE`,
+        [productId]
+      );
+      const approval = approvalResult.rows[0];
+      if (!approval?.canonical_success_detail_id) {
+        throw new MiaoshouRetryConflictError("retry_not_allowed");
+      }
+      if (
+        approval.revision_id !== product.current_revision_id ||
+        approval.draft_version !== Number(product.current_draft_version)
+      ) {
+        throw new MiaoshouRetryConflictError("revision_changed");
+      }
+
+      const syncResult = await client.query<{ id: string; state: string; error: unknown }>(
+        `SELECT id, state, error
+         FROM ${schema.miaoshouSyncs}
+         WHERE approval_snapshot_id = $1
+         FOR UPDATE`,
+        [approval.id]
+      );
+      const sync = syncResult.rows[0];
+      if (!sync) throw new MiaoshouRetryConflictError("retry_not_allowed");
+
+      const existingRetry = await client.query<{ id: string }>(
+        `SELECT id
+         FROM ${schema.jobs}
+         WHERE kind = 'miaoshou_edit'
+           AND payload->>'approvalSnapshotId' = $1
+           AND left(business_key, length($2)) = $2
+           AND status IN ('queued', 'running')
+         ORDER BY created_at DESC, id DESC
+         LIMIT 1
+         FOR UPDATE`,
+        [approval.id, `miaoshou-edit:${approval.id}:manual-retry:`]
+      );
+      if (existingRetry.rows[0]) {
+        await client.query("COMMIT");
+        return {
+          approvalSnapshotId: approval.id,
+          syncId: sync.id,
+          jobId: existingRetry.rows[0].id
+        };
+      }
+
+      const syncError = object(sync.error);
+      const reconciliation = object(syncError.reconciliation);
+      const explicitNoChange = syncError.code === "miaoshou_reconcile_no_change"
+        || reconciliation.state === "no_change";
+      if (sync.state !== "result_unknown" || !explicitNoChange) {
+        throw new MiaoshouRetryConflictError("retry_not_allowed");
+      }
+
+      const activeJob = await client.query<{ id: string }>(
+        `SELECT id FROM ${schema.jobs}
+         WHERE kind = 'miaoshou_edit'
+           AND payload->>'approvalSnapshotId' = $1
+           AND status IN ('queued', 'running')
+         LIMIT 1
+         FOR UPDATE`,
+        [approval.id]
+      );
+      if (activeJob.rows[0]) throw new MiaoshouRetryConflictError("writeback_in_progress");
+
+      const previousJobResult = await client.query<{
+        id: string;
+        status: string;
+        remote_task_id: string | null;
+        error: unknown;
+      }>(
+        `SELECT id, status, remote_task_id, error
+         FROM ${schema.jobs}
+         WHERE kind = 'miaoshou_edit'
+           AND payload->>'approvalSnapshotId' = $1
+         ORDER BY created_at DESC, id DESC
+         LIMIT 1
+         FOR UPDATE`,
+        [approval.id]
+      );
+      const previousJob = previousJobResult.rows[0];
+      if (
+        previousJob?.status !== "needs_input" ||
+        !previousJob.remote_task_id ||
+        object(previousJob.error).code !== "reconcile_failed"
+      ) {
+        throw new MiaoshouRetryConflictError("retry_not_allowed");
+      }
+
+      const retryCountResult = await client.query<{ count: number }>(
+        `SELECT count(*)::integer AS count
+         FROM ${schema.jobs}
+         WHERE kind = 'miaoshou_edit'
+           AND payload->>'approvalSnapshotId' = $1
+           AND left(business_key, length($2)) = $2`,
+        [approval.id, `miaoshou-edit:${approval.id}:manual-retry:`]
+      );
+      const retrySequence = Number(retryCountResult.rows[0]?.count ?? 0) + 1;
+      const jobId = newId("job");
+      const businessKey = `miaoshou-edit:${approval.id}:manual-retry:${retrySequence}`;
+      const payload = {
+        version: 1,
+        approvalSnapshotId: approval.id,
+        productId,
+        canonicalSuccessDetailId: approval.canonical_success_detail_id,
+        manualRetrySequence: retrySequence
+      };
+      await client.query(
+        `INSERT INTO ${schema.jobs}
+         (id, kind, business_key, idempotency_key, payload, status, max_attempts)
+         VALUES ($1, 'miaoshou_edit', $2, $2, $3::jsonb, 'queued', 3)`,
+        [jobId, businessKey, JSON.stringify(payload)]
+      );
+      await client.query(
+        `UPDATE ${schema.miaoshouSyncs}
+         SET state = 'queued',
+             error = COALESCE(error, '{}'::jsonb) || jsonb_build_object(
+               'manualRetry', jsonb_build_object(
+                 'sequence', $2::integer,
+                 'queuedAt', to_jsonb(now()),
+                 'previousJobId', $3::text
+               )
+             ),
+             updated_at = now()
+         WHERE id = $1`,
+        [sync.id, retrySequence, previousJob.id]
+      );
+      await client.query(
+        `UPDATE ${schema.products}
+         SET state_miaoshou_edit = 'queued', updated_at = now()
+         WHERE id = $1`,
+        [productId]
+      );
+      const initialFailure = object(syncError.initialFailure);
+      await appendAuditInTransaction(client, {
+        actorType: "operator",
+        action: "miaoshou.edit.manual_retry_queued",
+        targetKind: "approval_snapshot",
+        payload: {
+          productId,
+          previousJobId: previousJob.id,
+          newJobId: jobId,
+          retrySequence,
+          previousFailureCode: String(initialFailure.code ?? syncError.code ?? "unknown")
+        }
+      }, approval.id);
+      await client.query("COMMIT");
+      return { approvalSnapshotId: approval.id, syncId: sync.id, jobId };
+    } catch (error) {
+      await client.query("ROLLBACK").catch(() => undefined);
+      throw error;
+    } finally {
+      client.release();
+    }
+  }
+
   async loadSnapshot(approvalSnapshotId: string): Promise<ApprovalSnapshotV1> {
     const result = await this.pool.query<PersistedApprovalRow>(
       `SELECT * FROM ${schema.approvalSnapshots} WHERE id = $1`,
@@ -790,6 +994,55 @@ export class ApprovalRepository {
            SET state = 'result_unknown', error = $2::jsonb, updated_at = now()
            WHERE approval_snapshot_id = $1 AND state IN ('queued', 'syncing', 'result_unknown')`,
           [approvalSnapshotId, JSON.stringify(failure)]
+        );
+        if ((updated.rowCount ?? 0) === 0) return false;
+        await client.query(
+          `UPDATE ${schema.products} SET state_miaoshou_edit = 'result_unknown', updated_at = now()
+           WHERE id = (SELECT product_id FROM ${schema.approvalSnapshots} WHERE id = $1)`,
+          [approvalSnapshotId]
+        );
+        return true;
+      }
+    );
+  }
+
+  async saveReconciliationResultUnknown(
+    approvalSnapshotId: string,
+    result: { remoteDetailId: string; state: "no_change" | "missing" },
+    fence: ApprovalSyncFence
+  ): Promise<boolean> {
+    const code = `miaoshou_reconcile_${result.state}`;
+    return this.withSyncFence(
+      approvalSnapshotId,
+      fence,
+      "miaoshou.edit.reconciliation_result_unknown",
+      { state: result.state, code, remoteDetailId: result.remoteDetailId },
+      async (client) => {
+        const updated = await client.query(
+          `UPDATE ${schema.miaoshouSyncs}
+           SET state = 'result_unknown', last_reconciled_at = now(),
+               error = jsonb_build_object(
+                 'kind', 'reconcile_required',
+                 'code', $2::text,
+                 'safeMessage', 'Miaoshou reconciliation did not prove the approved edit was applied',
+                 'initialFailure', CASE
+                   WHEN jsonb_typeof(error->'initialFailure') = 'object' THEN error->'initialFailure'
+                   WHEN jsonb_typeof(error) = 'object' THEN error
+                   ELSE jsonb_build_object(
+                     'kind', 'reconcile_required',
+                     'code', 'miaoshou.edit_result_unknown',
+                     'safeMessage', 'Miaoshou edit result is unknown and must be reconciled'
+                   )
+                 END,
+                 'reconciliation', jsonb_build_object(
+                   'state', $3::text,
+                   'remoteDetailId', $4::text,
+                   'checkedAt', to_jsonb(now())
+                 )
+               ),
+               updated_at = now()
+           WHERE approval_snapshot_id = $1 AND state = 'result_unknown'`,
+          [approvalSnapshotId, code, result.state, result.remoteDetailId]
         );
         if ((updated.rowCount ?? 0) === 0) return false;
         await client.query(

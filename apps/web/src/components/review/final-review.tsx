@@ -155,6 +155,7 @@ export function FinalReview({ workspace, approvalPreview, actions }: {
             orderedFinalAssetIds={(approvalPreview?.orderedFinalAssetIds ?? workspace.finalAssetOrder).map(String)}
             targetLocale={workspace.target?.locale ?? approvalPreview?.locale ?? "th-TH"}
             translationStyle={workspace.target?.style ?? "marketplace"}
+            miaoshouWriteback={approvalPreview?.miaoshouWriteback}
             actions={actions}
           />
         </aside>

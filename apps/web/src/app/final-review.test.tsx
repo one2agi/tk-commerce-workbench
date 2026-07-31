@@ -97,7 +97,7 @@ describe("final review flow", () => {
     expect(html).toContain("W_TITLE_LONG");
     expect(html).toContain("最终图 1");
     expect(html).toContain("https://images.test/final-2.jpg");
-    expect(html.match(/alt=\"Canvas 产出/g)).toHaveLength(5);
+    expect(html.match(/alt=\"待确认 Canvas 产出/g)).toHaveLength(5);
     expect(html).toContain("确认写回妙手");
     expect(html).not.toContain("发布 TikTok");
   });
@@ -122,7 +122,7 @@ describe("final review flow", () => {
     }} />);
 
     expect(html).toContain("最终图 1");
-    expect(html).toContain("成图 1");
+    expect(html).not.toContain("待确认成图");
     expect(html).not.toContain("<code>asset-");
     expect(html).not.toContain("src=\"asset-");
   });
@@ -134,7 +134,11 @@ describe("final review flow", () => {
         productId: productId("product-13"), draftVersion: 4,
         listingRunId: "listing-13", pricingRunId: "pricing-13", templateVersion: 3,
         orderedFinalAssetIds: [assetId("asset-2")], locale: "ms-MY", currency: "THB",
-        finalPriceWire: null, warningCodes: [], miaoshouTargetDetailId: null
+        finalPriceWire: null, warningCodes: [], miaoshouTargetDetailId: null,
+        miaoshouWriteback: {
+          state: "not_started", failureCode: null, safeMessage: null,
+          retryAllowed: false, approvalSnapshotId: null
+        }
       }}
     />);
     expect(html).toContain("value=\"ms-MY\"");
@@ -393,8 +397,16 @@ describe("version-aware review routes", () => {
     expect(facts).toEqual({
       skuCount: 2,
       orderedFinalImages: [
-        { assetId: "asset-2", previewUrl: "https://images.test/final-2.jpg" },
-        { assetId: "asset-1", previewUrl: "/api/v1/assets/asset-1/content" }
+        {
+          assetId: "asset-2",
+          previewUrl: "/api/v1/assets/asset-2/content",
+          thumbnailUrl: "/api/v1/assets/asset-2/content?variant=thumbnail"
+        },
+        {
+          assetId: "asset-1",
+          previewUrl: "/api/v1/assets/asset-1/content",
+          thumbnailUrl: "/api/v1/assets/asset-1/content?variant=thumbnail"
+        }
       ],
       stock: "28",
       weightKg: "0.65",

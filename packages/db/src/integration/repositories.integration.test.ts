@@ -1691,6 +1691,19 @@ describe("integration: ApprovalRepository.confirmAndEnqueue", () => {
       remoteDetailId: "detail-canonical",
       state: "no_change"
     }, reconcileFence)).toBe(false);
+    expect(await approvals.saveReconciliationResultUnknown(confirmed.approvalSnapshotId, {
+      remoteDetailId: "detail-canonical",
+      state: "no_change"
+    }, reconcileFence)).toBe(true);
+    const resultUnknown = await handle.pool.query(
+      "SELECT error FROM miaoshou_syncs WHERE id = $1",
+      [confirmed.syncId]
+    );
+    expect(resultUnknown.rows[0]?.error).toMatchObject({
+      code: "miaoshou_reconcile_no_change",
+      initialFailure: { code: "timeout", safeMessage: "result unknown" },
+      reconciliation: { state: "no_change", remoteDetailId: "detail-canonical" }
+    });
     expect(await approvals.saveReconciled(confirmed.approvalSnapshotId, {
       remoteDetailId: "detail-canonical",
       state: "applied"
@@ -1701,6 +1714,83 @@ describe("integration: ApprovalRepository.confirmAndEnqueue", () => {
     );
     expect(sync.rows[0]).toMatchObject({ state: "succeeded", remote_detail_id: "detail-canonical", error: null });
     expect(sync.rows[0].last_reconciled_at).not.toBeNull();
+  });
+
+  test("creates exactly one marker-free manual retry after explicit no_change reconciliation", async () => {
+    const { productId } = await readyApprovalFixture();
+    const confirmed = await approvals.confirmAndEnqueue({
+      version: 1,
+      productId,
+      expectedDraftVersion: 1,
+      expectedListingRunId: "run-listing-1",
+      expectedTemplateVersion: 3,
+      orderedFinalAssetIds: ["asset-a", "asset-b"]
+    });
+    await handle.pool.query(
+      `UPDATE miaoshou_syncs
+       SET state = 'result_unknown',
+           error = '{"kind":"reconcile_required","code":"miaoshou_reconcile_no_change","safeMessage":"remote unchanged"}'::jsonb
+       WHERE approval_snapshot_id = $1`,
+      [confirmed.approvalSnapshotId]
+    );
+    await handle.pool.query(
+      `UPDATE jobs
+       SET status = 'needs_input', remote_task_id = 'canonical:detail-canonical:ctx:test',
+           error = '{"kind":"reconcile_required","code":"reconcile_failed","safeMessage":"reconcile before retry"}'::jsonb
+       WHERE kind = 'miaoshou_edit' AND payload->>'approvalSnapshotId' = $1`,
+      [confirmed.approvalSnapshotId]
+    );
+
+    const first = await approvals.retryMiaoshouEditAfterNoChange(productId);
+    const second = await approvals.retryMiaoshouEditAfterNoChange(productId);
+
+    expect(second).toEqual(first);
+    const result = await handle.pool.query(
+      `SELECT id, business_key, payload, status, remote_task_id
+       FROM jobs
+       WHERE kind = 'miaoshou_edit' AND payload->>'approvalSnapshotId' = $1
+       ORDER BY created_at ASC, id ASC`,
+      [confirmed.approvalSnapshotId]
+    );
+    expect(result.rows).toHaveLength(2);
+    expect(result.rows[1]).toMatchObject({
+      id: first.jobId,
+      business_key: expect.stringContaining(":manual-retry:1"),
+      payload: expect.objectContaining({ approvalSnapshotId: confirmed.approvalSnapshotId, productId }),
+      status: "queued",
+      remote_task_id: null
+    });
+    const state = await handle.pool.query(
+      `SELECT
+         (SELECT state FROM miaoshou_syncs WHERE approval_snapshot_id = $1) AS sync,
+         (SELECT state_miaoshou_edit FROM products WHERE id = $2) AS product,
+         (SELECT count(*)::integer FROM audit_events WHERE action = 'miaoshou.edit.manual_retry_queued') AS audits`,
+      [confirmed.approvalSnapshotId, productId]
+    );
+    expect(state.rows[0]).toEqual({ sync: "queued", product: "queued", audits: 1 });
+  });
+
+  test("rejects manual retry when result_unknown has no explicit no_change evidence", async () => {
+    const { productId } = await readyApprovalFixture();
+    const confirmed = await approvals.confirmAndEnqueue({
+      version: 1,
+      productId,
+      expectedDraftVersion: 1,
+      expectedListingRunId: "run-listing-1",
+      expectedTemplateVersion: 3,
+      orderedFinalAssetIds: ["asset-a", "asset-b"]
+    });
+    await handle.pool.query(
+      `UPDATE miaoshou_syncs
+       SET state = 'result_unknown',
+           error = '{"kind":"reconcile_required","code":"miaoshou.network","safeMessage":"unknown"}'::jsonb
+       WHERE approval_snapshot_id = $1`,
+      [confirmed.approvalSnapshotId]
+    );
+
+    await expect(approvals.retryMiaoshouEditAfterNoChange(productId)).rejects.toMatchObject({
+      code: "retry_not_allowed"
+    });
   });
 
   test("does not reuse an idempotent approval when persisted material changed under the same run ids", async () => {

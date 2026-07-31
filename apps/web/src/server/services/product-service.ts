@@ -323,6 +323,41 @@ function optionalString(row: Record<string, unknown>, key: string): string | nul
   return typeof row[key] === "string" ? row[key] as string : null;
 }
 
+function record(value: unknown): Record<string, unknown> {
+  return value && typeof value === "object" && !Array.isArray(value)
+    ? value as Record<string, unknown>
+    : {};
+}
+
+function miaoshouWritebackView(row: Record<string, unknown>): ApprovalPreviewV1["miaoshouWriteback"] {
+  const approvalSnapshotId = optionalString(row, "approval_snapshot_id");
+  const syncState = optionalString(row, "sync_state");
+  const productState = optionalString(row, "product_miaoshou_edit_state");
+  const allowedStates = new Set(["not_started", "queued", "syncing", "succeeded", "failed", "result_unknown"]);
+  const candidateState = syncState ?? productState ?? "not_started";
+  const state = (allowedStates.has(candidateState) ? candidateState : "not_started") as ApprovalPreviewV1["miaoshouWriteback"]["state"];
+  const syncError = record(row.sync_error);
+  const reconciliation = record(syncError.reconciliation);
+  const editJobError = record(row.edit_job_error);
+  const explicitNoChange = syncError.code === "miaoshou_reconcile_no_change"
+    || reconciliation.state === "no_change";
+  const approvalMatchesCurrent = optionalString(row, "approval_revision_id") === optionalString(row, "revision_id")
+    && Number(row.approval_draft_version) === Number(row.draft_version);
+  const retryAllowed = state === "result_unknown"
+    && explicitNoChange
+    && approvalMatchesCurrent
+    && optionalString(row, "edit_job_status") === "needs_input"
+    && editJobError.code === "reconcile_failed"
+    && optionalString(row, "edit_job_remote_task_id") !== null;
+  return {
+    state,
+    failureCode: typeof syncError.code === "string" ? syncError.code : null,
+    safeMessage: typeof syncError.safeMessage === "string" ? syncError.safeMessage : null,
+    retryAllowed,
+    approvalSnapshotId
+  };
+}
+
 function requiredIsoTimestamp(row: Record<string, unknown>, key: string): string {
   const value = row[key];
   if (value instanceof Date) return value.toISOString();
@@ -504,13 +539,22 @@ export class ProductService {
   async preview(productIdValue: string): Promise<ApprovalPreviewV1 | null> {
     const result = await this.database.query(
       `SELECT p.id AS product_id, p.locale, p.currency, p.canonical_success_detail_id,
-              revision.draft_version,
+              p.state_miaoshou_edit AS product_miaoshou_edit_state,
+              revision.id AS revision_id, revision.draft_version,
               listing.id AS listing_run_id,
               pricing.id AS pricing_run_id, pricing.final_price_minor,
               COALESCE(canvas.template_version,
                 NULLIF(revision.working_draft->'templateMatch'->>'templateVersion', '')::integer) AS template_version,
               COALESCE(revision.working_draft->'finalAssetOrder', '[]'::jsonb) AS final_asset_order,
-              COALESCE(revision.working_draft->'warningCodes', '[]'::jsonb) AS warning_codes
+              COALESCE(revision.working_draft->'warningCodes', '[]'::jsonb) AS warning_codes,
+              approval.id AS approval_snapshot_id,
+              approval.revision_id AS approval_revision_id,
+              approval.draft_version AS approval_draft_version,
+              sync.state AS sync_state,
+              sync.error AS sync_error,
+              edit_job.status AS edit_job_status,
+              edit_job.error AS edit_job_error,
+              edit_job.remote_task_id AS edit_job_remote_task_id
        FROM products p
        JOIN LATERAL (
          SELECT * FROM product_revisions candidate WHERE candidate.product_id = p.id
@@ -528,6 +572,20 @@ export class ProductService {
          SELECT * FROM canvas_runs candidate WHERE candidate.revision_id = revision.id
          ORDER BY candidate.created_at DESC LIMIT 1
        ) canvas ON true
+       LEFT JOIN LATERAL (
+         SELECT candidate.id, candidate.revision_id, candidate.draft_version
+         FROM approval_snapshots candidate
+         WHERE candidate.product_id = p.id AND candidate.state = 'approved'
+         ORDER BY candidate.created_at DESC, candidate.id DESC LIMIT 1
+       ) approval ON true
+       LEFT JOIN miaoshou_syncs sync ON sync.approval_snapshot_id = approval.id
+       LEFT JOIN LATERAL (
+         SELECT candidate.status, candidate.error, candidate.remote_task_id
+         FROM jobs candidate
+         WHERE candidate.kind = 'miaoshou_edit'
+           AND candidate.payload->>'approvalSnapshotId' = approval.id
+         ORDER BY candidate.created_at DESC, candidate.id DESC LIMIT 1
+       ) edit_job ON true
        WHERE p.id = $1`,
       [productIdValue]
     );
@@ -549,7 +607,8 @@ export class ProductService {
       warningCodes: strings(row.warning_codes),
       miaoshouTargetDetailId: optionalString(row, "canonical_success_detail_id")
         ? miaoshouDetailId(optionalString(row, "canonical_success_detail_id")!)
-        : null
+        : null,
+      miaoshouWriteback: miaoshouWritebackView(row)
     };
   }
 
@@ -586,10 +645,15 @@ export class ProductService {
       if (!asset) return [];
       const remoteUrl = typeof asset.remote_url === "string" && /^https?:\/\//.test(asset.remote_url)
         ? asset.remote_url : null;
-      const previewUrl = remoteUrl ?? (typeof asset.local_path === "string"
+      const localUrl = typeof asset.local_path === "string"
         ? `/api/v1/assets/${encodeURIComponent(id)}/content`
-        : null);
-      return previewUrl ? [{ assetId: id, previewUrl }] : [];
+        : null;
+      const previewUrl = localUrl ?? remoteUrl;
+      return previewUrl ? [{
+        assetId: id,
+        previewUrl,
+        ...(localUrl ? { thumbnailUrl: `${localUrl}?variant=thumbnail` } : {})
+      }] : [];
     });
     return {
       skuCount: skus ? skus.length : null,

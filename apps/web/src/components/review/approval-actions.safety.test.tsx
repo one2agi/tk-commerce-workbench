@@ -38,7 +38,8 @@ describe("approval action submission safety", () => {
     const actions: ReviewActions = {
       updateDraft: vi.fn(),
       rerun: vi.fn(),
-      confirm
+      confirm,
+      retryMiaoshouEdit: vi.fn()
     };
     const user = userEvent.setup({ document: globalThis.document });
     render(
@@ -62,7 +63,9 @@ describe("approval action submission safety", () => {
     expect(button).toBeDisabled();
 
     resolveConfirm({});
-    await waitFor(() => expect(button).toBeEnabled());
+    await waitFor(() => expect(screen.getByRole("status")).toHaveTextContent("已进入妙手同步队列"));
+    expect(screen.queryByRole("button", { name: "确认写回妙手" })).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "正在写回妙手" })).toBeDisabled();
   }, 60_000);
 
   it.each([
@@ -76,7 +79,8 @@ describe("approval action submission safety", () => {
     const actions: ReviewActions = {
       updateDraft: vi.fn(),
       rerun: vi.fn(),
-      confirm: vi.fn(fail)
+      confirm: vi.fn(fail),
+      retryMiaoshouEdit: vi.fn()
     };
     const user = userEvent.setup({ document: globalThis.document });
     render(<ApprovalActions
@@ -97,4 +101,77 @@ describe("approval action submission safety", () => {
     await waitFor(() => expect(button).toBeEnabled());
     expect(screen.getByRole("status")).toHaveTextContent("确认失败，请刷新版本后重试");
   }, 60_000);
+
+  it("shows explicit no-change status and submits a manual retry at most once", async () => {
+    const [{ render, screen, waitFor }, { default: userEvent }] = await Promise.all([
+      import("@testing-library/react"),
+      import("@testing-library/user-event")
+    ]);
+    let resolveRetry!: (value: Record<string, unknown>) => void;
+    const retryMiaoshouEdit = vi.fn(() => new Promise<Record<string, unknown>>((resolve) => {
+      resolveRetry = resolve;
+    }));
+    const actions: ReviewActions = {
+      updateDraft: vi.fn(),
+      rerun: vi.fn(),
+      confirm: vi.fn(),
+      retryMiaoshouEdit
+    };
+    const user = userEvent.setup({ document: globalThis.document });
+    render(<ApprovalActions
+      productId="product-1"
+      revisionId="revision-1"
+      draftVersion={1}
+      listingRunId="listing-1"
+      templateVersion={1}
+      orderedFinalAssetIds={["asset-1"]}
+      targetLocale="th-TH"
+      translationStyle="marketplace"
+      miaoshouWriteback={{
+        state: "result_unknown",
+        failureCode: "miaoshou_reconcile_no_change",
+        safeMessage: "remote unchanged",
+        retryAllowed: true,
+        approvalSnapshotId: "approval-1"
+      }}
+      actions={actions}
+    />);
+
+    expect(screen.getByRole("status")).toHaveTextContent("妙手写回未生效，远端仍为原内容");
+    expect(screen.queryByRole("button", { name: "确认写回妙手" })).not.toBeInTheDocument();
+    const button = screen.getByRole("button", { name: "重新写回妙手" });
+    await user.dblClick(button);
+
+    expect(retryMiaoshouEdit).toHaveBeenCalledTimes(1);
+    expect(button).toBeDisabled();
+    resolveRetry({});
+    await waitFor(() => expect(screen.getByRole("status")).toHaveTextContent("正在写回妙手"));
+  }, 60_000);
+
+  it("shows an unknown-result warning without exposing retry for unproven failures", async () => {
+    const { render, screen } = await import("@testing-library/react");
+    render(<ApprovalActions
+      productId="product-1"
+      revisionId="revision-1"
+      draftVersion={1}
+      listingRunId="listing-1"
+      templateVersion={1}
+      orderedFinalAssetIds={["asset-1"]}
+      targetLocale="th-TH"
+      translationStyle="marketplace"
+      miaoshouWriteback={{
+        state: "result_unknown",
+        failureCode: "miaoshou.network",
+        safeMessage: "result unknown",
+        retryAllowed: false,
+        approvalSnapshotId: "approval-1"
+      }}
+      actions={{
+        updateDraft: vi.fn(), rerun: vi.fn(), confirm: vi.fn(), retryMiaoshouEdit: vi.fn()
+      }}
+    />);
+
+    expect(screen.getByRole("status")).toHaveTextContent("妙手写回结果未知，需要人工核对");
+    expect(screen.queryByRole("button", { name: "重新写回妙手" })).not.toBeInTheDocument();
+  });
 });

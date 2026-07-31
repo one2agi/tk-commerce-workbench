@@ -37,7 +37,7 @@ function job(remoteTaskId: string | null = null): ClaimedWorkerJob {
   return {
     jobId: "job-1",
     kind: "miaoshou_edit",
-    businessKey: "approval-1",
+    businessKey: "miaoshou-edit:approval-1",
     payload: { version: 1, approvalSnapshotId: "approval-1", productId: "product-1", canonicalSuccessDetailId: "detail-3799770548" },
     leaseToken: "lease-1",
     remoteTaskId
@@ -72,6 +72,7 @@ function dependencies(result: Awaited<ReturnType<MiaoshouEditPort["applyEdit"]>>
     saveSucceeded: vi.fn().mockResolvedValue(true),
     saveValidationFailure: vi.fn().mockResolvedValue(true),
     saveResultUnknown: vi.fn().mockResolvedValue(true),
+    saveReconciliationResultUnknown: vi.fn().mockResolvedValue(true),
     saveReconciled: vi.fn().mockResolvedValue(true),
     persistReconciliationContext: vi.fn().mockResolvedValue(true)
   };
@@ -185,11 +186,12 @@ describe("createMiaoshouEditHandler", () => {
 
       expect(deps.edit.applyEdit).not.toHaveBeenCalled();
       expect(deps.repository.saveReconciled).not.toHaveBeenCalled();
-      expect(deps.repository.saveResultUnknown).toHaveBeenCalledWith(
+      expect(deps.repository.saveReconciliationResultUnknown).toHaveBeenCalledWith(
         "approval-1",
-        expect.objectContaining({ code: `miaoshou_reconcile_${state}` }),
+        expect.objectContaining({ state }),
         expect.any(Object)
       );
+      expect(deps.repository.saveResultUnknown).not.toHaveBeenCalled();
     }
   );
 

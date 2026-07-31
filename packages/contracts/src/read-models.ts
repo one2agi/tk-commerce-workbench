@@ -116,6 +116,13 @@ export type ApprovalPreviewV1 = Readonly<{
   finalPriceWire: MoneyWire | null;
   warningCodes: string[];
   miaoshouTargetDetailId: MiaoshouDetailId | null;
+  miaoshouWriteback: Readonly<{
+    state: "not_started" | "queued" | "syncing" | "succeeded" | "failed" | "result_unknown";
+    failureCode: string | null;
+    safeMessage: string | null;
+    retryAllowed: boolean;
+    approvalSnapshotId: string | null;
+  }>;
 }>;
 
 export type ApprovalSnapshotV1 = Readonly<{

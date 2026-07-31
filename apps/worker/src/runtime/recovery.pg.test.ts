@@ -339,6 +339,7 @@ describe("real PostgreSQL hard-crash recovery through production handlers", () =
         saveSucceeded: vi.fn(async () => true),
         saveValidationFailure: vi.fn(async () => true),
         saveResultUnknown: vi.fn(async () => true),
+        saveReconciliationResultUnknown: vi.fn(async () => true),
         saveReconciled,
         persistReconciliationContext: vi.fn(async () => true)
       },

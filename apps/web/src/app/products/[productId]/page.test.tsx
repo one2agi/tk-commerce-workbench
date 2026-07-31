@@ -64,7 +64,11 @@ describe("product detail page", () => {
           currency: "THB",
           finalPriceWire: { amountMinor: "29900", currency: "THB" },
           warningCodes: [],
-          miaoshouTargetDetailId: "detail-1" as never
+          miaoshouTargetDetailId: "detail-1" as never,
+          miaoshouWriteback: {
+            state: "not_started", failureCode: null, safeMessage: null,
+            retryAllowed: false, approvalSnapshotId: null
+          }
         }),
         facts: async () => ({
           skuCount: 2,

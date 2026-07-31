@@ -89,12 +89,20 @@ function hasUnknownWriteResult(response: ApiEnvelope): boolean {
     || /^5\d\d$/.test(code);
 }
 
-function unknownWriteResult(desired: MiaoshouEditableDetail) {
+function safeUnknownResponseCode(value: unknown): string {
+  const normalized = String(value ?? "unknown")
+    .toLowerCase()
+    .replace(/[^a-z0-9_-]+/g, "_")
+    .slice(0, 80);
+  return `miaoshou.edit_${normalized || "unknown"}`;
+}
+
+function unknownWriteResult(desired: MiaoshouEditableDetail, code: string) {
   return {
     desired,
     result: {
       kind: "needs_reconcile" as const,
-      failure: reconcileRequiredFailure("miaoshou.edit_result_unknown", "Miaoshou edit result is unknown and must be reconciled"),
+      failure: reconcileRequiredFailure(code, "Miaoshou edit result is unknown and must be reconciled"),
       remoteTaskId: null
     }
   };
@@ -194,7 +202,10 @@ export function createMiaoshouEditAdapter(deps: MiaoshouEditAdapterDeps): Miaosh
         response = await deps.http.post<ApiEnvelope>(EDIT_PATH, body);
       } catch (error) {
         if (failureLike(error) && error.kind !== "retryable" && error.kind !== "reconcile_required") throw error;
-        const unknown = unknownWriteResult(desired);
+        const unknown = unknownWriteResult(
+          desired,
+          failureLike(error) ? error.code : "miaoshou.edit_unknown_exception"
+        );
         pending.set(canonicalId, fingerprintMiaoshouEditableDetail(unknown.desired));
         return unknown.result;
       }
@@ -203,7 +214,7 @@ export function createMiaoshouEditAdapter(deps: MiaoshouEditAdapterDeps): Miaosh
         return { kind: "succeeded", remoteDetailId: canonicalId };
       }
       if (hasUnknownWriteResult(response)) {
-        const unknown = unknownWriteResult(desired);
+        const unknown = unknownWriteResult(desired, safeUnknownResponseCode(response.code));
         pending.set(canonicalId, fingerprintMiaoshouEditableDetail(unknown.desired));
         return unknown.result;
       }

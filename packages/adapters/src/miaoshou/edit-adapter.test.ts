@@ -128,7 +128,7 @@ describe("Miaoshou common collect-box edit adapter", () => {
 
     await expect(adapter.applyEdit(input)).resolves.toMatchObject({
       kind: "needs_reconcile",
-      failure: { kind: "reconcile_required", code: "miaoshou.edit_result_unknown" }
+      failure: { kind: "reconcile_required", code: `miaoshou.http_${status}` }
     });
     await expect(adapter.applyEdit(input)).resolves.toMatchObject({
       kind: "needs_reconcile",
@@ -279,7 +279,7 @@ describe("Miaoshou common collect-box edit adapter", () => {
     const adapter = createMiaoshouEditAdapter({ http: { post } as MiaoshouHttp });
     const input = { approvalSnapshot: approval(), orderedRemoteAssetUrls: remoteUrls, idempotencyKey: idempotencyKey("edit:3") };
 
-    await expect(adapter.applyEdit(input)).resolves.toMatchObject({ kind: "needs_reconcile", failure: { kind: "reconcile_required", code: "miaoshou.edit_result_unknown" } });
+    await expect(adapter.applyEdit(input)).resolves.toMatchObject({ kind: "needs_reconcile", failure: { kind: "reconcile_required", code: "miaoshou.network" } });
     await expect(adapter.applyEdit(input)).resolves.toMatchObject({ kind: "needs_reconcile", failure: { code: "miaoshou.edit_reconciliation_pending" } });
     expect(post).toHaveBeenCalledTimes(2);
   });
@@ -292,7 +292,7 @@ describe("Miaoshou common collect-box edit adapter", () => {
 
     await expect(adapter.applyEdit(input)).resolves.toMatchObject({
       kind: "needs_reconcile",
-      failure: { kind: "reconcile_required", code: "miaoshou.edit_result_unknown" }
+      failure: { kind: "reconcile_required", code: `miaoshou.edit_${code.toLowerCase()}` }
     });
     await expect(adapter.applyEdit(input)).resolves.toMatchObject({ kind: "needs_reconcile", failure: { code: "miaoshou.edit_reconciliation_pending" } });
     expect(post).toHaveBeenCalledTimes(2);

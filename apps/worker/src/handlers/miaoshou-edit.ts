@@ -31,6 +31,11 @@ interface MiaoshouEditRepository {
     failure: Record<string, unknown>,
     fence: LeaseFence
   ): Promise<boolean>;
+  saveReconciliationResultUnknown(
+    approvalSnapshotId: string,
+    result: { remoteDetailId: string; state: "no_change" | "missing" },
+    fence: LeaseFence
+  ): Promise<boolean>;
   saveReconciled(
     approvalSnapshotId: string,
     result: { remoteDetailId: string; state: "applied" | "no_change" | "missing" },
@@ -77,11 +82,11 @@ export function createMiaoshouEditHandler(input: {
       });
       execution.assertLease();
       if (reconciled.state !== "applied") {
-        requireFencedWrite(await input.repository.saveResultUnknown(approvalSnapshotId, {
-          kind: "reconcile_required",
-          code: `miaoshou_reconcile_${reconciled.state}`,
-          safeMessage: "Miaoshou reconciliation did not prove the approved edit was applied"
-        }, execution.fence));
+        requireFencedWrite(await input.repository.saveReconciliationResultUnknown(
+          approvalSnapshotId,
+          { remoteDetailId: reconciled.remoteDetailId, state: reconciled.state },
+          execution.fence
+        ));
         throw new ExternalResultUnknownError(
           job.remoteTaskId,
           "Miaoshou reconciliation was inconclusive; do not edit again"
@@ -136,7 +141,7 @@ export function createMiaoshouEditHandler(input: {
       const result = await input.edit.applyEdit({
         approvalSnapshot: snapshot,
         orderedRemoteAssetUrls,
-        idempotencyKey: `miaoshou-edit:${approvalSnapshotId}` as IdempotencyKey
+        idempotencyKey: job.businessKey as IdempotencyKey
       });
       execution.assertLease();
 

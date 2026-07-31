@@ -138,3 +138,104 @@ describe("ProductService.list runtime projection", () => {
     expect(query.mock.calls[0]?.[0]).toContain("candidate.kind = 'main'");
   });
 });
+
+describe("ProductService.facts detail image projection", () => {
+  it("uses local archived assets for detail previews and thumbnails even when a remote URL exists", async () => {
+    const query = vi.fn()
+      .mockResolvedValueOnce({
+        rows: [{
+          source_payload: {},
+          final_asset_order: ["asset-2", "asset-1"],
+          canonical_success_detail_id: "detail-1"
+        }]
+      })
+      .mockResolvedValueOnce({
+        rows: [
+          { id: "asset-1", remote_url: "https://canvas.test/one.png", local_path: "/assets/one.png" },
+          { id: "asset-2", remote_url: "https://canvas.test/two.png", local_path: "/assets/two.png" }
+        ]
+      });
+
+    const result = await new ProductService({ query }).facts("prod-1");
+
+    expect(result.orderedFinalImages).toEqual([
+      {
+        assetId: "asset-2",
+        previewUrl: "/api/v1/assets/asset-2/content",
+        thumbnailUrl: "/api/v1/assets/asset-2/content?variant=thumbnail"
+      },
+      {
+        assetId: "asset-1",
+        previewUrl: "/api/v1/assets/asset-1/content",
+        thumbnailUrl: "/api/v1/assets/asset-1/content?variant=thumbnail"
+      }
+    ]);
+  });
+});
+
+function previewRow(overrides: Record<string, unknown> = {}): Record<string, unknown> {
+  return {
+    product_id: "prod-1",
+    locale: "th-TH",
+    currency: "THB",
+    canonical_success_detail_id: "detail-1",
+    draft_version: 1,
+    revision_id: "rev-1",
+    listing_run_id: "listing-1",
+    pricing_run_id: null,
+    final_price_minor: null,
+    template_version: 3,
+    final_asset_order: ["asset-1"],
+    warning_codes: [],
+    product_miaoshou_edit_state: "result_unknown",
+    approval_snapshot_id: "approval-1",
+    approval_revision_id: "rev-1",
+    approval_draft_version: 1,
+    sync_state: "result_unknown",
+    sync_error: {
+      kind: "reconcile_required",
+      code: "miaoshou_reconcile_no_change",
+      safeMessage: "remote unchanged"
+    },
+    edit_job_status: "needs_input",
+    edit_job_error: { code: "reconcile_failed" },
+    edit_job_remote_task_id: "canonical:detail-1:ctx:test",
+    ...overrides
+  };
+}
+
+describe("ProductService.preview Miaoshou writeback projection", () => {
+  it("allows manual retry only for an explicitly reconciled no-change write", async () => {
+    const query = vi.fn().mockResolvedValue({ rows: [previewRow()] });
+
+    const result = await new ProductService({ query }).preview("prod-1");
+
+    expect(result?.miaoshouWriteback).toEqual({
+      state: "result_unknown",
+      failureCode: "miaoshou_reconcile_no_change",
+      safeMessage: "remote unchanged",
+      retryAllowed: true,
+      approvalSnapshotId: "approval-1"
+    });
+    expect(query.mock.calls[0]?.[0]).toContain("miaoshou_syncs");
+    expect(query.mock.calls[0]?.[0]).toContain("miaoshou_edit");
+  });
+
+  it("keeps generic result_unknown visible but does not allow retry", async () => {
+    const query = vi.fn().mockResolvedValue({
+      rows: [previewRow({
+        sync_error: { kind: "reconcile_required", code: "miaoshou.network", safeMessage: "result unknown" },
+        edit_job_error: { code: "reconcile_required" }
+      })]
+    });
+
+    const result = await new ProductService({ query }).preview("prod-1");
+
+    expect(result?.miaoshouWriteback).toMatchObject({
+      state: "result_unknown",
+      failureCode: "miaoshou.network",
+      safeMessage: "result unknown",
+      retryAllowed: false
+    });
+  });
+});

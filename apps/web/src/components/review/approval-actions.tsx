@@ -2,6 +2,7 @@
 
 import { useRef, useState } from "react";
 import type { ConfirmMiaoshouEditV1, RerunDownstreamV1, UpdateProductOverridesV1 } from "@tk/contracts";
+import type { ApprovalPreviewV1 } from "@tk/contracts/read-models";
 import { BASIC_BCP47_PATTERN_SOURCE, isBasicBcp47 } from "../../lib/locale";
 
 type ActionResult = Record<string, unknown> & { draftVersion?: number; revisionId?: string };
@@ -10,6 +11,7 @@ export type ReviewActions = Readonly<{
   updateDraft(command: VersionedDraftUpdate): Promise<ActionResult>;
   rerun(command: RerunDownstreamV1): Promise<ActionResult>;
   confirm(command: ConfirmMiaoshouEditV1): Promise<ActionResult>;
+  retryMiaoshouEdit(productId: string): Promise<ActionResult>;
 }>;
 
 const defaultActions: ReviewActions = {
@@ -26,8 +28,35 @@ const defaultActions: ReviewActions = {
     expectedListingRunId: command.expectedListingRunId,
     expectedTemplateVersion: command.expectedTemplateVersion,
     orderedFinalAssetIds: command.orderedFinalAssetIds
-  })
+  }),
+  retryMiaoshouEdit: (productId) => request(`/api/v1/products/${productId}/retry-miaoshou-edit`, "POST", {})
 };
+
+const DEFAULT_WRITEBACK: ApprovalPreviewV1["miaoshouWriteback"] = {
+  state: "not_started",
+  failureCode: null,
+  safeMessage: null,
+  retryAllowed: false,
+  approvalSnapshotId: null
+};
+
+function writebackStatus(view: ApprovalPreviewV1["miaoshouWriteback"]): string {
+  switch (view.state) {
+    case "queued":
+    case "syncing":
+      return "正在写回妙手";
+    case "succeeded":
+      return "已写回妙手";
+    case "failed":
+      return "妙手写回失败";
+    case "result_unknown":
+      return view.failureCode === "miaoshou_reconcile_no_change" || view.retryAllowed
+        ? "妙手写回未生效，远端仍为原内容"
+        : "妙手写回结果未知，需要人工核对";
+    default:
+      return "待确认";
+  }
+}
 
 async function request(url: string, method: string, body: unknown): Promise<ActionResult> {
   const response = await fetch(url, { method, headers: { "content-type": "application/json" }, body: JSON.stringify(body) });
@@ -61,17 +90,22 @@ export function ApprovalActions(props: Readonly<{
   orderedFinalAssetIds: string[];
   targetLocale: string;
   translationStyle: string;
+  miaoshouWriteback?: ApprovalPreviewV1["miaoshouWriteback"];
   actions?: ReviewActions;
 }>) {
+  const initialWriteback = props.miaoshouWriteback ?? DEFAULT_WRITEBACK;
   const [locale, setLocale] = useState(props.targetLocale);
   const [style, setStyle] = useState(props.translationStyle);
   const [startNode, setStartNode] = useState<RerunDownstreamV1["startNode"]>("listing");
   const [draftVersion, setDraftVersion] = useState(props.draftVersion);
   const [revisionId, setRevisionId] = useState(props.revisionId);
   const [approvalInvalidated, setApprovalInvalidated] = useState(false);
-  const [status, setStatus] = useState("待确认");
+  const [writebackState, setWritebackState] = useState(initialWriteback.state);
+  const [status, setStatus] = useState(writebackStatus(initialWriteback));
   const confirmInFlight = useRef(false);
   const [confirmPending, setConfirmPending] = useState(false);
+  const retryInFlight = useRef(false);
+  const [retryPending, setRetryPending] = useState(false);
   const actions = props.actions ?? {
     ...defaultActions,
     rerun: (command: RerunDownstreamV1) => request(`/api/v1/products/${props.productId}/rerun`, "POST", command)
@@ -130,12 +164,35 @@ export function ApprovalActions(props: Readonly<{
         orderedFinalAssetIds: props.orderedFinalAssetIds
       });
       setApprovalInvalidated(false);
+      setWritebackState("queued");
       setStatus("已进入妙手同步队列");
     } catch {
       setStatus("确认失败，请刷新版本后重试");
     } finally {
       confirmInFlight.current = false;
       setConfirmPending(false);
+    }
+  }
+
+  async function retryMiaoshouEdit() {
+    if (retryInFlight.current) return;
+    retryInFlight.current = true;
+    setRetryPending(true);
+    setStatus("正在提交妙手人工重试…");
+    try {
+      await actions.retryMiaoshouEdit(props.productId);
+      setWritebackState("queued");
+      setStatus("正在写回妙手");
+    } catch (error) {
+      const code = error instanceof Error ? error.message : "miaoshou_retry_failed";
+      setStatus(code === "revision_changed"
+        ? "商品版本已变化，请重新审核后确认"
+        : code === "writeback_in_progress"
+          ? "妙手写回任务已在处理中"
+          : "重新写回失败，请刷新后重试");
+    } finally {
+      retryInFlight.current = false;
+      setRetryPending(false);
     }
   }
 
@@ -178,9 +235,17 @@ export function ApprovalActions(props: Readonly<{
           </select>
         </label>
         <button type="button" onClick={() => void rerun()}>开始局部重跑</button>
-        <button type="button" disabled={confirmPending || props.orderedFinalAssetIds.length === 0 || !props.listingRunId} onClick={() => void confirm()}>
-          确认写回妙手
-        </button>
+        {writebackState === "not_started" && <button
+          type="button"
+          disabled={confirmPending || props.orderedFinalAssetIds.length === 0 || !props.listingRunId}
+          onClick={() => void confirm()}
+        >确认写回妙手</button>}
+        {writebackState === "result_unknown" && initialWriteback.retryAllowed && !approvalInvalidated && <button
+          type="button"
+          disabled={retryPending}
+          onClick={() => void retryMiaoshouEdit()}
+        >重新写回妙手</button>}
+        {(writebackState === "queued" || writebackState === "syncing") && <button type="button" disabled>正在写回妙手</button>}
       </div>
       <p>确认后，如商品尚未进入妙手采集箱，系统会先低频导入再编辑；不会触发店铺发布。</p>
     </section>

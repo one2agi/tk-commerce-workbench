@@ -42,6 +42,7 @@ describe("product safety boundary", () => {
       "POST local-captures",
       "POST products/[productId]/confirm-miaoshou-edit",
       "POST products/[productId]/rerun",
+      "POST products/[productId]/retry-miaoshou-edit",
       "POST products/batch-actions",
       "POST tasks/[taskId]/actions",
       "POST templates"
