@@ -1,4 +1,4 @@
-import type { AssetStagingPort, CanvasPort, ExchangeRatePort, LlmPort, MiaoshouEditPort, MiaoshouSourcePort } from "@tk/contracts";
+import type { AssetStagingPort, CanvasPort, ExchangeRatePort, ImagePromptPlannerPort, LlmPort, MiaoshouEditPort, MiaoshouSourcePort } from "@tk/contracts";
 import { createArchiveAssetsHandler } from "./handlers/archive-assets.js";
 import { createPricingHandler } from "./handlers/calculate-pricing.js";
 import { createCollectHandler } from "./handlers/collect.js";
@@ -10,6 +10,7 @@ import { createExchangeRateRefreshHandler } from "./handlers/refresh-exchange-ra
 import { createImageSelectHandler } from "./handlers/select-images.js";
 import { createStagingCleanupHandler } from "./handlers/staging-cleanup.js";
 import { createMiaoshouEditHandler } from "./handlers/miaoshou-edit.js";
+import { createPlanImagesHandler } from "./handlers/plan-images.js";
 import { createPrepareMiaoshouWritebackHandler } from "./handlers/prepare-miaoshou-writeback.js";
 import { AdapterLimiterSet, type AdapterLimit } from "./runtime/adapter-limiter.js";
 import { runWorkerLoop, type WorkerHandler, type WorkerJobRepository } from "./runtime/worker-loop.js";
@@ -45,6 +46,7 @@ export interface HandlerRegistryInput {
     exchangeRate: ExchangeRatePort;
     canvas: CanvasPort;
     staging: AssetStagingPort;
+    imagePlanner: ImagePromptPlannerPort;
   };
   repositories: {
     collect: Parameters<typeof createCollectHandler>[0]["repository"];
@@ -57,6 +59,7 @@ export interface HandlerRegistryInput {
     images: Parameters<typeof createImageSelectHandler>[0]["repository"];
     canvas: Parameters<typeof createCanvasHandler>[0]["repository"];
     finalPreview: Parameters<typeof createFinalPreviewHandler>[0]["repository"];
+    imageGeneration: Parameters<typeof createPlanImagesHandler>[0]["repository"];
     miaoshouEdit: Parameters<typeof createMiaoshouEditHandler>[0]["repository"];
   };
   reachability: Parameters<typeof createMiaoshouEditHandler>[0]["reachability"];
@@ -114,6 +117,11 @@ export function buildHandlerRegistry(input: HandlerRegistryInput): Readonly<Reco
       repository: input.repositories.miaoshouEdit,
       reachability: input.reachability,
       cleanupCodec: input.cleanupCodec,
+      audit: input.audit
+    }),
+    image_prompt_plan: createPlanImagesHandler({
+      planner: input.ports.imagePlanner,
+      repository: input.repositories.imageGeneration,
       audit: input.audit
     })
   });

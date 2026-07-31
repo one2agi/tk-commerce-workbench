@@ -15,11 +15,11 @@ const execution: WorkerExecutionContext = {
 describe("worker composition", () => {
   it("builds the complete persisted DAG handler registry", () => {
     const registry = buildHandlerRegistry({
-      ports: { miaoshou: {} as never, miaoshouEdit: {} as never, llm: {} as never, exchangeRate: {} as never, canvas: {} as never, staging: {} as never },
+      ports: { miaoshou: {} as never, miaoshouEdit: {} as never, llm: {} as never, exchangeRate: {} as never, canvas: {} as never, staging: {} as never, imagePlanner: {} as never },
       repositories: {
         collect: {} as never, prepareMiaoshouWriteback: {} as never, archive: {} as never, listing: {} as never, pricing: {} as never,
         exchangeRate: {} as never, templates: {} as never, images: {} as never, canvas: {} as never,
-        finalPreview: {} as never, miaoshouEdit: {} as never
+        finalPreview: {} as never, imageGeneration: {} as never, miaoshouEdit: {} as never
       },
       reachability: {} as never,
       cleanupCodec: {} as never,
@@ -37,7 +37,8 @@ describe("worker composition", () => {
     });
     expect(Object.keys(registry)).toEqual(expect.arrayContaining([
       "miaoshou_collect", "miaoshou_prepare_writeback", "asset_archive", "listing_generate", "pricing_calculate", "template_match",
-      "image_select", "canvas_generate", "final_preview", "exchange_rate_refresh", "staging_cleanup", "miaoshou_edit"
+      "image_select", "canvas_generate", "final_preview", "exchange_rate_refresh", "staging_cleanup", "miaoshou_edit",
+      "image_prompt_plan"
     ]));
   });
 
@@ -59,10 +60,10 @@ describe("worker composition", () => {
     const payload: MiaoshouCollectPayloadV1 = { version: 1, batchId: "batch-1", sourceUrl: "https://detail.1688.com/offer/1.html", idempotencyKey: "collect-1" };
     const fetchItem = vi.fn(async () => ({ canonicalSuccessDetailId: "detail-1" } as never));
     const registry = buildHandlerRegistry({
-      ports: { miaoshou: { fetchItem, resolveCanonicalSuccessDetail: vi.fn() }, miaoshouEdit: {} as never, llm: {} as never, exchangeRate: {} as never, canvas: {} as never, staging: { stage: vi.fn(), release: vi.fn() } },
+      ports: { miaoshou: { fetchItem, resolveCanonicalSuccessDetail: vi.fn() }, miaoshouEdit: {} as never, llm: {} as never, exchangeRate: {} as never, canvas: {} as never, staging: { stage: vi.fn(), release: vi.fn() }, imagePlanner: {} as never },
       repositories: {
         collect: { saveCollected: vi.fn(async () => ({ revisionId: "rev-1" })) }, prepareMiaoshouWriteback: {} as never, archive: {} as never, listing: {} as never, pricing: {} as never,
-        exchangeRate: {} as never, templates: {} as never, images: {} as never, canvas: {} as never, finalPreview: {} as never, miaoshouEdit: {} as never
+        exchangeRate: {} as never, templates: {} as never, images: {} as never, canvas: {} as never, finalPreview: {} as never, imageGeneration: {} as never, miaoshouEdit: {} as never
       },
       reachability: {} as never, cleanupCodec: {} as never, store: {} as never, analyzer: {} as never, quota: {} as never, audit: { append: vi.fn(async () => undefined) }, now: () => new Date(), maxCanvasRunsPerDay: 1,
       adapterLimits: { miaoshou: { concurrency: 1, minIntervalMs: 0 }, llm: { concurrency: 1, minIntervalMs: 0 }, exchangeRate: { concurrency: 1, minIntervalMs: 0 }, canvas: { concurrency: 1, minIntervalMs: 0 }, staging: { concurrency: 1, minIntervalMs: 0 } }
