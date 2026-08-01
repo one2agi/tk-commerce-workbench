@@ -358,7 +358,7 @@ export class ImageGenerationRepository {
   }
 
   /**
-   * Exclude a slot from the batch (user-initiated exclusion).
+   * Exclude a slot from the batch (user-initiated exclusion, worker version with fence).
    */
   async excludeSlot(slotId: string, fence: SlotFence): Promise<boolean> {
     const result = await this.pool.query(
@@ -371,6 +371,79 @@ export class ImageGenerationRepository {
       [slotId, fence.jobId, fence.owner, fence.leaseToken]
     );
     return (result.rowCount ?? 0) > 0;
+  }
+
+  /**
+   * Exclude a slot from the batch (web-initiated, no fence required).
+   */
+  async excludeSlotWeb(slotId: string): Promise<boolean> {
+    const result = await this.pool.query(
+      `UPDATE ${schema.imageGenerationSlots}
+       SET state = 'excluded', excluded_at = now(), updated_at = now()
+       WHERE id = $1 AND state IN ('waiting_for_plan', 'queued')`,
+      [slotId]
+    );
+    return (result.rowCount ?? 0) > 0;
+  }
+
+  /**
+   * Retry a failed slot (web-initiated, no fence required).
+   * Requeues the slot by inserting a new image_generate_slot job.
+   */
+  async retrySlot(slotId: string): Promise<boolean> {
+    const client = await this.pool.connect();
+    try {
+      await client.query("BEGIN");
+
+      // Load the slot and its batch to get the prompt hash for idempotency
+      const slot = await client.query(
+        `SELECT s.id, s.batch_id, s.prompt, s.attempt, s.state
+         FROM ${schema.imageGenerationSlots} s
+         WHERE s.id = $1 AND s.state = 'failed'`,
+        [slotId]
+      );
+      if (!slot.rowCount || slot.rowCount === 0) {
+        await client.query("ROLLBACK");
+        return false;
+      }
+
+      const row = slot.rows[0] as { id: string; batch_id: string; prompt: PlannedImagePromptV1 | null; attempt: number; state: string };
+
+      // Reset slot state to queued and increment attempt
+      await client.query(
+        `UPDATE ${schema.imageGenerationSlots}
+         SET state = 'queued', error = NULL, attempt = attempt + 1, updated_at = now()
+         WHERE id = $1`,
+        [slotId]
+      );
+
+      // Insert a new job for this retry (idempotent via business_key conflict)
+      const promptHash = row.prompt
+        ? Buffer.from(JSON.stringify(row.prompt)).toString("base64")
+        : "";
+      const newAttempt = row.attempt + 1;
+      const jobId = newId("job");
+      await client.query(
+        `INSERT INTO ${schema.jobs}
+         (id, kind, business_key, idempotency_key, payload, status, max_attempts, batch_key, created_at, updated_at)
+         VALUES ($1, 'image_generate_slot', $2, $2, $3::jsonb, 'queued', 3, $4, now(), now())
+         ON CONFLICT (kind, business_key) DO NOTHING`,
+        [
+          jobId,
+          `slot:${row.batch_id}:${slotId}:retry:${newAttempt}`,
+          JSON.stringify({ batchId: row.batch_id, slotId, slotNumber: 0, version: newAttempt }),
+          row.batch_id
+        ]
+      );
+
+      await client.query("COMMIT");
+      return true;
+    } catch (err) {
+      await client.query("ROLLBACK").catch(() => undefined);
+      throw err;
+    } finally {
+      client.release();
+    }
   }
 
   /**

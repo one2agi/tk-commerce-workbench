@@ -7,6 +7,7 @@ import { AutomationRunRepository } from "../../../../packages/db/src/repositorie
 import { JobRepository } from "../../../../packages/db/src/repositories/job-repository.js";
 import { LocalCaptureRepository } from "../../../../packages/db/src/repositories/local-capture-repository.js";
 import { ApprovalRepository, schema } from "@tk/db";
+import { ImageGenerationRepository } from "../../../../packages/db/src/repositories/image-generation-repository.js";
 import type { DbPool } from "../../../../packages/db/src/schema/index.js";
 
 import { createExtensionTokenVerifier, type ExtensionTokenVerifier } from "./auth/extension-token";
@@ -26,6 +27,7 @@ import {
   type ImageGenerationTemplate,
   type ImageGenerationTemplateVersion
 } from "./services/image-generation-template-service";
+import { ImageGenerationService } from "./services/image-generation-service";
 
 export interface ServerServices {
   verifyExtensionToken: ExtensionTokenVerifier;
@@ -39,6 +41,7 @@ export interface ServerServices {
   syncs: MiaoshouSyncService;
   productReruns: ProductRerunService;
   imageGenerationTemplates: ImageGenerationTemplateService;
+  imageGeneration: ImageGenerationService;
 }
 
 interface RuntimeConfig {
@@ -436,7 +439,11 @@ export function createServerServices(input: {
     approvals: new ApprovalRepository(input.pool),
     syncs: new MiaoshouSyncService(database),
     productReruns: new ProductRerunService(products, reruns),
-    imageGenerationTemplates: new ImageGenerationTemplateService(new PgImageGenerationTemplateStore(input.pool))
+    imageGenerationTemplates: new ImageGenerationTemplateService(new PgImageGenerationTemplateStore(input.pool)),
+    imageGeneration: new ImageGenerationService({
+      imageGenerationRepository: new ImageGenerationRepository(input.pool),
+      imageGenerationTemplates: new PgImageGenerationTemplateStore(input.pool)
+    })
   };
 }
 
