@@ -9,6 +9,7 @@ export interface SecretStatus {
   readonly canvasConfigured: boolean;
   readonly llmConfigured: boolean;
   readonly exchangeRateConfigured: boolean;
+  readonly imageGenerationConfigured: boolean;
 }
 
 export interface AppConfig {
@@ -27,6 +28,7 @@ export interface AppConfig {
   readonly canvasConfigured: boolean;
   readonly llmConfigured: boolean;
   readonly exchangeRateConfigured: boolean;
+  readonly imageGenerationConfigured: boolean;
   readonly canvasBaseUrl: string;
   readonly canvasId: string;
   readonly canvasWorkflowName: string;
@@ -35,6 +37,12 @@ export interface AppConfig {
   readonly llmApiKey: string;
   readonly llmModel: string;
   readonly exchangeRateBaseUrl: string;
+  readonly imagePlannerBaseUrl: string;
+  readonly imagePlannerApiKey: string;
+  readonly imagePlannerModel: string;
+  readonly imageProviderBaseUrl: string;
+  readonly imageProviderApiKey: string;
+  readonly imageProviderModel: string;
 }
 
 const LOOPBACK_HOST_PATTERN = /^(127\.0\.0\.1|localhost|\[::1\]|::1)$/i;
@@ -134,6 +142,10 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
     canvasConfigured: Boolean(read(env, "CANVAS_BASE_URL")),
     llmConfigured: Boolean(read(env, "LLM_BASE_URL") && read(env, "LLM_API_KEY")),
     exchangeRateConfigured: Boolean(read(env, "EXCHANGE_RATE_BASE_URL")),
+    imageGenerationConfigured: Boolean(
+      read(env, "IMAGE_PLANNER_BASE_URL") && read(env, "IMAGE_PLANNER_API_KEY") && read(env, "IMAGE_PLANNER_MODEL") &&
+      read(env, "IMAGE_PROVIDER_BASE_URL") && read(env, "IMAGE_PROVIDER_API_KEY") && read(env, "IMAGE_PROVIDER_MODEL")
+    ),
     canvasBaseUrl: read(env, "CANVAS_BASE_URL") ?? "",
     canvasId: read(env, "CANVAS_ID") ?? "0f91cb2d8f2846c091829af30ea2d18d",
     canvasWorkflowName: read(env, "CANVAS_WORKFLOW_NAME") ?? "TK工作流",
@@ -141,7 +153,13 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
     llmBaseUrl: read(env, "LLM_BASE_URL") ?? "",
     llmApiKey: read(env, "LLM_API_KEY") ?? "",
     llmModel: read(env, "LLM_MODEL") ?? "",
-    exchangeRateBaseUrl: read(env, "EXCHANGE_RATE_BASE_URL") ?? ""
+    exchangeRateBaseUrl: read(env, "EXCHANGE_RATE_BASE_URL") ?? "",
+    imagePlannerBaseUrl: read(env, "IMAGE_PLANNER_BASE_URL") ?? "",
+    imagePlannerApiKey: read(env, "IMAGE_PLANNER_API_KEY") ?? "",
+    imagePlannerModel: read(env, "IMAGE_PLANNER_MODEL") ?? "",
+    imageProviderBaseUrl: read(env, "IMAGE_PROVIDER_BASE_URL") ?? "",
+    imageProviderApiKey: read(env, "IMAGE_PROVIDER_API_KEY") ?? "",
+    imageProviderModel: read(env, "IMAGE_PROVIDER_MODEL") ?? ""
   };
 }
 
@@ -150,6 +168,7 @@ export function getSecretStatus(cfg: AppConfig): SecretStatus {
     miaoshouConfigured: cfg.miaoshouConfigured,
     canvasConfigured: cfg.canvasConfigured,
     llmConfigured: cfg.llmConfigured,
-    exchangeRateConfigured: cfg.exchangeRateConfigured
+    exchangeRateConfigured: cfg.exchangeRateConfigured,
+    imageGenerationConfigured: cfg.imageGenerationConfigured
   });
 }

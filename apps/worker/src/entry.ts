@@ -313,7 +313,9 @@ export function createWorkerApplication(input: CreateWorkerApplicationInput = {}
       llm: adapters.llm,
       exchangeRate: adapters.exchangeRate,
       canvas: adapters.canvas,
-      staging: adapters.assetStaging
+      staging: adapters.assetStaging,
+      imagePlanner: adapters.imagePlanner,
+      imageGeneration: adapters.imageGeneration
     },
     repositories: {
       ...pipelineRepositories(pipeline),

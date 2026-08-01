@@ -63,7 +63,7 @@ describe("config env", () => {
     expect(cfg.canvasApiKey).toBe("TEST_CANVAS_SECRET_DO_NOT_LOG");
     const safe = JSON.stringify(getSecretStatus(cfg));
     expect(safe).not.toMatch(/TEST_(?:CANVAS|LLM)_SECRET_DO_NOT_LOG/);
-    expect(JSON.parse(safe)).toEqual({ miaoshouConfigured: false, canvasConfigured: true, llmConfigured: true, exchangeRateConfigured: true });
+    expect(JSON.parse(safe)).toEqual({ miaoshouConfigured: false, canvasConfigured: true, llmConfigured: true, exchangeRateConfigured: true, imageGenerationConfigured: false });
   });
 
   it("treats Canvas base URL as configured when the Canvas deployment does not require an API key", () => {
@@ -75,5 +75,18 @@ describe("config env", () => {
     expect(cfg.canvasWorkflowName).toBe("TK工作流");
     expect(cfg.canvasApiKey).toBe("");
     expect(getSecretStatus(cfg).canvasConfigured).toBe(true);
+  });
+
+  it("reports image generation configured only when both planner and image provider are complete", () => {
+    const cfg = loadConfig({
+      ...BASE_ENV,
+      IMAGE_PLANNER_BASE_URL: "https://planner.test",
+      IMAGE_PLANNER_API_KEY: "planner-key",
+      IMAGE_PLANNER_MODEL: "gpt-4o",
+      IMAGE_PROVIDER_BASE_URL: "https://images.test",
+      IMAGE_PROVIDER_API_KEY: "provider-key",
+      IMAGE_PROVIDER_MODEL: "dall-e-3"
+    });
+    expect(cfg.imageGenerationConfigured).toBe(true);
   });
 });
