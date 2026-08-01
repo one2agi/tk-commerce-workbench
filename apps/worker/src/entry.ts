@@ -314,6 +314,7 @@ export function createWorkerApplication(input: CreateWorkerApplicationInput = {}
       exchangeRate: adapters.exchangeRate,
       canvas: adapters.canvas,
       staging: adapters.assetStaging,
+      publishing: adapters.assetPublishing,
       imagePlanner: adapters.imagePlanner,
       imageGeneration: adapters.imageGeneration
     },

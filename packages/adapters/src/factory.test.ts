@@ -29,7 +29,7 @@ describe("adapter bundle factory cost boundary", () => {
     const createLiveFetch = vi.fn(() => { throw new Error("must not construct dispatcher"); });
     const bundle = createAdapterBundle(mockConfig, undefined, { constructLive, createLiveFetch });
     expect(bundle.mode).toBe("mock");
-    expect(bundle.counters()).toEqual({ canvas: 0, llm: 0, exchangeRate: 0, assetStaging: 0, imagePlanner: 0, imageGeneration: 0 });
+    expect(bundle.counters()).toEqual({ canvas: 0, llm: 0, exchangeRate: 0, assetStaging: 0, assetPublishing: 0, imagePlanner: 0, imageGeneration: 0 });
     expect(constructLive).not.toHaveBeenCalled();
     expect(createLiveFetch).not.toHaveBeenCalled();
   });
@@ -38,7 +38,7 @@ describe("adapter bundle factory cost boundary", () => {
     const bundle = createAdapterBundle(mockConfig);
     await bundle.canvas.readWorkflowCapacity("workflow_1");
     await bundle.exchangeRate.latestSnapshot({ base: "CNY", target: "THB" });
-    expect(bundle.counters()).toEqual({ canvas: 1, llm: 0, exchangeRate: 1, assetStaging: 0, imagePlanner: 0, imageGeneration: 0 });
+    expect(bundle.counters()).toEqual({ canvas: 1, llm: 0, exchangeRate: 1, assetStaging: 0, assetPublishing: 0, imagePlanner: 0, imageGeneration: 0 });
   });
 
   it.each(["test", "integration", "e2e"] as const)("fails closed for live mode in %s", (processKind) => {

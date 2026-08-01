@@ -1,4 +1,4 @@
-import type { AssetStagingPort, CanvasPort, ExchangeRatePort, ImageGenerationPort, ImagePromptPlannerPort, LlmPort, MiaoshouEditPort, MiaoshouSourcePort } from "@tk/contracts";
+import type { AssetPublishingPort, AssetStagingPort, CanvasPort, ExchangeRatePort, ImageGenerationPort, ImagePromptPlannerPort, LlmPort, MiaoshouEditPort, MiaoshouSourcePort } from "@tk/contracts";
 import { createArchiveAssetsHandler } from "./handlers/archive-assets.js";
 import { createPricingHandler } from "./handlers/calculate-pricing.js";
 import { createCollectHandler } from "./handlers/collect.js";
@@ -47,6 +47,7 @@ export interface HandlerRegistryInput {
     exchangeRate: ExchangeRatePort;
     canvas: CanvasPort;
     staging: AssetStagingPort;
+    publishing: AssetPublishingPort;
     imagePlanner: ImagePromptPlannerPort;
     imageGeneration: ImageGenerationPort;
   };
@@ -121,6 +122,7 @@ export function buildHandlerRegistry(input: HandlerRegistryInput): Readonly<Reco
     miaoshou_edit: createMiaoshouEditHandler({
       edit: miaoshouEdit,
       staging,
+      publishing: input.ports.publishing,
       repository: input.repositories.miaoshouEdit,
       reachability: input.reachability,
       cleanupCodec: input.cleanupCodec,

@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 
-import type { ApprovalSnapshotV1, AssetStagingPort, MiaoshouEditPort } from "@tk/contracts";
+import type { ApprovalSnapshotV1, AssetPublishingPort, AssetStagingPort, MiaoshouEditPort } from "@tk/contracts";
 
 import { ExternalResultUnknownError, type ClaimedWorkerJob, type WorkerExecutionContext } from "../runtime/worker-loop.js";
 import { createMiaoshouEditHandler } from "./miaoshou-edit.js";
@@ -67,6 +67,13 @@ function dependencies(result: Awaited<ReturnType<MiaoshouEditPort["applyEdit"]>>
     ]),
     release: vi.fn().mockResolvedValue(undefined)
   } satisfies AssetStagingPort;
+  const publishing = {
+    publish: vi.fn().mockResolvedValue([
+      { remoteUrl: "https://cdn.test/abc123b.png" },
+      { remoteUrl: "https://cdn.test/abc123a.png" }
+    ]),
+    release: vi.fn().mockResolvedValue(undefined)
+  } satisfies AssetPublishingPort;
   const repository = {
     loadSnapshot: vi.fn().mockResolvedValue(snapshot),
     saveSucceeded: vi.fn().mockResolvedValue(true),
@@ -79,11 +86,11 @@ function dependencies(result: Awaited<ReturnType<MiaoshouEditPort["applyEdit"]>>
   const audit = { append: vi.fn().mockResolvedValue(undefined) };
   const reachability = { assertReachable: vi.fn().mockResolvedValue(undefined) };
   const cleanupCodec = { protect: vi.fn(() => "protected-envelope"), unprotect: vi.fn(() => ({ remoteUrls: [], expiresAt: "2026-07-16T01:00:00Z" })) };
-  return { edit, staging, repository, audit, reachability, cleanupCodec };
+  return { edit, staging, publishing, repository, audit, reachability, cleanupCodec };
 }
 
 describe("createMiaoshouEditHandler", () => {
-  it("stages approved assets in their frozen order, checks reachability and releases them", async () => {
+  it("publishes approved assets to immutable CDN URLs in their frozen order, checks reachability and releases them", async () => {
     const deps = dependencies({ kind: "succeeded", remoteDetailId: "remote-1" });
     const handler = createMiaoshouEditHandler(deps);
     const run = execution();
@@ -104,21 +111,80 @@ describe("createMiaoshouEditHandler", () => {
       }),
       expect.any(Object)
     );
-    expect(JSON.stringify(deps.repository.persistReconciliationContext.mock.calls)).not.toContain("https://stage.test");
+    expect(JSON.stringify(deps.repository.persistReconciliationContext.mock.calls)).not.toContain("https://cdn.test");
     const persistedMarker = vi.mocked(run.persistRemoteTask);
     expect(deps.audit.append.mock.invocationCallOrder[0]).toBeLessThan(deps.repository.persistReconciliationContext.mock.invocationCallOrder[0]!);
     expect(deps.repository.persistReconciliationContext.mock.invocationCallOrder[0])
       .toBeLessThan(persistedMarker.mock.invocationCallOrder[0]!);
     expect(persistedMarker.mock.invocationCallOrder[0]).toBeLessThan(deps.edit.applyEdit.mock.invocationCallOrder[0]!);
-    expect(deps.staging.stage).toHaveBeenCalledWith({ localAssetIds: ["/assets/b.png", "/assets/a.png"], purpose: "miaoshou_edit" });
-    expect(deps.reachability.assertReachable).toHaveBeenCalledWith(["https://stage.test/asset-b", "https://stage.test/asset-a"]);
+    expect(deps.publishing.publish).toHaveBeenCalledWith({
+      assets: [
+        { assetId: "asset-b", localPath: "/assets/b.png", extension: "png" },
+        { assetId: "asset-a", localPath: "/assets/a.png", extension: "png" }
+      ],
+      purpose: "miaoshou_edit"
+    });
+    expect(deps.reachability.assertReachable).toHaveBeenCalledWith(["https://cdn.test/abc123b.png", "https://cdn.test/abc123a.png"]);
     expect(deps.edit.applyEdit).toHaveBeenCalledWith(expect.objectContaining({
       approvalSnapshot: snapshot,
-      orderedRemoteAssetUrls: ["https://stage.test/asset-b", "https://stage.test/asset-a"],
+      orderedRemoteAssetUrls: ["https://cdn.test/abc123b.png", "https://cdn.test/abc123a.png"],
       idempotencyKey: "miaoshou-edit:approval-1"
     }));
     expect(deps.repository.saveSucceeded).toHaveBeenCalledWith("approval-1", "remote-1", expect.any(Object));
-    expect(deps.staging.release).toHaveBeenCalledWith({ remoteUrls: ["https://stage.test/asset-b", "https://stage.test/asset-a"] });
+    expect(deps.publishing.release).toHaveBeenCalledWith({ remoteUrls: ["https://cdn.test/abc123b.png", "https://cdn.test/abc123a.png"] });
+  });
+
+  it("publishes local approval assets without Canvas staging", async () => {
+    const publishing = {
+      publish: vi.fn().mockResolvedValue([
+        { remoteUrl: "https://cdn.example.com/images/abc123.png" },
+        { remoteUrl: "https://cdn.example.com/images/def456.png" }
+      ]),
+      release: vi.fn().mockResolvedValue(undefined)
+    } satisfies AssetPublishingPort;
+    const staging = {
+      stage: vi.fn().mockResolvedValue([]),
+      release: vi.fn().mockResolvedValue(undefined)
+    } satisfies AssetStagingPort;
+    const repository = {
+      loadSnapshot: vi.fn().mockResolvedValue(snapshot),
+      saveSucceeded: vi.fn().mockResolvedValue(true),
+      saveValidationFailure: vi.fn().mockResolvedValue(true),
+      saveResultUnknown: vi.fn().mockResolvedValue(true),
+      saveReconciliationResultUnknown: vi.fn().mockResolvedValue(true),
+      saveReconciled: vi.fn().mockResolvedValue(true),
+      persistReconciliationContext: vi.fn().mockResolvedValue(true)
+    };
+    const audit = { append: vi.fn().mockResolvedValue(undefined) };
+    const reachability = { assertReachable: vi.fn().mockResolvedValue(undefined) };
+    const cleanupCodec = { protect: vi.fn(() => "protected-envelope"), unprotect: vi.fn(() => ({ remoteUrls: [], expiresAt: "2026-07-16T01:00:00Z" })) };
+
+    const handler = createMiaoshouEditHandler({
+      edit: {
+        applyEdit: vi.fn().mockResolvedValue({ kind: "succeeded", remoteDetailId: "remote-1" }),
+        reconcileByCanonicalDetailId: vi.fn().mockResolvedValue({ remoteDetailId: "detail-3799770548", state: "applied" })
+      },
+      staging,
+      publishing,
+      repository,
+      audit,
+      reachability,
+      cleanupCodec
+    });
+    const run = execution();
+
+    await expect(handler(job(), run)).resolves.toEqual({ next: [] });
+
+    // Publishing must be called with the approved local assets and miaoshou_edit purpose
+    expect(publishing.publish).toHaveBeenCalledWith({
+      assets: [
+        { assetId: "asset-b", localPath: "/assets/b.png", extension: "png" },
+        { assetId: "asset-a", localPath: "/assets/a.png", extension: "png" }
+      ],
+      purpose: "miaoshou_edit"
+    });
+    // Staging must NOT be called for miaoshou_edit purpose
+    expect(staging.stage).not.toHaveBeenCalled();
   });
 
   it("turns a crash after remote acceptance but before local save into reconciliation-only recovery", async () => {
@@ -166,7 +232,7 @@ describe("createMiaoshouEditHandler", () => {
     await createMiaoshouEditHandler(deps)(job("remote-task-1"), execution());
 
     expect(deps.edit.applyEdit).not.toHaveBeenCalled();
-    expect(deps.staging.stage).not.toHaveBeenCalled();
+    expect(deps.publishing.publish).not.toHaveBeenCalled();
     expect(deps.edit.reconcileByCanonicalDetailId).toHaveBeenCalledWith({
       canonicalSuccessDetailId: "detail-3799770548",
       sourceItemId: "892408514788"
@@ -203,20 +269,6 @@ describe("createMiaoshouEditHandler", () => {
 
     expect(deps.repository.saveSucceeded).toHaveBeenCalledTimes(1);
     expect(deps.repository.saveResultUnknown).not.toHaveBeenCalled();
-  });
-
-  it("persists an encrypted cleanup compensation when staged URL release fails", async () => {
-    const deps = dependencies({ kind: "succeeded", remoteDetailId: "remote-1" });
-    deps.staging.release = vi.fn().mockRejectedValue(new Error("cleanup unavailable"));
-    const run = execution();
-
-    await createMiaoshouEditHandler(deps)(job(), run);
-
-    expect(run.scheduleCompensation).toHaveBeenCalledWith(expect.objectContaining({
-      kind: "staging_cleanup",
-      payload: expect.objectContaining({ protectedRemoteUrls: "protected-envelope" })
-    }));
-    expect(JSON.stringify(vi.mocked(run.scheduleCompensation).mock.calls)).not.toContain("https://stage.test");
   });
 
   it("does not persist a marker or write remotely when the pre-call audit fails", async () => {

@@ -1,5 +1,6 @@
 import type {
   ApprovalSnapshotV1,
+  AssetPublishingPort,
   AssetStagingPort,
   IdempotencyKey,
   MiaoshouEditFieldError,
@@ -47,6 +48,7 @@ interface MiaoshouEditRepository {
 export function createMiaoshouEditHandler(input: {
   edit: MiaoshouEditPort;
   staging: AssetStagingPort;
+  publishing: AssetPublishingPort;
   repository: MiaoshouEditRepository;
   reachability: { assertReachable(urls: string[]): Promise<void> };
   cleanupCodec: StagingCleanupCodec;
@@ -96,7 +98,7 @@ export function createMiaoshouEditHandler(input: {
       return { next: [] };
     }
 
-    let staged: Awaited<ReturnType<AssetStagingPort["stage"]>> = [];
+    let published: Awaited<ReturnType<AssetPublishingPort["publish"]>> = [];
     let reconciliationMarker = `canonical:${snapshot.canonicalSuccessDetailId}`;
     let externalCallStarted = false;
     try {
@@ -105,14 +107,18 @@ export function createMiaoshouEditHandler(input: {
       if (localAssetIds.length !== snapshot.orderedFinalAssetIds.length) {
         throw new NeedsInputError("miaoshou_asset_paths_missing", "Approved images are missing local archive paths");
       }
-      staged = await input.staging.stage({
-        localAssetIds,
+      published = await input.publishing.publish({
+        assets: snapshot.orderedFinalAssetIds.map((assetId, i) => ({
+          assetId,
+          localPath: localAssetIds[i]!,
+          extension: localAssetIds[i]!.split(".").pop() ?? ""
+        })),
         purpose: "miaoshou_edit"
       });
-      if (staged.length !== snapshot.orderedFinalAssetIds.length) {
-        throw new NeedsInputError("miaoshou_staging_incomplete", "Not all approved images could be staged");
+      if (published.length !== snapshot.orderedFinalAssetIds.length) {
+        throw new NeedsInputError("miaoshou_publishing_incomplete", "Not all approved images could be published");
       }
-      const orderedRemoteAssetUrls = staged.map((asset) => asset.remoteUrl);
+      const orderedRemoteAssetUrls = published.map((asset) => asset.remoteUrl);
       await input.reachability.assertReachable(orderedRemoteAssetUrls);
       execution.assertLease();
       await input.audit.append({
@@ -174,41 +180,25 @@ export function createMiaoshouEditHandler(input: {
         "Miaoshou edit may have succeeded before the local result was saved"
       );
     } finally {
-      if (staged.length > 0) {
-        const remoteUrls = staged.map((asset) => asset.remoteUrl);
-        let released = false;
+      if (published.length > 0) {
+        const remoteUrls = published.map((asset) => asset.remoteUrl);
         try {
-          await input.staging.release({ remoteUrls });
-          released = true;
+          await input.publishing.release({ remoteUrls });
           await input.audit.append({
-            action: "miaoshou.edit.staging.release_best_effort",
+            action: "miaoshou.edit.publishing.release_best_effort",
             targetKind: "approval_snapshot",
             targetId: approvalSnapshotId,
-            payload: { state: "local_tracking_cleared", remoteDeleteVerified: false, imageCount: remoteUrls.length },
+            payload: { state: "local_tracking_cleared", imageCount: remoteUrls.length },
             redacted: true
           });
         } catch {
-          if (!released) {
-            await execution.scheduleCompensation({
-              kind: "staging_cleanup",
-              businessKey: `miaoshou-edit:${approvalSnapshotId}:staging-cleanup`,
-              payload: {
-                version: 1,
-                revisionId: String(snapshot.revisionId),
-                  protectedRemoteUrls: input.cleanupCodec.protect({
-                    remoteUrls,
-                    expiresAt: staged.map((asset) => asset.expiresAt).sort()[0]!
-                  })
-              },
-              delayMs: 60_000
-            });
-          }
+          // Publishing URLs are immutable and public; best-effort release is safe to skip.
           try {
             await input.audit.append({
-              action: "miaoshou.edit.staging.release_best_effort",
+              action: "miaoshou.edit.publishing.release_best_effort",
               targetKind: "approval_snapshot",
               targetId: approvalSnapshotId,
-              payload: { state: "failed", code: "cleanup_deferred" },
+              payload: { state: "skipped", imageCount: remoteUrls.length },
               redacted: true
             });
           } catch {

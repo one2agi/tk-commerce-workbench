@@ -1,4 +1,5 @@
 import type {
+  AssetPublishingPort,
   AssetStagingPort,
   CanvasPort,
   ExchangeRatePort,
@@ -13,6 +14,7 @@ export interface AdapterCallCounters {
   readonly llm: number;
   readonly exchangeRate: number;
   readonly assetStaging: number;
+  readonly assetPublishing: number;
   readonly imagePlanner: number;
   readonly imageGeneration: number;
 }
@@ -22,6 +24,7 @@ export interface DeterministicAdapterFakes {
   readonly llm: LlmPort;
   readonly exchangeRate: ExchangeRatePort;
   readonly assetStaging: AssetStagingPort;
+  readonly assetPublishing: AssetPublishingPort;
   readonly imagePlanner: ImagePromptPlannerPort;
   readonly imageGeneration: ImageGenerationPort;
   counters(): AdapterCallCounters;
@@ -29,7 +32,7 @@ export interface DeterministicAdapterFakes {
 }
 
 export function createDeterministicAdapterFakes(): DeterministicAdapterFakes {
-  const counts = { canvas: 0, llm: 0, exchangeRate: 0, assetStaging: 0, imagePlanner: 0, imageGeneration: 0 };
+  const counts = { canvas: 0, llm: 0, exchangeRate: 0, assetStaging: 0, assetPublishing: 0, imagePlanner: 0, imageGeneration: 0 };
   let rate: ExchangeRateSnapshotWire = { base: "CNY", target: "THB", rate: "4.80", source: "provider", observedAt: "2026-07-16T00:00:00.000Z", isStale: false };
   const canvas: CanvasPort = {
     async readWorkflowCapacity(workflowId) { counts.canvas += 1; return { workflowId, workflowVersion: 1, inputCapacity: 9, expectedOutputCount: 5 }; },
@@ -72,9 +75,18 @@ export function createDeterministicAdapterFakes(): DeterministicAdapterFakes {
       return { state: "succeeded", outputUrl: `https://images.mock/generated-${input.remoteTaskId}.png` };
     }
   };
+  const assetPublishing: AssetPublishingPort = {
+    async publish({ assets }) {
+      counts.assetPublishing += 1;
+      return assets.map((asset) => ({
+        remoteUrl: `https://cdn.mock/images/${asset.assetId}.${asset.extension}`
+      }));
+    },
+    async release() { counts.assetPublishing += 1; }
+  };
   return {
-    canvas, llm, exchangeRate, assetStaging, imagePlanner, imageGeneration,
+    canvas, llm, exchangeRate, assetStaging, assetPublishing, imagePlanner, imageGeneration,
     counters: () => Object.freeze({ ...counts }),
-    reset() { counts.canvas = 0; counts.llm = 0; counts.exchangeRate = 0; counts.assetStaging = 0; counts.imagePlanner = 0; counts.imageGeneration = 0; }
+    reset() { counts.canvas = 0; counts.llm = 0; counts.exchangeRate = 0; counts.assetStaging = 0; counts.assetPublishing = 0; counts.imagePlanner = 0; counts.imageGeneration = 0; }
   };
 }

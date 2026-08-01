@@ -63,7 +63,7 @@ describe("config env", () => {
     expect(cfg.canvasApiKey).toBe("TEST_CANVAS_SECRET_DO_NOT_LOG");
     const safe = JSON.stringify(getSecretStatus(cfg));
     expect(safe).not.toMatch(/TEST_(?:CANVAS|LLM)_SECRET_DO_NOT_LOG/);
-    expect(JSON.parse(safe)).toEqual({ miaoshouConfigured: false, canvasConfigured: true, llmConfigured: true, exchangeRateConfigured: true, imageGenerationConfigured: false });
+    expect(JSON.parse(safe)).toEqual({ miaoshouConfigured: false, canvasConfigured: true, llmConfigured: true, exchangeRateConfigured: true, imageGenerationConfigured: false, assetPublishingConfigured: false });
   });
 
   it("treats Canvas base URL as configured when the Canvas deployment does not require an API key", () => {
@@ -88,5 +88,32 @@ describe("config env", () => {
       IMAGE_PROVIDER_MODEL: "dall-e-3"
     });
     expect(cfg.imageGenerationConfigured).toBe(true);
+  });
+
+  it("reports asset publishing configured only when all S3 fields are present", () => {
+    const cfg = loadConfig({
+      ...BASE_ENV,
+      ASSET_PUBLISH_S3_ENDPOINT: "https://s3.example.com",
+      ASSET_PUBLISH_S3_REGION: "us-east-1",
+      ASSET_PUBLISH_S3_BUCKET: "tk-assets",
+      ASSET_PUBLISH_S3_ACCESS_KEY_ID: "test-key",
+      ASSET_PUBLISH_S3_SECRET_ACCESS_KEY: "test-secret",
+      ASSET_PUBLISH_PUBLIC_BASE_URL: "https://cdn.example.com"
+    });
+    expect(cfg.assetPublishingConfigured).toBe(true);
+    expect(getSecretStatus(cfg).assetPublishingConfigured).toBe(true);
+  });
+
+  it("reports asset publishing not configured when any S3 field is missing", () => {
+    const cfg = loadConfig({
+      ...BASE_ENV,
+      ASSET_PUBLISH_S3_ENDPOINT: "https://s3.example.com",
+      ASSET_PUBLISH_S3_REGION: "us-east-1",
+      ASSET_PUBLISH_S3_BUCKET: "tk-assets",
+      ASSET_PUBLISH_S3_ACCESS_KEY_ID: "test-key",
+      ASSET_PUBLISH_S3_SECRET_ACCESS_KEY: "",
+      ASSET_PUBLISH_PUBLIC_BASE_URL: "https://cdn.example.com"
+    });
+    expect(cfg.assetPublishingConfigured).toBe(false);
   });
 });

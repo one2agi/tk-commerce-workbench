@@ -10,5 +10,6 @@ export * from "./staging/asset-staging-adapter.js";
 export * from "./security/safe-image-download.js";
 export * from "./image-generation/openai-image-planner.js";
 export * from "./image-generation/openai-compatible-image-provider.js";
+export * from "./publishing/asset-publishing-adapter.js";
 export * from "./factory.js";
 export * from "./testing/fakes.js";

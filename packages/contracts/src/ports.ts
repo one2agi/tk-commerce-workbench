@@ -172,3 +172,22 @@ export interface AssetStagingPort {
   stage(input: { localAssetIds: string[]; purpose: "canvas" | "miaoshou_edit" }): Promise<StagedAsset[]>;
   release(input: { remoteUrls: string[] }): Promise<void>;
 }
+
+// ----- Asset publishing (S3-compatible, non-Canvas) -----
+
+export type PublishedAsset = Readonly<{
+  remoteUrl: string;
+}>;
+
+export type PublishingPurpose = "miaoshou_edit";
+
+export type LocalAssetRef = Readonly<{
+  assetId: string;
+  localPath: string;
+  extension: string;
+}>;
+
+export interface AssetPublishingPort {
+  publish(input: { assets: LocalAssetRef[]; purpose: PublishingPurpose }): Promise<PublishedAsset[]>;
+  release(input: { remoteUrls: string[] }): Promise<void>;
+}

@@ -1,7 +1,7 @@
 import type { AppConfig } from "@tk/config";
 import { readFile } from "node:fs/promises";
 import { extname, resolve, sep } from "node:path";
-import type { AssetStagingPort, CanvasPort, ExchangeRatePort, ImageGenerationPort, ImagePromptPlannerPort, LlmPort } from "@tk/contracts";
+import type { AssetPublishingPort, AssetStagingPort, CanvasPort, ExchangeRatePort, ImageGenerationPort, ImagePromptPlannerPort, LlmPort } from "@tk/contracts";
 import { createCanvasAdapter } from "./canvas/canvas-adapter.js";
 import { createExchangeRateAdapter } from "./exchange-rate/exchange-rate-adapter.js";
 import { createEnvAwareFetch } from "./env-aware-fetch.js";
@@ -10,6 +10,7 @@ import { createSafeImageDownloader } from "./security/safe-image-download.js";
 import { createAssetStagingAdapter } from "./staging/asset-staging-adapter.js";
 import { createOpenAiImagePlanner } from "./image-generation/openai-image-planner.js";
 import { createOpenAiCompatibleImageProvider } from "./image-generation/openai-compatible-image-provider.js";
+import { createAssetPublishingAdapter } from "./publishing/asset-publishing-adapter.js";
 import { createDeterministicAdapterFakes, type AdapterCallCounters } from "./testing/fakes.js";
 
 export interface AdapterBundle {
@@ -18,6 +19,7 @@ export interface AdapterBundle {
   readonly llm: LlmPort;
   readonly exchangeRate: ExchangeRatePort;
   readonly assetStaging: AssetStagingPort;
+  readonly assetPublishing: AssetPublishingPort;
   readonly imagePlanner: ImagePromptPlannerPort;
   readonly imageGeneration: ImageGenerationPort;
   counters(): AdapterCallCounters;
@@ -32,7 +34,8 @@ export interface LiveCommandContext {
 export type AdapterFactoryConfig = Partial<Pick<AppConfig,
   "canvasBaseUrl" | "canvasId" | "canvasWorkflowName" | "canvasApiKey" | "llmBaseUrl" | "llmApiKey" | "llmModel" | "exchangeRateBaseUrl" |
   "imagePlannerBaseUrl" | "imagePlannerApiKey" | "imagePlannerModel" |
-  "imageProviderBaseUrl" | "imageProviderApiKey" | "imageProviderModel"
+  "imageProviderBaseUrl" | "imageProviderApiKey" | "imageProviderModel" |
+  "assetPublishS3Endpoint" | "assetPublishS3Region" | "assetPublishS3Bucket" | "assetPublishS3AccessKeyId" | "assetPublishS3SecretAccessKey" | "assetPublishPublicBaseUrl"
 >> & Pick<AppConfig, "externalAdapterMode" | "nodeEnv" | "assetRoot"> & {
   readonly processKind?: "app" | "test" | "integration" | "e2e";
 };
@@ -45,7 +48,8 @@ export interface AdapterFactoryDeps {
 export function createAdapterBundle(config: AdapterFactoryConfig, commandContext?: LiveCommandContext, deps: AdapterFactoryDeps = {}): AdapterBundle {
   if (config.externalAdapterMode === "mock") {
     const fakes = createDeterministicAdapterFakes();
-    return { mode: "mock", canvas: fakes.canvas, llm: fakes.llm, exchangeRate: fakes.exchangeRate, assetStaging: fakes.assetStaging, imagePlanner: fakes.imagePlanner, imageGeneration: fakes.imageGeneration, counters: fakes.counters };
+    const publishing = createStubAssetPublishingAdapter();
+    return { mode: "mock", canvas: fakes.canvas, llm: fakes.llm, exchangeRate: fakes.exchangeRate, assetStaging: fakes.assetStaging, assetPublishing: publishing, imagePlanner: fakes.imagePlanner, imageGeneration: fakes.imageGeneration, counters: fakes.counters };
   }
   if (config.nodeEnv === "test" || config.processKind === "test" || config.processKind === "integration" || config.processKind === "e2e") {
     throw new Error("adapter factory: refusing live adapters in test/integration/e2e");
@@ -103,7 +107,19 @@ function constructLiveAdapters(config: AdapterFactoryConfig, _context: LiveComma
       model: config.imageProviderModel,
       fetchImpl
     }),
-    counters: () => Object.freeze({ canvas: 0, llm: 0, exchangeRate: 0, assetStaging: 0, imagePlanner: 0, imageGeneration: 0 })
+    assetPublishing: config.assetPublishS3Endpoint && config.assetPublishS3Region && config.assetPublishS3Bucket && config.assetPublishS3AccessKeyId && config.assetPublishS3SecretAccessKey && config.assetPublishPublicBaseUrl
+      ? createAssetPublishingAdapter({
+          s3Endpoint: config.assetPublishS3Endpoint,
+          s3Region: config.assetPublishS3Region,
+          s3Bucket: config.assetPublishS3Bucket,
+          s3AccessKeyId: config.assetPublishS3AccessKeyId,
+          s3SecretAccessKey: config.assetPublishS3SecretAccessKey,
+          publicBaseUrl: config.assetPublishPublicBaseUrl,
+          assetRoot: config.assetRoot,
+          fetchImpl
+        })
+      : createStubAssetPublishingAdapter(),
+    counters: () => Object.freeze({ canvas: 0, llm: 0, exchangeRate: 0, assetStaging: 0, assetPublishing: 0, imagePlanner: 0, imageGeneration: 0 })
   };
 }
 
@@ -145,4 +161,16 @@ export { createEnvAwareFetch } from "./env-aware-fetch.js";
 
 function isStableCommandContext(context: LiveCommandContext | undefined): context is LiveCommandContext {
   return Boolean(context && context.kind === "worker_command" && /^[A-Za-z0-9][A-Za-z0-9:_-]{7,}$/.test(context.commandId) && /^[A-Za-z0-9][A-Za-z0-9:_-]{7,}$/.test(context.idempotencyKey));
+}
+
+function createStubAssetPublishingAdapter() {
+  // Stub adapter for when S3 config is not provided.
+  return {
+    async publish({ assets }: { assets: Array<{ assetId: string; localPath: string; extension: string }>; purpose: string }) {
+      return assets.map((asset) => ({
+        remoteUrl: `https://cdn.mock/images/${asset.assetId}.${asset.extension}`
+      }));
+    },
+    async release() {}
+  } satisfies AssetPublishingPort;
 }

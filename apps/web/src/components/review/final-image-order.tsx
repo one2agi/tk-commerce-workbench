@@ -20,6 +20,31 @@ function canvasPreviewUrl(
   return orderedFinalImages.find((image) => image.assetId === output)?.thumbnailUrl ?? null;
 }
 
+export type FinalImageCandidate = Readonly<{
+  assetId: string;
+  previewUrl: string;
+  thumbnailUrl?: string;
+  kind: "processed" | "source";
+}>;
+
+/**
+ * Builds the list of final image candidates for review.
+ * Only accepted successful generated (processed) assets are included.
+ * Source images from originalListing are NOT mixed in.
+ */
+export function buildFinalImageCandidates(
+  workspace: Pick<ReviewWorkspaceView, "reviewFacts" | "originalListing">
+): FinalImageCandidate[] {
+  // Only accepted successful generated images enter the final order.
+  // Source images from originalListing (mainImages, detailImages) are never mixed in.
+  return workspace.reviewFacts.orderedFinalImages.map((image) => ({
+    assetId: image.assetId,
+    previewUrl: image.previewUrl,
+    thumbnailUrl: image.thumbnailUrl,
+    kind: "processed" as const
+  }));
+}
+
 export function FinalImageOrder({ orderedFinalImages, outputs }: {
   orderedFinalImages: ReviewWorkspaceView["reviewFacts"]["orderedFinalImages"];
   outputs: string[];

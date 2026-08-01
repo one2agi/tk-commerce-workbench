@@ -10,6 +10,7 @@ export interface SecretStatus {
   readonly llmConfigured: boolean;
   readonly exchangeRateConfigured: boolean;
   readonly imageGenerationConfigured: boolean;
+  readonly assetPublishingConfigured: boolean;
 }
 
 export interface AppConfig {
@@ -29,6 +30,7 @@ export interface AppConfig {
   readonly llmConfigured: boolean;
   readonly exchangeRateConfigured: boolean;
   readonly imageGenerationConfigured: boolean;
+  readonly assetPublishingConfigured: boolean;
   readonly canvasBaseUrl: string;
   readonly canvasId: string;
   readonly canvasWorkflowName: string;
@@ -43,6 +45,12 @@ export interface AppConfig {
   readonly imageProviderBaseUrl: string;
   readonly imageProviderApiKey: string;
   readonly imageProviderModel: string;
+  readonly assetPublishS3Endpoint: string;
+  readonly assetPublishS3Region: string;
+  readonly assetPublishS3Bucket: string;
+  readonly assetPublishS3AccessKeyId: string;
+  readonly assetPublishS3SecretAccessKey: string;
+  readonly assetPublishPublicBaseUrl: string;
 }
 
 const LOOPBACK_HOST_PATTERN = /^(127\.0\.0\.1|localhost|\[::1\]|::1)$/i;
@@ -146,6 +154,11 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
       read(env, "IMAGE_PLANNER_BASE_URL") && read(env, "IMAGE_PLANNER_API_KEY") && read(env, "IMAGE_PLANNER_MODEL") &&
       read(env, "IMAGE_PROVIDER_BASE_URL") && read(env, "IMAGE_PROVIDER_API_KEY") && read(env, "IMAGE_PROVIDER_MODEL")
     ),
+    assetPublishingConfigured: Boolean(
+      read(env, "ASSET_PUBLISH_S3_ENDPOINT") && read(env, "ASSET_PUBLISH_S3_REGION") &&
+      read(env, "ASSET_PUBLISH_S3_BUCKET") && read(env, "ASSET_PUBLISH_S3_ACCESS_KEY_ID") &&
+      read(env, "ASSET_PUBLISH_S3_SECRET_ACCESS_KEY") && read(env, "ASSET_PUBLISH_PUBLIC_BASE_URL")
+    ),
     canvasBaseUrl: read(env, "CANVAS_BASE_URL") ?? "",
     canvasId: read(env, "CANVAS_ID") ?? "0f91cb2d8f2846c091829af30ea2d18d",
     canvasWorkflowName: read(env, "CANVAS_WORKFLOW_NAME") ?? "TK工作流",
@@ -159,7 +172,13 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
     imagePlannerModel: read(env, "IMAGE_PLANNER_MODEL") ?? "",
     imageProviderBaseUrl: read(env, "IMAGE_PROVIDER_BASE_URL") ?? "",
     imageProviderApiKey: read(env, "IMAGE_PROVIDER_API_KEY") ?? "",
-    imageProviderModel: read(env, "IMAGE_PROVIDER_MODEL") ?? ""
+    imageProviderModel: read(env, "IMAGE_PROVIDER_MODEL") ?? "",
+    assetPublishS3Endpoint: read(env, "ASSET_PUBLISH_S3_ENDPOINT") ?? "",
+    assetPublishS3Region: read(env, "ASSET_PUBLISH_S3_REGION") ?? "",
+    assetPublishS3Bucket: read(env, "ASSET_PUBLISH_S3_BUCKET") ?? "",
+    assetPublishS3AccessKeyId: read(env, "ASSET_PUBLISH_S3_ACCESS_KEY_ID") ?? "",
+    assetPublishS3SecretAccessKey: read(env, "ASSET_PUBLISH_S3_SECRET_ACCESS_KEY") ?? "",
+    assetPublishPublicBaseUrl: read(env, "ASSET_PUBLISH_PUBLIC_BASE_URL") ?? ""
   };
 }
 
@@ -169,6 +188,7 @@ export function getSecretStatus(cfg: AppConfig): SecretStatus {
     canvasConfigured: cfg.canvasConfigured,
     llmConfigured: cfg.llmConfigured,
     exchangeRateConfigured: cfg.exchangeRateConfigured,
-    imageGenerationConfigured: cfg.imageGenerationConfigured
+    imageGenerationConfigured: cfg.imageGenerationConfigured,
+    assetPublishingConfigured: cfg.assetPublishingConfigured
   });
 }
