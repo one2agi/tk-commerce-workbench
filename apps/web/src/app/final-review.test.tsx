@@ -60,6 +60,7 @@ const workspace: ProductWorkspaceV1 = {
     state: "succeeded",
     outputs: Array.from({ length: 5 }, (_, index) => `https://canvas.test/output-${index + 1}.jpg`)
   },
+  imageGeneration: null,
   finalAssetOrder: [assetId("asset-2"), assetId("asset-1")],
   warningCodes: ["W_TITLE_LONG"]
 };

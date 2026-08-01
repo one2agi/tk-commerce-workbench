@@ -239,3 +239,115 @@ describe("ProductService.preview Miaoshou writeback projection", () => {
     });
   });
 });
+
+function workspaceRow(overrides: Record<string, unknown> = {}): Record<string, unknown> {
+  return {
+    product_id: "prod_1",
+    revision_id: "rev-1",
+    draft_version: 1,
+    source_title: "测试商品",
+    source_payload: {
+      description: "商品描述",
+      sourceAttributes: [],
+      saleAttributes: [],
+      mainImages: [{ url: "https://cbu01.alicdn.com/main-1.jpg" }],
+      detailImages: [{ url: "https://img.alicdn.com/detail-1.jpg" }]
+    },
+    working_draft: {},
+    target_locale: "th-TH",
+    target_title: null,
+    target_description: null,
+    target_style: null,
+    target_provider: null,
+    target_model: null,
+    target_fallback_used: null,
+    pricing_run_id: null,
+    price_currency: null,
+    final_price_minor: null,
+    pricing_breakdown: null,
+    canvas_run_id: null,
+    canvas_outputs: null,
+    canvas_state: null,
+    template_id: null,
+    template_version: null,
+    template_reason: null,
+    // imageGeneration fields
+    batch_id: null,
+    batch_state: null,
+    batch_category_key: null,
+    batch_requested_output_count: null,
+    batch_selected_asset_ids: null,
+    latest_batch_id: null,
+    latest_batch_state: null,
+    latest_batch_category_key: null,
+    latest_batch_requested_output_count: null,
+    latest_batch_selected_asset_ids: null,
+    latest_batch_confirmed_category: null,
+    available_assets: null,
+    slots_json: null,
+    slots_error: null,
+    ...overrides
+  };
+}
+
+describe("ProductService.get imageGeneration projection", () => {
+  it("keeps original and processed images separate and local", async () => {
+    const query = vi.fn().mockResolvedValue({
+      rows: [workspaceRow({
+        batch_id: "batch-1",
+        batch_state: "generating",
+        batch_category_key: "apparel",
+        batch_requested_output_count: 2,
+        batch_selected_asset_ids: ["asset-1", "asset-2"],
+        available_assets: [
+          { assetId: "asset-1", localUrl: "/api/v1/assets/asset-1/content", role: "main" },
+          { assetId: "asset-2", localUrl: "/api/v1/assets/asset-2/content", role: "detail" },
+          { assetId: "asset-3", localUrl: "/api/v1/assets/asset-3/content", role: null },
+          { assetId: "asset-4", localUrl: "/api/v1/assets/asset-4/content", role: null },
+          { assetId: "asset-5", localUrl: "/api/v1/assets/asset-5/content", role: null },
+          { assetId: "asset-6", localUrl: "/api/v1/assets/asset-6/content", role: null }
+        ],
+        slots_json: [
+          { slotId: "slot-1", slotNumber: 1, role: "main", status: "succeeded", attempt: 1, localUrl: "/api/v1/assets/slot-asset-1/content", error: null },
+          { slotId: "slot-2", slotNumber: 2, role: "detail", status: "waiting_for_plan", attempt: 0, localUrl: null, error: null }
+        ],
+        source_payload: {
+          description: "商品描述",
+          sourceAttributes: [],
+          saleAttributes: [],
+          mainImages: [{ url: "https://cbu01.alicdn.com/main-1.jpg" }]
+        }
+      })]
+    });
+
+    const result = await new ProductService({ query }).get("prod_1");
+
+    expect(result?.imageGeneration?.availableInputs).toHaveLength(6);
+    expect(result?.imageGeneration?.selectedInputs[0]?.localUrl).toMatch(/^\/api\/v1\/assets\//);
+    expect(result?.imageGeneration?.slots.find((slot) => slot.status === "succeeded")?.localUrl).toMatch(/^\/api\/v1\/assets\//);
+    expect(result?.originalListing?.mainImages).not.toContain(result?.imageGeneration?.slots[0]?.localUrl);
+  });
+
+  it("derives partial progress from persisted slots", async () => {
+    const query = vi.fn().mockResolvedValue({
+      rows: [workspaceRow({
+        batch_id: "batch_partial",
+        batch_state: "generating",
+        batch_category_key: "apparel",
+        batch_requested_output_count: 5,
+        batch_confirmed_category: "apparel",
+        slots_json: [
+          { slotId: "slot-1", slotNumber: 1, role: "main", status: "succeeded", attempt: 1, localUrl: "/api/v1/assets/out-1/content", error: null },
+          { slotId: "slot-2", slotNumber: 2, role: "detail", status: "succeeded", attempt: 1, localUrl: "/api/v1/assets/out-2/content", error: null },
+          { slotId: "slot-3", slotNumber: 3, role: "detail", status: "succeeded", attempt: 1, localUrl: "/api/v1/assets/out-3/content", error: null },
+          { slotId: "slot-4", slotNumber: 4, role: "detail", status: "succeeded", attempt: 1, localUrl: "/api/v1/assets/out-4/content", error: null },
+          { slotId: "slot-5", slotNumber: 5, role: "detail", status: "running", attempt: 1, localUrl: null, error: null }
+        ]
+      })]
+    });
+
+    const result = await new ProductService({ query }).get("prod_partial");
+
+    expect(result?.imageGeneration).toMatchObject({ requestedCount: 5, successfulCount: 4, state: "partial" });
+  });
+});

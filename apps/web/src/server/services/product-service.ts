@@ -305,6 +305,65 @@ function effectiveListingState(row: Record<string, unknown>): ProductPoolItemV1[
   return stored;
 }
 
+function imageGenerationView(row: Record<string, unknown>): ProductWorkspaceV1["imageGeneration"] {
+  const batchId = optionalString(row, "batch_id");
+  if (!batchId) return null;
+
+  const availableAssets = Array.isArray(row.available_assets) ? row.available_assets as Array<Record<string, unknown>> : [];
+  const selectedAssetIds = strings(row.batch_selected_asset_ids);
+  const selectedAssetIdSet = new Set(selectedAssetIds);
+  const requestedCount = Number(row.batch_requested_output_count ?? 0);
+  const batchState = optionalString(row, "batch_state") ?? "planning";
+  const confirmedCategory = optionalString(row, "batch_confirmed_category");
+  const inferredCategory = optionalString(row, "batch_category_key");
+  const slotsRaw = Array.isArray(row.slots_json) ? row.slots_json as Array<Record<string, unknown>> : [];
+
+  const availableInputs = availableAssets.map((a) => ({
+    assetId: assetId(String(a.assetId ?? "")),
+    localUrl: String(a.localUrl ?? ""),
+    role: a.role as string | null
+  }));
+
+  const selectedInputs = availableAssets
+    .filter((a) => selectedAssetIdSet.has(String(a.assetId ?? "")))
+    .map((a) => ({
+      assetId: assetId(String(a.assetId ?? "")),
+      localUrl: String(a.localUrl ?? "")
+    }));
+
+  const slots = slotsRaw.map((s) => ({
+    slotId: String(s.slotId ?? ""),
+    slotNumber: Number(s.slotNumber ?? 0),
+    role: String(s.role ?? ""),
+    status: String(s.status ?? ""),
+    attempt: Number(s.attempt ?? 0),
+    localUrl: s.localUrl ? String(s.localUrl) : null,
+    error: s.error ? String(s.error) : null
+  }));
+
+  const successfulCount = slots.filter((s) => s.status === "succeeded").length;
+
+  let state: ProductWorkspaceV1["imageGeneration"] extends null ? never : NonNullable<ProductWorkspaceV1["imageGeneration"]>["state"];
+  if (batchState === "planning") state = "planning";
+  else if (batchState === "generating") state = successfulCount === requestedCount ? "succeeded" : successfulCount > 0 ? "partial" : "generating";
+  else if (batchState === "succeeded") state = "succeeded";
+  else if (batchState === "partial") state = "partial";
+  else if (batchState === "failed") state = "failed";
+  else state = "not_started";
+
+  return {
+    availableInputs,
+    selectedInputs,
+    inferredCategory,
+    confirmedCategory,
+    requestedCount,
+    successfulCount,
+    state,
+    slots,
+    warnings: []
+  };
+}
+
 function effectiveCanvasState(row: Record<string, unknown>): ProductPoolItemV1["canvas"] {
   const stored = requiredString(row, "state_canvas") as ProductPoolItemV1["canvas"];
   const latestCanvasJobStatus = optionalString(row, "latest_canvas_job_status");
@@ -455,7 +514,14 @@ export class ProductService {
               canvas.id AS canvas_run_id, canvas.outputs AS canvas_outputs,
               canvas.state AS canvas_state, canvas.template_id,
               canvas.template_version,
-              COALESCE(revision.working_draft->>'templateMatchedReason', 'selected') AS template_reason
+              COALESCE(revision.working_draft->>'templateMatchedReason', 'selected') AS template_reason,
+              available_assets.items AS available_assets,
+              latest_batch.batch_id, latest_batch.batch_state,
+              latest_batch.batch_category_key,
+              latest_batch.batch_requested_output_count,
+              latest_batch.batch_selected_asset_ids,
+              latest_batch.batch_confirmed_category,
+              slots.items AS slots_json
        FROM products p
        JOIN LATERAL (
          SELECT * FROM product_revisions candidate
@@ -477,6 +543,55 @@ export class ProductService {
          WHERE candidate.revision_id = revision.id
          ORDER BY candidate.created_at DESC LIMIT 1
        ) canvas ON true
+       LEFT JOIN LATERAL (
+         SELECT COALESCE(
+           jsonb_agg(
+             jsonb_build_object(
+               'assetId', a.id,
+               'localUrl', '/api/v1/assets/' || a.id || '/content',
+               'role', a.chosen_role
+             )
+             ORDER BY a.created_at ASC
+           ),
+           '[]'::jsonb
+         ) AS items
+         FROM assets a
+         WHERE a.revision_id = revision.id
+           AND a.state = 'ready'
+           AND a.local_path IS NOT NULL
+       ) available_assets ON true
+       LEFT JOIN LATERAL (
+         SELECT b.id AS batch_id, b.state AS batch_state,
+                b.category_key AS batch_category_key,
+                b.requested_output_count AS batch_requested_output_count,
+                b.selected_asset_ids AS batch_selected_asset_ids,
+                b.confirmed_category AS batch_confirmed_category
+         FROM image_generation_batches b
+         WHERE b.revision_id = revision.id
+         ORDER BY b.created_at DESC
+         LIMIT 1
+       ) latest_batch ON true
+       LEFT JOIN LATERAL (
+         SELECT COALESCE(
+           jsonb_agg(
+             jsonb_build_object(
+               'slotId', s.id,
+               'slotNumber', s.slot_number,
+               'role', s.role,
+               'status', s.state,
+               'attempt', s.attempt,
+               'localUrl', CASE WHEN s.archived_asset_id IS NOT NULL
+                          THEN '/api/v1/assets/' || s.archived_asset_id || '/content'
+                          ELSE NULL END,
+               'error', s.error
+             )
+             ORDER BY s.slot_number ASC
+           ),
+           '[]'::jsonb
+         ) AS items
+         FROM image_generation_slots s
+         WHERE s.batch_id = latest_batch.batch_id
+       ) slots ON true
        WHERE p.id = $1`,
       [productIdValue]
     );
@@ -531,6 +646,7 @@ export class ProductService {
         outputs: strings(row.canvas_outputs),
         state: String(row.canvas_state) as CanvasState
       } : null,
+      imageGeneration: imageGenerationView(row),
       finalAssetOrder: strings(draft.finalAssetOrder).map(assetId),
       warningCodes: strings(draft.warningCodes)
     };

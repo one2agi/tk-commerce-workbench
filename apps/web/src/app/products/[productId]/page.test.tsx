@@ -43,6 +43,7 @@ const workspace: ProductWorkspaceV1 = {
     outputs: ["https://images.test/generated.png"],
     state: "succeeded"
   },
+  imageGeneration: null,
   finalAssetOrder: [assetId("asset-1")],
   warningCodes: []
 };

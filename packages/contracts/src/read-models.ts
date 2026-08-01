@@ -87,6 +87,7 @@ export type ProductWorkspaceV1 = Readonly<{
   } | null;
   template: { templateId: TemplateId; version: number; matchedReason: string } | null;
   canvas: { runId: string; outputs: string[]; state: CanvasState } | null;
+  imageGeneration: ImageGenerationViewV1 | null;
   finalAssetOrder: AssetId[];
   warningCodes: string[];
 }>;
@@ -193,6 +194,28 @@ export type MiaoshouSyncStatusV1 = Readonly<{
   remoteDetailId: MiaoshouDetailId | null;
   lastReconciledAt: string | null;
   error: ExternalFailure | null;
+}>;
+
+export type ImageGenerationSlotViewV1 = Readonly<{
+  slotId: string;
+  slotNumber: number;
+  role: string;
+  status: string;
+  attempt: number;
+  localUrl: string | null;
+  error: string | null;
+}>;
+
+export type ImageGenerationViewV1 = Readonly<{
+  availableInputs: ReadonlyArray<{ assetId: AssetId; localUrl: string; role: string | null }>;
+  selectedInputs: ReadonlyArray<{ assetId: AssetId; localUrl: string }>;
+  inferredCategory: string | null;
+  confirmedCategory: string | null;
+  requestedCount: number;
+  successfulCount: number;
+  state: "not_started" | "planning" | "generating" | "partial" | "succeeded" | "failed";
+  slots: ReadonlyArray<ImageGenerationSlotViewV1>;
+  warnings: string[];
 }>;
 
 export type ImageGenerationTemplateViewV1 = Readonly<{
