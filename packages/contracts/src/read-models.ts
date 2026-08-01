@@ -207,6 +207,7 @@ export type ImageGenerationSlotViewV1 = Readonly<{
 }>;
 
 export type ImageGenerationViewV1 = Readonly<{
+  batchId: string | null;
   availableInputs: ReadonlyArray<{ assetId: AssetId; localUrl: string; role: string | null }>;
   selectedInputs: ReadonlyArray<{ assetId: AssetId; localUrl: string }>;
   inferredCategory: string | null;

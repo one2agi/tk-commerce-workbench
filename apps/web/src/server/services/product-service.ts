@@ -352,6 +352,7 @@ function imageGenerationView(row: Record<string, unknown>): ProductWorkspaceV1["
   else state = "not_started";
 
   return {
+    batchId,
     availableInputs,
     selectedInputs,
     inferredCategory,

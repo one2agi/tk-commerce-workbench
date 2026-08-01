@@ -2,6 +2,7 @@
 
 import type { ApprovalPreviewV1 } from "@tk/contracts/read-models";
 import type { ReviewWorkspaceView } from "./review-workspace-view";
+import { ImageGenerationPanel } from "../products/image-generation-panel";
 import { OriginalListingPanel } from "./original-listing-panel";
 import { TargetListingPanel } from "./target-listing-panel";
 import { FinalImageOrder } from "./final-image-order";
@@ -106,7 +107,7 @@ export function FinalReview({ workspace, approvalPreview, actions }: {
         <a className="tk-review__back-link" href="/products">返回商品处理台</a>
       </header>
       <div className="tk-review__workspace">
-        <section aria-label="图片确认" className="tk-review__images">
+        <section aria-label="图片生成" className="tk-review__images">
           <header className="tk-review__image-header">
             <div>
               <p>图片确认</p>
@@ -114,6 +115,11 @@ export function FinalReview({ workspace, approvalPreview, actions }: {
             </div>
             <span>{workspace.reviewFacts.orderedFinalImages.length} / {canvasOutputs.length || "—"}</span>
           </header>
+          <ImageGenerationPanel
+            productId={String(workspace.productId)}
+            revisionId={String(workspace.revisionId)}
+            imageGeneration={workspace.imageGeneration}
+          />
           <div className="tk-review__image-tabs" aria-label="图片来源统计">
             <span>AI图 {canvasOutputs.length}</span>
             <span>采集图 {workspace.reviewFacts.orderedFinalImages.length + (workspace.originalListing?.mainImages.length ?? 0) + (workspace.originalListing?.detailImages.length ?? 0)}</span>
