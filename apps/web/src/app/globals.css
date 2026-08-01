@@ -1951,3 +1951,176 @@ button:disabled {
   align-items: center;
   gap: 12px;
 }
+
+/* Template Manager Styles */
+.tk-template-manager {
+  display: flex;
+  flex-direction: column;
+  gap: 24px;
+}
+
+.tk-template-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  margin-bottom: 12px;
+}
+
+.tk-template-title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.tk-template-title h3 {
+  margin: 0;
+  font-size: 16px;
+  font-weight: 600;
+}
+
+.tk-template-meta {
+  display: flex;
+  gap: 12px;
+  font-size: 13px;
+  color: #64748b;
+}
+
+.tk-template-category {
+  font-family: monospace;
+}
+
+.tk-badge-draft {
+  background: #fef3c7;
+  color: #92400e;
+  padding: 2px 8px;
+  border-radius: 4px;
+  font-size: 12px;
+}
+
+.tk-badge-active {
+  background: #d1fae5;
+  color: #065f46;
+  padding: 2px 8px;
+  border-radius: 4px;
+  font-size: 12px;
+}
+
+.tk-badge-archived {
+  background: #f1f5f9;
+  color: #64748b;
+  padding: 2px 8px;
+  border-radius: 4px;
+  font-size: 12px;
+}
+
+.tk-template-recipe-summary {
+  display: flex;
+  gap: 16px;
+  font-size: 13px;
+  color: #475569;
+  margin-bottom: 12px;
+  flex-wrap: wrap;
+}
+
+.tk-template-message {
+  display: block;
+  padding: 8px 12px;
+  background: #f0fdf4;
+  border: 1px solid #bbf7d0;
+  border-radius: 4px;
+  font-size: 13px;
+  color: #166534;
+  margin-bottom: 12px;
+}
+
+.tk-template-actions {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.tk-template-advanced {
+  margin-top: 16px;
+  padding-top: 16px;
+  border-top: 1px solid #e2e8f0;
+}
+
+.tk-template-advanced fieldset {
+  border: 1px solid #e2e8f0;
+  border-radius: 6px;
+  padding: 12px;
+  margin-bottom: 12px;
+}
+
+.tk-template-advanced legend {
+  font-weight: 600;
+  font-size: 13px;
+  padding: 0 4px;
+  color: #334155;
+}
+
+.tk-field {
+  margin-bottom: 8px;
+}
+
+.tk-field:last-child {
+  margin-bottom: 0;
+}
+
+.tk-field label {
+  display: block;
+  font-size: 12px;
+  font-weight: 500;
+  color: #64748b;
+  margin-bottom: 2px;
+}
+
+.tk-field p {
+  margin: 0;
+  font-size: 13px;
+  color: #334155;
+}
+
+.tk-field ul {
+  margin: 0;
+  padding-left: 20px;
+  font-size: 13px;
+}
+
+.tk-field li.tk-empty {
+  color: #94a3b8;
+  font-style: italic;
+}
+
+.tk-template-list {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.tk-form-row {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 16px;
+  margin-bottom: 16px;
+}
+
+.tk-form-row label {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 13px;
+  font-weight: 500;
+}
+
+.tk-form-row input {
+  padding: 8px 12px;
+  border: 1px solid #d1d5db;
+  border-radius: 6px;
+  font-size: 14px;
+}
+
+.tk-empty {
+  color: #94a3b8;
+  font-style: italic;
+}
