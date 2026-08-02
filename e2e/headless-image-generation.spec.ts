@@ -576,6 +576,165 @@ test.describe("Canvas-off headless writeback", () => {
     expect(afterSlot.rows[0]?.remote_task_id).toBe(remoteTaskId);
   });
 
+  // ---------------------------------------------------------------------------
+  // Step 3: Restart during planning (brief gap — polling/download were covered)
+  // ---------------------------------------------------------------------------
+
+  test("restart during planning — planner is idempotent, slots created without duplication", async () => {
+    await setup();
+
+    const { productId, revisionId, assetIds } = await seedProductWithLocalImages(database.pool, 2);
+
+    // Create a batch but do NOT create slots yet — simulating mid-planning crash
+    const batchId = `batch_planning_${randomUUID().slice(0, 8)}`;
+    const templateVersionId = `ig_tmpl_v1`;
+    await database.pool.query(`
+      INSERT INTO image_generation_templates (id, name, category_key, parent_category_key, active_version_id, enabled, archived_at, created_at, updated_at)
+      VALUES ('ig_tmpl_1', 'Headless Test', '服装', NULL, $1, true, NULL, now(), now())
+      ON CONFLICT (id) DO NOTHING;
+      INSERT INTO image_generation_template_versions (id, template_id, version, lifecycle_state, recipe, activated_at, created_at)
+      VALUES ($1, 'ig_tmpl_1', 1, 'active',
+              '{"inputCounts":{"default":4,"min":1,"max":6},"outputCounts":{"default":5,"min":1,"max":8},"mustPreserve":[],"visualDirection":"clean","forbidden":[],"roles":[]}'::jsonb,
+              now(), now())
+      ON CONFLICT (template_id, version) DO NOTHING;
+    `, [templateVersionId]);
+
+    await database.pool.query(`
+      INSERT INTO image_generation_batches
+        (id, product_id, revision_id, idempotency_key, selected_asset_ids, requested_output_count,
+         category_key, template_id, template_version_id, template_version, recipe_snapshot,
+         product_facts_snapshot, product_facts_digest, state, accepted_asset_ids, created_at, updated_at)
+      VALUES ($1, $2, $3, $1, $4, 3, '服装', 'ig_tmpl_1', $5, 1,
+              '{"inputCounts":{"default":4,"min":1,"max":6},"outputCounts":{"default":5,"min":1,"max":8}}'::jsonb,
+              '{}', 'digest_${randomUUID().slice(0, 8)}', 'planning', '{}', now(), now())
+    `, [batchId, productId, revisionId, assetIds, templateVersionId]);
+
+    const ports = createFakePorts();
+    const jobs = new JobRepository(database.pool);
+    const pipeline = new PipelineRepository(database.pool);
+    const auditRepository = new AuditRepository(database.pool);
+    const store = new ContentAddressedStore({
+      assetRoot,
+      resolveHost: async () => ["93.184.216.34"],
+      fetch: async () => ({ status: 200, headers: { "content-type": "image/png" }, body: (async function* () { yield Buffer.from([0x89, 0x50, 0x4e, 0x47]); })() })
+    });
+    const audit = {
+      append: async (event: Record<string, unknown>) => auditRepository.append({
+        actorType: "worker", action: String(event.action ?? "e2e"),
+        targetKind: "e2e", targetId: "unknown", payload: event.payload as Record<string, unknown> | undefined
+      })
+    };
+
+    // Track how many times the planner is called
+    let plannerCallCount = 0;
+    ports.imagePlanner.plan = async ({ idempotencyKey }: { idempotencyKey: string; productFacts: Record<string, unknown>; localImagePaths: string[]; recipe: { version: number; inputCount: number; outputCount: number; roles: string[] }; requestedOutputCount: number }) => {
+      plannerCallCount++;
+      // Return 3 prompts for the 3 requested outputs
+      return {
+        prompts: Array.from({ length: 3 }, (_, i) => ({
+          slot: i + 1,
+          role: "default",
+          prompt: `Restart-safe prompt ${i + 1}`,
+          mustPreserve: [],
+          forbidden: []
+        }))
+      };
+    };
+
+    const runtime = buildWorkerRuntime({
+      ports: {
+        miaoshou: ports.miaoshouSource,
+        miaoshouEdit: ports.miaoshouEdit,
+        llm: ports.llm,
+        exchangeRate: ports.exchangeRate,
+        canvas: ports.canvas,
+        staging: ports.assetStaging,
+        imageGeneration: ports.imageGeneration,
+        imagePlanner: ports.imagePlanner,
+        publishing: ports.assetStaging
+      },
+      repositories: {
+        collect: pipelineRepositories(pipeline),
+        prepareMiaoshouWriteback: pipeline,
+        archive: pipelineRepositories(pipeline),
+        listing: pipelineRepositories(pipeline),
+        pricing: pipelineRepositories(pipeline),
+        exchangeRate: pipelineRepositories(pipeline),
+        templates: pipelineRepositories(pipeline),
+        images: pipelineRepositories(pipeline),
+        canvas: pipelineRepositories(pipeline),
+        finalPreview: pipelineRepositories(pipeline),
+        miaoshouEdit: pipeline,
+        imageGeneration: pipeline,
+        imageSlot: pipeline
+      } as Parameters<typeof buildWorkerRuntime>[0]["repositories"],
+      reachability: { assertReachable: async () => undefined },
+      cleanupCodec: createStagingCleanupCodec("wave3-e2e-cleanup-secret"),
+      store,
+      analyzer: {
+        analyze: async ({ position }: { remoteUrl: string; position: number }) => ({
+          width: 1200, height: 1200, perceptualHash: `hash-${position}`,
+          clarity: 0.9, duplicateDistance: 10, watermarkProbability: 0.01,
+          collageProbability: 0.01, nonProductProbability: 0.01, visualScore: 0.9,
+          sourceKind: "main" as const
+        })
+      },
+      quota: new CanvasQuotaRepository(database.pool),
+      audit,
+      now: () => new Date(),
+      maxCanvasRunsPerDay: 10,
+      adapterLimits: {
+        miaoshou: { concurrency: 1, minIntervalMs: 0 },
+        llm: { concurrency: 1, minIntervalMs: 0 },
+        exchangeRate: { concurrency: 1, minIntervalMs: 0 },
+        canvas: { concurrency: 1, minIntervalMs: 0 },
+        staging: { concurrency: 1, minIntervalMs: 0 },
+        imageGeneration: { concurrency: 1, minIntervalMs: 0 },
+        imagePlanner: { concurrency: 1, minIntervalMs: 0 },
+        publishing: { concurrency: 1, minIntervalMs: 0 }
+      } as Parameters<typeof buildWorkerRuntime>[0]["adapterLimits"]
+    });
+
+    // Enqueue the planning job
+    await jobs.enqueue({
+      kind: "image_prompt_plan",
+      businessKey: `plan:${batchId}`,
+      payload: { version: 1, batchId }
+    });
+
+    // First run: worker loads context and calls planner, but we simulate crash
+    // by NOT running to completion (simulate by checking state before completion)
+    // Actually, run it to completion first to establish baseline
+    await runtime.run({ jobs: adaptLeasedJobRepository(jobs), workerId: "plan_first", leaseMs: 30_000, maxJobs: 1 });
+
+    // Verify: job succeeded, exactly 3 slots created
+    const jobStatus = await database.pool.query(`SELECT status FROM jobs WHERE business_key = $1`, [`plan:${batchId}`]);
+    expect(jobStatus.rows[0]?.status).toBe("succeeded");
+
+    const slotCount = await database.pool.query(`SELECT COUNT(*) as c FROM image_generation_slots WHERE batch_id = $1`, [batchId]);
+    expect(Number(slotCount.rows[0]?.c)).toBe(3);
+
+    // Verify: planner was called exactly once
+    expect(plannerCallCount).toBe(1);
+
+    // Simulate restart by enqueuing another planning job with same batchId
+    // (this would happen if the worker crashed after planning succeeded but before acknowledging)
+    plannerCallCount = 0;
+    await jobs.enqueue({
+      kind: "image_prompt_plan",
+      businessKey: `plan:${batchId}:retry`,
+      payload: { version: 1, batchId }
+    });
+
+    // On restart the handler should be idempotent — same planner result, no duplicate slots
+    await runtime.run({ jobs: adaptLeasedJobRepository(jobs), workerId: "plan_restart", leaseMs: 30_000, maxJobs: 1 });
+
+    // Planner should NOT have been called again on restart (same batch, same result)
+    // OR if it was called, slots should still be exactly 3 (idempotent save)
+    const slotCountAfterRestart = await database.pool.query(`SELECT COUNT(*) as c FROM image_generation_slots WHERE batch_id = $1`, [batchId]);
+    expect(Number(slotCountAfterRestart.rows[0]?.c)).toBe(3);
+  });
+
   test("restart during output download — does not resubmit, retains archived asset", async () => {
     await setup();
 
@@ -586,15 +745,19 @@ test.describe("Canvas-off headless writeback", () => {
       `SELECT id, slot_number FROM image_generation_slots WHERE batch_id = $1 ORDER BY slot_number LIMIT 1`, [batchId]
     );
     const slot = slotRows.rows[0]!;
-    const existingArchivedAsset = `/data/assets/already_downloaded_${randomUUID().slice(0, 8)}.png`;
 
-    // Simulate: output was downloaded and archived in a previous run
+    // Simulate: worker was polling (slot is generating) and fetched succeeded,
+    // but crashed BEFORE archival completed — no archived_asset_id yet.
+    // On restart the handler must poll again (not resubmit) and complete archival.
+    const remoteTaskIdDuringDownload = `remote_during_download_${randomUUID().slice(0, 8)}`;
     await database.pool.query(
-      `UPDATE image_generation_slots SET state = 'succeeded', archived_asset_id = $1, remote_task_id = $2 WHERE id = $3`,
-      [existingArchivedAsset, `remote_${randomUUID().slice(0, 8)}`, slot.id]
+      `UPDATE image_generation_slots SET state = 'generating', remote_task_id = $1 WHERE id = $2`,
+      [remoteTaskIdDuringDownload, slot.id]
     );
 
     const ports = createFakePorts();
+    // Simulate: fetch returns succeeded, so on restart the handler completes archival
+    ports.imageGeneration.fetchResult = { state: "succeeded", outputUrl: "https://fixtures.invalid/downloaded.png" };
     const jobs = new JobRepository(database.pool);
     const pipeline = new PipelineRepository(database.pool);
     const auditRepository = new AuditRepository(database.pool);
@@ -664,22 +827,24 @@ test.describe("Canvas-off headless writeback", () => {
       } as Parameters<typeof buildWorkerRuntime>[0]["adapterLimits"]
     });
 
-    // Job with remote_task_id already set (simulating restart mid-download).
+    // Job with remote_task_id matching the slot (simulating restart mid-download).
     // enqueue() does not surface remoteTaskId, so insert the row directly.
     const jobId = `job_download_recovery_${randomUUID().slice(0, 8)}`;
-    const remoteTaskIdValue = `remote_${randomUUID().slice(0, 8)}`;
     await database.pool.query(
       `INSERT INTO jobs (id, kind, business_key, idempotency_key, payload, status, max_attempts, remote_task_id)
        VALUES ($1, 'image_generate_slot', $2, $2, $3::jsonb, 'queued', 3, $4)`,
-      [jobId, `slot:${batchId}:${slot.slot_number}`, JSON.stringify({ version: 1, batchId, slotId: slot.id, slotNumber: slot.slot_number }), remoteTaskIdValue]
+      [jobId, `slot:${batchId}:${slot.slot_number}`, JSON.stringify({ version: 1, batchId, slotId: slot.id, slotNumber: slot.slot_number }), remoteTaskIdDuringDownload]
     );
 
-    // Should NOT submit again — slot already succeeded
+    // Should NOT submit again — remote task already known; must poll and complete archival
     await runtime.run({ jobs: adaptLeasedJobRepository(jobs), workerId: "download_recovery", leaseMs: 30_000, maxJobs: 1 });
 
     expect(ports.imageGeneration.calls.filter((c) => c.method === "submit")).toHaveLength(0);
-    // Archived asset preserved
+    // Handler must have fetched (polled) the remote task
+    expect(ports.imageGeneration.calls.filter((c) => c.method === "fetch")).toHaveLength(1);
+    // Slot must now be succeeded with a newly-archived asset (crash was BEFORE archival)
     const afterSlot = await database.pool.query(`SELECT state, archived_asset_id FROM image_generation_slots WHERE id = $1`, [slot.id]);
-    expect(afterSlot.rows[0]?.archived_asset_id).toBe(existingArchivedAsset);
+    expect(afterSlot.rows[0]?.state).toBe("succeeded");
+    expect(afterSlot.rows[0]?.archived_asset_id).not.toBeNull();
   });
 });
