@@ -191,3 +191,4 @@ node scripts/local-production-runtime.mjs status
 - [本地开发与 MVP 验收](../development/local-setup.md)
 - [故障恢复](./recovery.md)
 - [安全运行基线](./security.md)
+- [无 Canvas 图片生成操作指南](./headless-image-generation.md)
