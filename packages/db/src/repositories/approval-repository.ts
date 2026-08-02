@@ -249,6 +249,23 @@ export class ApprovalRepository {
     const invalidAssetId = command.orderedFinalAssetIds.find((assetId) => !assetsById.has(assetId));
     if (invalidAssetId) conflict("orderedFinalAssetIds", command.orderedFinalAssetIds, { invalidAssetId });
 
+    // Spec gap A (T13 fix): every accepted assetId must be backed by a slot row that
+    // produced it. Only slots that have actually succeeded AND archived the asset,
+    // and have not been excluded, may feed the approval snapshot.
+    const slotsResult = await client.query<{ archived_asset_id: string }>(
+      `SELECT archived_asset_id FROM ${schema.imageGenerationSlots}
+       WHERE archived_asset_id = ANY($1::text[])
+         AND state = 'succeeded'
+         AND archived_asset_id IS NOT NULL
+         AND excluded_at IS NULL`,
+      [command.orderedFinalAssetIds]
+    );
+    const slotsByAssetId = new Set(slotsResult.rows.map((row) => row.archived_asset_id));
+    const unbackedAssetId = command.orderedFinalAssetIds.find((assetId) => !slotsByAssetId.has(assetId));
+    if (unbackedAssetId) {
+      conflict("orderedFinalAssetIds", command.orderedFinalAssetIds, { unbackedAssetId });
+    }
+
     return { product, revision, listing, assetsById, templateVersion };
   }
 
@@ -827,18 +844,30 @@ export class ApprovalRepository {
     const row = result.rows[0];
     assert(row, "approval snapshot not found");
     const snapshot = snapshotFromRow(row);
-    const assets = snapshot.orderedFinalAssetIds.length === 0 ? { rows: [] } : await this.pool.query<{ id: string; local_path: string }>(
-      `SELECT id, local_path FROM ${schema.assets}
-       WHERE revision_id = $1 AND id = ANY($2::text[]) AND state = 'ready' AND local_path IS NOT NULL`,
-      [snapshot.revisionId, snapshot.orderedFinalAssetIds]
-    );
+    const assets = snapshot.orderedFinalAssetIds.length === 0
+      ? { rows: [] }
+      : await this.pool.query<{ id: string; local_path: string; sha256: string | null; extension: string | null }>(
+          `SELECT id, local_path, sha256, extension FROM ${schema.assets}
+           WHERE revision_id = $1 AND id = ANY($2::text[]) AND state = 'ready' AND local_path IS NOT NULL`,
+          [snapshot.revisionId, snapshot.orderedFinalAssetIds]
+        );
     const pathsById = new Map(assets.rows.map((asset) => [asset.id, asset.local_path]));
+    const sha256ById = new Map(assets.rows.map((asset) => [asset.id, asset.sha256]));
+    const extensionById = new Map(assets.rows.map((asset) => [asset.id, asset.extension]));
     const { sourcePlatform: _sourcePlatform, ...material } = snapshot;
     return createApprovalSnapshot({
       ...material,
       orderedFinalAssetLocalPaths: snapshot.orderedFinalAssetIds.flatMap((assetId) =>
         pathsById.has(assetId) ? [pathsById.get(assetId)!] : []
-      )
+      ),
+      orderedFinalAssetSha256: snapshot.orderedFinalAssetIds.flatMap((assetId) => {
+        const value = sha256ById.get(assetId);
+        return value ? [value] : [];
+      }),
+      orderedFinalAssetExtension: snapshot.orderedFinalAssetIds.flatMap((assetId) => {
+        const value = extensionById.get(assetId);
+        return value ? [value] : [];
+      })
     });
   }
 

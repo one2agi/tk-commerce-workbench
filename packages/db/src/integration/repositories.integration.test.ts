@@ -1510,6 +1510,37 @@ describe("integration: ApprovalRepository.confirmAndEnqueue", () => {
        ('asset-b', $1, $2, 'https://source.test/b.jpg', 'generated', 'ready', '/assets/b.jpg', 'jpg')`,
       [productId, revisionId]
     );
+    // T13 fix: slot backing for accepted assets. Existing tests must keep green
+    // while the slot filter is active, so each ready asset is wired to a
+    // succeeded, archived, non-excluded slot row.
+    const readyApprovalTemplateId = newId("rtmpl");
+    await handle.pool.query(
+      `INSERT INTO image_generation_templates (id, name, category_key, enabled, created_at, updated_at)
+       VALUES ($1, 'Ready Approval Template', 'dress', true, now(), now())`,
+      [readyApprovalTemplateId]
+    );
+    const readyApprovalTemplateVersionId = newId("tv");
+    await handle.pool.query(
+      `INSERT INTO image_generation_template_versions (id, template_id, version, lifecycle_state, recipe, created_at)
+       VALUES ($1, $2, 3, 'active', '{}'::jsonb, now())`,
+      [readyApprovalTemplateVersionId, readyApprovalTemplateId]
+    );
+    const readyApprovalBatchId = newId("batch");
+    await handle.pool.query(
+      `INSERT INTO image_generation_batches
+        (id, product_id, revision_id, idempotency_key, selected_asset_ids, requested_output_count,
+         category_key, template_id, template_version_id, template_version, recipe_snapshot,
+         product_facts_snapshot, product_facts_digest, state)
+       VALUES ($1, $2, $3, $4, '[]'::jsonb, 2, 'dress', $5, $6, 3, '{}'::jsonb, '{}'::jsonb, 'digest', 'succeeded')`,
+      [readyApprovalBatchId, productId, revisionId, `ready-key-${newId("idem")}`, readyApprovalTemplateId, readyApprovalTemplateVersionId]
+    );
+    await handle.pool.query(
+      `INSERT INTO image_generation_slots (id, batch_id, slot_number, role, state, archived_asset_id)
+       VALUES
+        ($1, $2, 1, 'primary', 'succeeded', 'asset-a'),
+        ($3, $2, 2, 'detail', 'succeeded', 'asset-b')`,
+      [newId("slot"), readyApprovalBatchId, newId("slot")]
+    );
     return { productId, revisionId };
   }
 
@@ -2101,5 +2132,192 @@ describe("integration: image generation repository", () => {
     const projection = await imageGen.getProductProjection(input.productId);
     expect(projection).not.toBeNull();
     expect(projection!.slots.map((s) => s.state)).toEqual(["succeeded", "failed", "queued"]);
+  });
+});
+
+// T13 fix: every accepted assetId must come from a succeeded, archived, not-excluded slot.
+// Pin spec gap A and B in a single suite so they can be moved to a unit file later if needed.
+describe("integration: ApprovalRepository T13 acceptance wiring", () => {
+  async function slotFixture(): Promise<{
+    productId: string;
+    revisionId: string;
+    batchId: string;
+    assetA: string;
+    assetB: string;
+    slotAId: string;
+    slotBId: string;
+    templateVersionId: string;
+  }> {
+    const opId = await catalog.upsertLocalOperator({
+      handle: "slot-approval-op",
+      displayName: "Slot Approval Op"
+    });
+    const productId = await catalog.insertProduct({
+      operatorId: opId,
+      sourceUrl: "https://detail.1688.com/offer/slots.html",
+      sourceItemId: "slot-1",
+      locale: "th-TH",
+      currency: "THB"
+    });
+    await handle.pool.query(
+      `UPDATE products
+       SET state_automation = 'ready', state_source = 'success',
+           canonical_success_detail_id = 'detail-slot-canonical'
+       WHERE id = $1`,
+      [productId]
+    );
+    const revisionId = await catalog.insertRevision({
+      productId,
+      draftVersion: 1,
+      sourceTitle: "Slot Approval Source",
+      workingDraft: {
+        listingRunId: "run-listing-slots",
+        pricingRunId: "run-pricing-slots",
+        templateMatch: { templateId: "slot-template", templateVersion: 1 },
+        finalAssetOrder: ["slot-asset-a", "slot-asset-b"]
+      }
+    });
+    await handle.pool.query(
+      "UPDATE product_revisions SET source_payload = $2::jsonb WHERE id = $1",
+      [revisionId, JSON.stringify({
+        sourceItemId: "slot-1",
+        itemNumber: "ITEM-SLOT-1",
+        skus: []
+      })]
+    );
+    await handle.pool.query(
+      `INSERT INTO listing_drafts
+        (id, product_id, revision_id, draft_version, target_locale, style, title, description, attributes)
+       VALUES ('run-listing-slots', $1, $2, 1, 'th-TH', 'neutral', 'Slot Title', 'Slot description', '[]'::jsonb)`,
+      [productId, revisionId]
+    );
+
+    // Create a template + active version so batches reference real rows.
+    const templateId = newId("tmpl");
+    const templateVersionId = newId("tv");
+    await handle.pool.query(
+      `INSERT INTO image_generation_templates (id, name, category_key, enabled, created_at, updated_at)
+       VALUES ($1, 'Slot Template', 'dress', true, now(), now())`,
+      [templateId]
+    );
+    await handle.pool.query(
+      `INSERT INTO image_generation_template_versions (id, template_id, version, lifecycle_state, recipe, created_at)
+       VALUES ($1, $2, 1, 'active', $3::jsonb, now())`,
+      [templateVersionId, templateId, JSON.stringify({ version: 1, inputCount: 1, outputCount: 2, roles: ["primary", "detail"] })]
+    );
+    await handle.pool.query(
+      `UPDATE image_generation_templates SET active_version_id = $1 WHERE id = $2`,
+      [templateVersionId, templateId]
+    );
+
+    // Batch + succeeded slot rows that reference archived assets.
+    const batchId = newId("batch");
+    await handle.pool.query(
+      `INSERT INTO image_generation_batches
+        (id, product_id, revision_id, idempotency_key, selected_asset_ids, requested_output_count,
+         category_key, template_id, template_version_id, template_version, recipe_snapshot,
+         product_facts_snapshot, product_facts_digest, state)
+       VALUES ($1, $2, $3, $4, '[]'::jsonb, 2, 'dress', $5, $6, 1, '{}'::jsonb, '{}'::jsonb, 'digest', 'succeeded')`,
+      [batchId, productId, revisionId, `slot-key-${newId("idem")}`, templateId, templateVersionId]
+    );
+
+    const assetA = "slot-asset-a";
+    const assetB = "slot-asset-b";
+    await handle.pool.query(
+      `INSERT INTO assets (id, product_id, revision_id, remote_url, kind, state, local_path, extension, sha256)
+       VALUES
+         ($1, $2, $3, 'https://source.test/a.jpg', 'generated', 'ready', '/assets/slot-a.png', 'png', 'sha-a'),
+         ($4, $2, $3, 'https://source.test/b.jpg', 'generated', 'ready', '/assets/slot-b.png', 'png', 'sha-b')`,
+      [assetA, productId, revisionId, assetB]
+    );
+
+    const slotAId = newId("slot");
+    const slotBId = newId("slot");
+    await handle.pool.query(
+      `INSERT INTO image_generation_slots
+        (id, batch_id, slot_number, role, state, archived_asset_id)
+       VALUES
+         ($1, $2, 1, 'primary', 'succeeded', $3),
+         ($4, $2, 2, 'detail', 'succeeded', $5)`,
+      [slotAId, batchId, assetA, slotBId, assetB]
+    );
+
+    return { productId, revisionId, batchId, assetA, assetB, slotAId, slotBId, templateVersionId };
+  }
+
+  test("rejects confirmation when an accepted asset has no succeeded slot", async () => {
+    const fixture = await slotFixture();
+    // Demote slot B to failed: the asset is "ready" but no slot produced it.
+    await handle.pool.query(
+      "UPDATE image_generation_slots SET state = 'failed', archived_asset_id = NULL WHERE id = $1",
+      [fixture.slotBId]
+    );
+
+    await expect(
+      approvals.confirmAndEnqueue({
+        version: 1,
+        productId: fixture.productId,
+        expectedDraftVersion: 1,
+        expectedListingRunId: "run-listing-slots",
+        expectedTemplateVersion: 1,
+        orderedFinalAssetIds: [fixture.assetA, fixture.assetB]
+      })
+    ).rejects.toMatchObject({
+      code: "approval_conflict",
+      metadata: expect.objectContaining({ field: "orderedFinalAssetIds" })
+    });
+    const rows = await handle.pool.query("SELECT count(*)::integer AS count FROM approval_snapshots");
+    expect(rows.rows[0].count).toBe(0);
+  });
+
+  test("rejects confirmation when an accepted slot is excluded", async () => {
+    const fixture = await slotFixture();
+    await handle.pool.query(
+      "UPDATE image_generation_slots SET excluded_at = now() WHERE id = $1",
+      [fixture.slotAId]
+    );
+    await expect(
+      approvals.confirmAndEnqueue({
+        version: 1,
+        productId: fixture.productId,
+        expectedDraftVersion: 1,
+        expectedListingRunId: "run-listing-slots",
+        expectedTemplateVersion: 1,
+        orderedFinalAssetIds: [fixture.assetA, fixture.assetB]
+      })
+    ).rejects.toMatchObject({
+      code: "approval_conflict",
+      metadata: expect.objectContaining({ field: "orderedFinalAssetIds" })
+    });
+  });
+
+  test("accepts a confirmation where every asset is produced by a succeeded, archived, non-excluded slot", async () => {
+    const fixture = await slotFixture();
+    const result = await approvals.confirmAndEnqueue({
+      version: 1,
+      productId: fixture.productId,
+      expectedDraftVersion: 1,
+      expectedListingRunId: "run-listing-slots",
+      expectedTemplateVersion: 1,
+      orderedFinalAssetIds: [fixture.assetA, fixture.assetB]
+    });
+    expect(result.approvalSnapshotId).toMatch(/^approval_/);
+  });
+
+  test("loadSnapshot exposes sha256 and extension in asset order", async () => {
+    const fixture = await slotFixture();
+    const confirmed = await approvals.confirmAndEnqueue({
+      version: 1,
+      productId: fixture.productId,
+      expectedDraftVersion: 1,
+      expectedListingRunId: "run-listing-slots",
+      expectedTemplateVersion: 1,
+      orderedFinalAssetIds: [fixture.assetA, fixture.assetB]
+    });
+    const snapshot = await approvals.loadSnapshot(confirmed.approvalSnapshotId);
+    expect(snapshot.orderedFinalAssetIds).toEqual([fixture.assetA, fixture.assetB]);
+    expect(snapshot.orderedFinalAssetLocalPaths).toEqual(["/assets/slot-a.png", "/assets/slot-b.png"]);
+    expect(snapshot.orderedFinalAssetSha256).toEqual(["sha-a", "sha-b"]);
+    expect(snapshot.orderedFinalAssetExtension).toEqual(["png", "png"]);
   });
 });
