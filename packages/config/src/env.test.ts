@@ -63,7 +63,7 @@ describe("config env", () => {
     expect(cfg.canvasApiKey).toBe("TEST_CANVAS_SECRET_DO_NOT_LOG");
     const safe = JSON.stringify(getSecretStatus(cfg));
     expect(safe).not.toMatch(/TEST_(?:CANVAS|LLM)_SECRET_DO_NOT_LOG/);
-    expect(JSON.parse(safe)).toEqual({ miaoshouConfigured: false, canvasConfigured: true, llmConfigured: true, exchangeRateConfigured: true, imageGenerationConfigured: false, assetPublishingConfigured: false });
+    expect(JSON.parse(safe)).toEqual({ miaoshouConfigured: false, canvasConfigured: true, llmConfigured: true, exchangeRateConfigured: true, imageGenerationConfigured: false, imageGenerationPath: "canvas", assetPublishingConfigured: false });
   });
 
   it("treats Canvas base URL as configured when the Canvas deployment does not require an API key", () => {
@@ -115,5 +115,22 @@ describe("config env", () => {
       ASSET_PUBLISH_PUBLIC_BASE_URL: "https://cdn.example.com"
     });
     expect(cfg.assetPublishingConfigured).toBe(false);
+  });
+
+  it("defaults IMAGE_GENERATION_PATH to canvas when not set", () => {
+    const cfg = loadConfig(BASE_ENV);
+    expect(cfg.imageGenerationPath).toBe("canvas");
+    expect(getSecretStatus(cfg).imageGenerationPath).toBe("canvas");
+  });
+
+  it("parses IMAGE_GENERATION_PATH as headless when explicitly set", () => {
+    const cfg = loadConfig({ ...BASE_ENV, IMAGE_GENERATION_PATH: "headless" });
+    expect(cfg.imageGenerationPath).toBe("headless");
+    expect(getSecretStatus(cfg).imageGenerationPath).toBe("headless");
+  });
+
+  it("treats unknown IMAGE_GENERATION_PATH values as canvas (compatibility default)", () => {
+    const cfg = loadConfig({ ...BASE_ENV, IMAGE_GENERATION_PATH: "unknown" });
+    expect(cfg.imageGenerationPath).toBe("canvas");
   });
 });

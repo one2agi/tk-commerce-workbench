@@ -10,6 +10,7 @@ export interface SecretStatus {
   readonly llmConfigured: boolean;
   readonly exchangeRateConfigured: boolean;
   readonly imageGenerationConfigured: boolean;
+  readonly imageGenerationPath: "canvas" | "headless";
   readonly assetPublishingConfigured: boolean;
 }
 
@@ -30,6 +31,7 @@ export interface AppConfig {
   readonly llmConfigured: boolean;
   readonly exchangeRateConfigured: boolean;
   readonly imageGenerationConfigured: boolean;
+  readonly imageGenerationPath: "canvas" | "headless";
   readonly assetPublishingConfigured: boolean;
   readonly canvasBaseUrl: string;
   readonly canvasId: string;
@@ -154,6 +156,10 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
       read(env, "IMAGE_PLANNER_BASE_URL") && read(env, "IMAGE_PLANNER_API_KEY") && read(env, "IMAGE_PLANNER_MODEL") &&
       read(env, "IMAGE_PROVIDER_BASE_URL") && read(env, "IMAGE_PROVIDER_API_KEY") && read(env, "IMAGE_PROVIDER_MODEL")
     ),
+    imageGenerationPath: (() => {
+      const raw = (read(env, "IMAGE_GENERATION_PATH") ?? "canvas").toLowerCase();
+      return raw === "headless" ? "headless" : "canvas";
+    })(),
     assetPublishingConfigured: Boolean(
       read(env, "ASSET_PUBLISH_S3_ENDPOINT") && read(env, "ASSET_PUBLISH_S3_REGION") &&
       read(env, "ASSET_PUBLISH_S3_BUCKET") && read(env, "ASSET_PUBLISH_S3_ACCESS_KEY_ID") &&
@@ -189,6 +195,7 @@ export function getSecretStatus(cfg: AppConfig): SecretStatus {
     llmConfigured: cfg.llmConfigured,
     exchangeRateConfigured: cfg.exchangeRateConfigured,
     imageGenerationConfigured: cfg.imageGenerationConfigured,
+    imageGenerationPath: cfg.imageGenerationPath,
     assetPublishingConfigured: cfg.assetPublishingConfigured
   });
 }

@@ -486,6 +486,18 @@ export class PipelineRepository {
     })) === true;
   }
 
+  async markReadyForImageGeneration(revisionId: string, fence: PipelineFence): Promise<boolean> {
+    return (await this.withFence(fence, async (client) => {
+      await client.query(
+        `UPDATE ${schema.productRevisions}
+         SET working_draft = working_draft || $2::jsonb, version = version + 1
+         WHERE id = $1`,
+        [revisionId, JSON.stringify({ imageGenerationReady: true })]
+      );
+      return true;
+    })) === true;
+  }
+
   async markReady(value: { revisionId: string; state: "ready" }, fence: PipelineFence): Promise<boolean> {
     return (await this.withFence(fence, async (client) => {
       const revision = await client.query<{ product_id: string }>(`SELECT product_id FROM ${schema.productRevisions} WHERE id = $1`, [value.revisionId]);

@@ -136,6 +136,8 @@ export type ApprovalSnapshotV1 = Readonly<{
   templateVersion: number;
   orderedFinalAssetIds: AssetId[];
   orderedFinalAssetLocalPaths?: string[];
+  orderedFinalAssetSha256?: string[];
+  orderedFinalAssetExtension?: string[];
   sourcePlatform: "1688";
   sourceCanonicalUrl: string;
   sourceItemId: SourceItemId;
@@ -181,6 +183,8 @@ export type WorkspaceSettingsViewV1 = Readonly<{
     canvasConfigured: boolean;
     llmConfigured: boolean;
     exchangeRateConfigured: boolean;
+    imageGenerationConfigured: boolean;
+    imageGenerationPath: "canvas" | "headless";
   };
   workerConcurrency: number;
   maxCanvasRunsPerDay: number;
