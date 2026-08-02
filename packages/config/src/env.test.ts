@@ -63,7 +63,7 @@ describe("config env", () => {
     expect(cfg.canvasApiKey).toBe("TEST_CANVAS_SECRET_DO_NOT_LOG");
     const safe = JSON.stringify(getSecretStatus(cfg));
     expect(safe).not.toMatch(/TEST_(?:CANVAS|LLM)_SECRET_DO_NOT_LOG/);
-    expect(JSON.parse(safe)).toEqual({ miaoshouConfigured: false, canvasConfigured: true, llmConfigured: true, exchangeRateConfigured: true, imageGenerationConfigured: false, imageGenerationPath: "canvas", assetPublishingConfigured: false });
+    expect(JSON.parse(safe)).toEqual({ miaoshouConfigured: false, canvasConfigured: true, llmConfigured: true, exchangeRateConfigured: true, imageGenerationConfigured: false, imageGenerationPath: "headless", assetPublishingConfigured: false });
   });
 
   it("treats Canvas base URL as configured when the Canvas deployment does not require an API key", () => {
@@ -117,10 +117,15 @@ describe("config env", () => {
     expect(cfg.assetPublishingConfigured).toBe(false);
   });
 
-  it("defaults IMAGE_GENERATION_PATH to canvas when not set", () => {
+  it("defaults IMAGE_GENERATION_PATH to headless when not set", () => {
     const cfg = loadConfig(BASE_ENV);
-    expect(cfg.imageGenerationPath).toBe("canvas");
-    expect(getSecretStatus(cfg).imageGenerationPath).toBe("canvas");
+    expect(cfg.imageGenerationPath).toBe("headless");
+    expect(getSecretStatus(cfg).imageGenerationPath).toBe("headless");
+  });
+
+  it("defaults new work to headless and preserves explicit canvas for legacy tasks", () => {
+    expect(loadConfig(BASE_ENV).imageGenerationPath).toBe("headless");
+    expect(loadConfig({ ...BASE_ENV, IMAGE_GENERATION_PATH: "canvas" }).imageGenerationPath).toBe("canvas");
   });
 
   it("parses IMAGE_GENERATION_PATH as headless when explicitly set", () => {

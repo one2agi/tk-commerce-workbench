@@ -157,7 +157,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
       read(env, "IMAGE_PROVIDER_BASE_URL") && read(env, "IMAGE_PROVIDER_API_KEY") && read(env, "IMAGE_PROVIDER_MODEL")
     ),
     imageGenerationPath: (() => {
-      const raw = (read(env, "IMAGE_GENERATION_PATH") ?? "canvas").toLowerCase();
+      const raw = (read(env, "IMAGE_GENERATION_PATH") ?? "headless").toLowerCase();
       return raw === "headless" ? "headless" : "canvas";
     })(),
     assetPublishingConfigured: Boolean(
