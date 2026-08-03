@@ -8,6 +8,9 @@ export type ImageGenerationPanelProps = Readonly<{
   productId: string;
   revisionId: string;
   imageGeneration: ImageGenerationViewV1 | null;
+  selectedAssetIds?: ReadonlySet<string>;
+  onSelectedAssetIdsChange?: (assetIds: ReadonlySet<string>) => void;
+  showInputGallery?: boolean;
 }>;
 
 // Stable no-op for server-side rendering where useRouter is unavailable
@@ -116,17 +119,25 @@ function SlotCard({
   );
 }
 
-export function ImageGenerationPanel({ productId, revisionId, imageGeneration }: ImageGenerationPanelProps): ReactElement {
+export function ImageGenerationPanel({
+  productId,
+  revisionId,
+  imageGeneration,
+  selectedAssetIds: controlledSelectedAssetIds,
+  onSelectedAssetIdsChange,
+  showInputGallery = true
+}: ImageGenerationPanelProps): ReactElement {
   const refresh = useRefresh();
   const [mode, setMode] = useState<PanelMode>("idle");
   const [outputCount, setOutputCount] = useState<number>(() => {
     if (!imageGeneration) return 4;
     return imageGeneration.requestedCount;
   });
-  const [selectedAssetIds, setSelectedAssetIds] = useState<Set<string>>(() => {
+  const [internalSelectedAssetIds, setInternalSelectedAssetIds] = useState<ReadonlySet<string>>(() => {
     if (!imageGeneration) return new Set();
     return new Set(imageGeneration.selectedInputs.map((i) => i.assetId));
   });
+  const selectedAssetIds = controlledSelectedAssetIds ?? internalSelectedAssetIds;
   const pollingRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const unmountedRef = useRef(false);
 
@@ -190,12 +201,11 @@ export function ImageGenerationPanel({ productId, revisionId, imageGeneration }:
   }
 
   function toggleAsset(assetId: string) {
-    setSelectedAssetIds((prev) => {
-      const next = new Set(prev);
-      if (next.has(assetId)) next.delete(assetId);
-      else if (next.size < 6) next.add(assetId);
-      return next;
-    });
+    const next = new Set(selectedAssetIds);
+    if (next.has(assetId)) next.delete(assetId);
+    else if (next.size < 6) next.add(assetId);
+    if (onSelectedAssetIdsChange) onSelectedAssetIdsChange(next);
+    else setInternalSelectedAssetIds(next);
   }
 
   function adjustCount(delta: number) {
@@ -232,7 +242,7 @@ export function ImageGenerationPanel({ productId, revisionId, imageGeneration }:
             </button>
           </div>
 
-          <div className="tk-igen-thumb-grid" aria-label="选择原图">
+          {showInputGallery && <div className="tk-igen-thumb-grid" aria-label="选择原图">
             {imageGeneration?.availableInputs.map((input) => (
               <button
                 key={input.assetId}
@@ -248,7 +258,7 @@ export function ImageGenerationPanel({ productId, revisionId, imageGeneration }:
                 )}
               </button>
             ))}
-          </div>
+          </div>}
 
           <div className="tk-igen-count-row">
             <span className="tk-igen-label" aria-label="输出数量">输出数量</span>

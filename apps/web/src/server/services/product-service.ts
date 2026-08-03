@@ -311,7 +311,8 @@ function imageGenerationView(row: Record<string, unknown>): ProductWorkspaceV1["
   const availableInputs = availableAssets.map((a) => ({
     assetId: assetId(String(a.assetId ?? "")),
     localUrl: String(a.localUrl ?? ""),
-    role: a.role as string | null
+    role: a.role as string | null,
+    sourceUrl: typeof a.sourceUrl === "string" ? a.sourceUrl : null
   }));
 
   if (!batchId) {
@@ -574,6 +575,7 @@ export class ProductService {
              jsonb_build_object(
                'assetId', a.id,
                'localUrl', '/api/v1/assets/' || a.id || '/content',
+               'sourceUrl', a.remote_url,
                'role', a.chosen_role
              )
              ORDER BY a.created_at ASC

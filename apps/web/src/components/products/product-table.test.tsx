@@ -1,7 +1,7 @@
 import "@testing-library/jest-dom/vitest";
 // @ts-expect-error The workspace provides the jsdom runtime without @types/jsdom.
 import { JSDOM } from "jsdom";
-import { cleanup, fireEvent, render, within } from "@testing-library/react";
+import { cleanup, fireEvent, render } from "@testing-library/react";
 import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 
 import {
@@ -143,7 +143,7 @@ describe("ProductTable row-level start action", () => {
     expect(screen.queryByText("图")).toBeNull();
   });
 
-  it("shows original and processed galleries under the matching product row", () => {
+  it("keeps complete image galleries out of the dense product list", () => {
     const { screen } = renderTable({
       item: item({
         originalImageUrls: ["/source-1.jpg", "/source-2.jpg"],
@@ -151,18 +151,8 @@ describe("ProductTable row-level start action", () => {
       })
     });
 
-    const productGallery = screen.getByRole("group", {
-      name: "商品 892408514788 图片"
-    });
-    expect(within(productGallery).getByRole("region", {
-      name: "商品 892408514788 原产品图"
-    })).toBeInTheDocument();
-    expect(within(productGallery).getByRole("region", {
-      name: "商品 892408514788 洗图后的图"
-    })).toBeInTheDocument();
-    expect(within(productGallery).getAllByRole("button", {
-      name: /放大原产品图/
-    })).toHaveLength(2);
+    expect(screen.queryByRole("group", { name: "商品 892408514788 图片" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("region", { name: "商品 892408514788 原产品图" })).not.toBeInTheDocument();
     expect(screen.getByRole("link", { name: /查看详情 892408514788/ })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: /开始处理 892408514788/ })).toBeInTheDocument();
   });

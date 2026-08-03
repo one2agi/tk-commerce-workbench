@@ -2,18 +2,10 @@
 
 import type { ApprovalPreviewV1 } from "@tk/contracts/read-models";
 import type { ReviewWorkspaceView } from "./review-workspace-view";
-import { ImageGenerationPanel } from "../products/image-generation-panel";
+import { ProductImageWorkbench } from "../products/product-image-workbench";
 import { OriginalListingPanel } from "./original-listing-panel";
 import { TargetListingPanel } from "./target-listing-panel";
-import { FinalImageOrder } from "./final-image-order";
 import { ApprovalActions, type ReviewActions } from "./approval-actions";
-
-function displayCanvasStatus(workspace: ReviewWorkspaceView): string {
-  if (workspace.reviewFacts.orderedFinalImages.length > 0) return "图片已生成";
-  if (workspace.canvas?.state === "succeeded") return "待选最终图";
-  if (workspace.canvas?.state === "running") return "生图中";
-  return "待处理";
-}
 
 function displaySkuCount(count: number | null): string {
   return count === null ? "SKU 数量未知" : `SKU ${count} 个`;
@@ -92,7 +84,6 @@ export function FinalReview({ workspace, approvalPreview, actions }: {
   approvalPreview?: ApprovalPreviewV1 | null;
   actions?: ReviewActions;
 }) {
-  const canvasOutputs = workspace.canvas?.outputs ?? [];
   return (
     <article aria-label={`最终审核 ${workspace.productId}`} className="tk-review">
       <header className="tk-page-heading tk-review__heading">
@@ -106,27 +97,8 @@ export function FinalReview({ workspace, approvalPreview, actions }: {
         </div>
         <a className="tk-review__back-link" href="/products">返回商品处理台</a>
       </header>
-      <div className="tk-review__workspace">
-        <section aria-label="图片生成" className="tk-review__images">
-          <header className="tk-review__image-header">
-            <div>
-              <p>图片确认</p>
-              <h2>{displayCanvasStatus(workspace)}</h2>
-            </div>
-            <span>{workspace.reviewFacts.orderedFinalImages.length} / {canvasOutputs.length || "—"}</span>
-          </header>
-          <ImageGenerationPanel
-            productId={String(workspace.productId)}
-            revisionId={String(workspace.revisionId)}
-            imageGeneration={workspace.imageGeneration}
-          />
-          <div className="tk-review__image-tabs" aria-label="图片来源统计">
-            <span>AI图 {canvasOutputs.length}</span>
-            <span>采集图 {workspace.reviewFacts.orderedFinalImages.length + (workspace.originalListing?.mainImages.length ?? 0) + (workspace.originalListing?.detailImages.length ?? 0)}</span>
-            <span>最终图 {workspace.reviewFacts.orderedFinalImages.length}</span>
-          </div>
-          <FinalImageOrder orderedFinalImages={workspace.reviewFacts.orderedFinalImages} outputs={canvasOutputs} />
-        </section>
+      <ProductImageWorkbench workspace={workspace} />
+      <div className="tk-review__lower">
         <section aria-label="商品内容" className="tk-review__content">
           <ReviewNextStepPanel workspace={workspace} />
           <ReviewGeneratedInfoPanel workspace={workspace} />

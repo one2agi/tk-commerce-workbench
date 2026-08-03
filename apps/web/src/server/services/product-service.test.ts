@@ -353,6 +353,7 @@ describe("ProductService.get imageGeneration projection", () => {
 
     const sql = String(query.mock.calls[0]?.[0]);
     expect(sql).toContain("a.kind <> 'generated'");
+    expect(sql).toContain("'sourceUrl', a.remote_url");
     expect(sql).toContain("archived.state = 'ready'");
     expect(sql).toContain("archived.local_path IS NOT NULL");
     expect(result?.imageGeneration?.availableInputs).toHaveLength(6);
