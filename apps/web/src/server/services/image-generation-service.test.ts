@@ -109,6 +109,29 @@ describe("ImageGenerationService", () => {
       );
     });
 
+    it("uses run intent to distinguish a deliberate new batch while keeping retries idempotent", async () => {
+      const repo = mockRepository();
+      const store = mockTemplateStore();
+      store.resolveActiveByCategory.mockResolvedValue({ template: activeTemplate, version: activeTemplateVersion });
+      repo.createBatch.mockResolvedValue({ batchId: "batch_1", plannerJobId: "job_1" });
+      const service = new ImageGenerationService(makeContext(repo, store));
+      const base = {
+        productId: "prod_1",
+        revisionId: "rev_1",
+        categoryKey: "women.hat",
+        selectedAssetIds: ["asset_1"],
+        outputCount: 4
+      };
+
+      await service.start({ ...base, runIntentId: "intent_1" });
+      await service.start({ ...base, runIntentId: "intent_1" });
+      await service.start({ ...base, runIntentId: "intent_2" });
+
+      const keys = repo.createBatch.mock.calls.map(([input]) => (input as { idempotencyKey: string }).idempotencyKey);
+      expect(keys[0]).toBe(keys[1]);
+      expect(keys[2]).not.toBe(keys[0]);
+    });
+
     it("rejects an asset that is not owned by the requested product revision", async () => {
       const repo = mockRepository();
       const store = mockTemplateStore();

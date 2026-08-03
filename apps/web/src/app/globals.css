@@ -1789,6 +1789,19 @@ button:disabled {
   font-weight: 500;
 }
 
+select.tk-igen-category {
+  min-width: 0;
+  padding: 7px 30px 7px 10px;
+  border: 1px solid #cbd5e1;
+  border-radius: 6px;
+  background: #fff;
+}
+
+select.tk-igen-category:focus-visible {
+  outline: 2px solid #2563eb;
+  outline-offset: 2px;
+}
+
 .tk-igen-thumb-grid {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(72px, 1fr));
@@ -1994,6 +2007,14 @@ button:disabled {
   color: #dc2626;
 }
 
+.tk-igen-slot-use {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 12px;
+  color: #334155;
+}
+
 .tk-igen-slot-actions {
   display: flex;
   gap: 6px;
@@ -2009,6 +2030,86 @@ button:disabled {
   flex-direction: column;
   align-items: center;
   gap: 12px;
+}
+
+.tk-igen-final-order {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 14px;
+  border: 1px solid #dbeafe;
+  border-radius: 10px;
+  background: #f8fbff;
+}
+
+.tk-igen-final-order > header {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  align-items: flex-start;
+}
+
+.tk-igen-final-order header p,
+.tk-igen-final-hint {
+  margin: 3px 0 0;
+  color: #64748b;
+  font-size: 12px;
+}
+
+.tk-igen-confirmed {
+  color: #047857;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.tk-igen-final-order ol {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
+  gap: 10px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.tk-igen-final-order li {
+  display: grid;
+  gap: 7px;
+  padding: 8px;
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+  background: #fff;
+}
+
+.tk-igen-final-order li img {
+  width: 100%;
+  aspect-ratio: 1;
+  object-fit: cover;
+  border-radius: 6px;
+}
+
+.tk-igen-final-order li > span {
+  font-size: 12px;
+  font-weight: 600;
+  color: #1e293b;
+}
+
+.tk-igen-final-order li > div {
+  display: flex;
+  gap: 6px;
+}
+
+.tk-igen-message {
+  margin: 0;
+  padding: 9px 11px;
+  border-radius: 7px;
+  background: #eff6ff;
+  color: #1d4ed8;
+  font-size: 12px;
+}
+
+.tk-igen-message.is-error {
+  background: #fef2f2;
+  color: #b91c1c;
 }
 
 /* Template Manager Styles */

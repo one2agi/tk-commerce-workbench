@@ -6,7 +6,7 @@
 //   - All selected assets must be owned by the revision and in "ready" state.
 //   - No duplicate asset IDs.
 //   - Template must have an active version.
-//   - Idempotency derived from revision ID + SHA-256(sorted asset IDs + category + template version + output count).
+//   - Idempotency derived from revision, inputs, template, output count, and an optional user run intent.
 //   - Retry only allowed on failed slots.
 //   - Exclude only allowed on waiting_for_plan or queued slots.
 //   - Accept-partial only allowed when at least one slot is succeeded and not excluded.
@@ -27,6 +27,8 @@ export interface StartGenerationInput {
   categoryKey: string;
   selectedAssetIds: string[];
   outputCount: number;
+  /** Stable across retries of one user action; different for each deliberate new batch. */
+  runIntentId?: string;
 }
 
 export interface RetrySlotInput {
@@ -56,14 +58,16 @@ function deriveIdempotencyKey(
   selectedAssetIds: string[],
   categoryKey: string,
   templateVersion: number,
-  outputCount: number
+  outputCount: number,
+  runIntentId?: string
 ): string {
   const payload = JSON.stringify({
     revisionId,
     selectedAssetIds: sorted(selectedAssetIds),
     categoryKey,
     templateVersion,
-    outputCount
+    outputCount,
+    ...(runIntentId ? { runIntentId } : {})
   });
   return `img_gen:${createHash("sha256").update(payload).digest("hex")}`;
 }
@@ -139,7 +143,8 @@ export class ImageGenerationService {
       selectedAssetIds,
       categoryKey,
       resolved.version.version,
-      outputCount
+      outputCount,
+      input.runIntentId
     );
 
     const createInput: CreateBatchInput = {

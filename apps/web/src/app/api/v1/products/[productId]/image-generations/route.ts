@@ -33,7 +33,7 @@ export function createStartHandler(deps: { service: ImageGenerationService }) {
       return Response.json({ error: "invalid_request" }, { status: 400 });
     }
 
-    const { revisionId, categoryKey, selectedAssetIds, outputCount } = body as Record<string, unknown>;
+    const { revisionId, categoryKey, selectedAssetIds, outputCount, runIntentId } = body as Record<string, unknown>;
 
     if (typeof revisionId !== "string" || !revisionId.trim()) {
       return Response.json({ error: "invalid_request", detail: "revisionId required" }, { status: 400 });
@@ -47,6 +47,9 @@ export function createStartHandler(deps: { service: ImageGenerationService }) {
     if (typeof outputCount !== "number" || outputCount < 1 || outputCount > 8) {
       return Response.json({ error: "invalid_request", detail: "outputCount must be 1-8" }, { status: 400 });
     }
+    if (runIntentId !== undefined && (typeof runIntentId !== "string" || !runIntentId.trim() || runIntentId.length > 128)) {
+      return Response.json({ error: "invalid_request", detail: "runIntentId must be a non-empty string up to 128 characters" }, { status: 400 });
+    }
 
     try {
       const { productId } = await context.params;
@@ -55,7 +58,8 @@ export function createStartHandler(deps: { service: ImageGenerationService }) {
         revisionId: revisionId as string,
         categoryKey: categoryKey as string,
         selectedAssetIds: selectedAssetIds as string[],
-        outputCount: outputCount as number
+        outputCount: outputCount as number,
+        ...(typeof runIntentId === "string" ? { runIntentId } : {})
       });
       return Response.json(result, { status: 201 });
     } catch (err: unknown) {

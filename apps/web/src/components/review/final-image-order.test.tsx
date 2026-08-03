@@ -4,7 +4,7 @@ import { describe, expect, it } from "vitest";
 import { FinalImageOrder, buildFinalImageCandidates } from "./final-image-order";
 
 describe("FinalImageOrder", () => {
-  it("uses thumbnails for selected images and does not render selected Canvas assets twice", () => {
+  it("uses thumbnails for selected images and does not render selected processed assets twice", () => {
     const html = renderToStaticMarkup(<FinalImageOrder
       orderedFinalImages={[{
         assetId: "asset_1",
@@ -18,6 +18,7 @@ describe("FinalImageOrder", () => {
     expect(html.match(/asset_1\/content/g)).toHaveLength(1);
     expect(html).toContain("src=\"/api/v1/assets/asset_2/content?variant=thumbnail\"");
     expect(html).toContain("待确认成图 1");
+    expect(html).not.toContain("Canvas");
   });
 
   it("orders accepted successful generated assets without source-image mixing", () => {
