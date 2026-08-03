@@ -2,9 +2,10 @@ export interface StatusPillProps {
   name: string;
   envVars: string;
   configured: boolean;
+  activeLabel?: string;
 }
 
-export function StatusPill({ name, envVars, configured }: StatusPillProps): React.JSX.Element {
+export function StatusPill({ name, envVars, configured, activeLabel }: StatusPillProps): React.JSX.Element {
   return (
     <div
       className={`tk-pill ${configured ? "is-ok" : "is-warn"}`}
@@ -15,7 +16,7 @@ export function StatusPill({ name, envVars, configured }: StatusPillProps): Reac
       </span>
       <div className="tk-pill__body">
         <div className="tk-pill__name">{name}</div>
-        <div className="tk-pill__env">{envVars}</div>
+        <div className="tk-pill__env">{activeLabel ?? envVars}</div>
       </div>
     </div>
   );

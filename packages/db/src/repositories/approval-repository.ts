@@ -249,19 +249,27 @@ export class ApprovalRepository {
     const invalidAssetId = command.orderedFinalAssetIds.find((assetId) => !assetsById.has(assetId));
     if (invalidAssetId) conflict("orderedFinalAssetIds", command.orderedFinalAssetIds, { invalidAssetId });
 
-    // Spec gap A (T13 fix): every accepted assetId must be backed by a slot row that
-    // produced it. Only slots that have actually succeeded AND archived the asset,
-    // and have not been excluded, may feed the approval snapshot.
-    const slotsResult = await client.query<{ archived_asset_id: string }>(
-      `SELECT archived_asset_id FROM ${schema.imageGenerationSlots}
+    // New headless outputs must come from succeeded, non-excluded slots. Keep
+    // completed legacy Canvas outputs eligible so already-running Canvas work can
+    // still be approved during the headless migration.
+    const provenanceResult = await client.query<{ asset_id: string }>(
+      `SELECT archived_asset_id AS asset_id
+       FROM ${schema.imageGenerationSlots}
        WHERE archived_asset_id = ANY($1::text[])
          AND state = 'succeeded'
          AND archived_asset_id IS NOT NULL
-         AND excluded_at IS NULL`,
-      [command.orderedFinalAssetIds]
+         AND excluded_at IS NULL
+       UNION
+       SELECT output.asset_id
+       FROM ${schema.canvasRuns} canvas
+       CROSS JOIN LATERAL jsonb_array_elements_text(canvas.outputs) AS output(asset_id)
+       WHERE canvas.revision_id = $2
+         AND canvas.state IN ('succeeded', 'partial')
+         AND output.asset_id = ANY($1::text[])`,
+      [command.orderedFinalAssetIds, revision.id]
     );
-    const slotsByAssetId = new Set(slotsResult.rows.map((row) => row.archived_asset_id));
-    const unbackedAssetId = command.orderedFinalAssetIds.find((assetId) => !slotsByAssetId.has(assetId));
+    const producedAssetIds = new Set(provenanceResult.rows.map((row) => row.asset_id));
+    const unbackedAssetId = command.orderedFinalAssetIds.find((assetId) => !producedAssetIds.has(assetId));
     if (unbackedAssetId) {
       conflict("orderedFinalAssetIds", command.orderedFinalAssetIds, { unbackedAssetId });
     }

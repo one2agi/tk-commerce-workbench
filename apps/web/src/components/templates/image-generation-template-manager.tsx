@@ -161,7 +161,7 @@ function TemplateItem({ template, onRefresh }: TemplateItemProps) {
 }
 
 export function ImageGenerationTemplateManager({ items }: { items: ImageGenerationTemplateViewV1[] }) {
-  const [templates, setTemplates] = useState(items);
+  const templates = items;
   const [message, setMessage] = useState("");
 
   function handleRefresh() {

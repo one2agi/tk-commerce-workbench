@@ -9,7 +9,7 @@
     "build": "next build --webpack",
     "lint": "eslint src --max-warnings=0",
     "typecheck": "tsc --noEmit",
-    "test": "vitest run"
+    "test": "vitest run --config vitest.all.config.ts"
   },
   "dependencies": {
     "@tk/contracts": "workspace:*",

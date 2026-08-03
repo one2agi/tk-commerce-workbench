@@ -1,7 +1,7 @@
 import "@testing-library/jest-dom/vitest";
 // @ts-expect-error The workspace provides the jsdom runtime without @types/jsdom.
 import { JSDOM } from "jsdom";
-import { cleanup, render, screen } from "@testing-library/react";
+import { cleanup, render } from "@testing-library/react";
 import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import userEvent from "@testing-library/user-event";
 import type { ImageGenerationTemplateViewV1 } from "@tk/contracts/read-models";

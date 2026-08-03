@@ -9,40 +9,82 @@ import {
 
 describe("read1688PageContext", () => {
   it("transfers the allowlisted snapshot across the shared DOM event mailbox", async () => {
-    // @ts-expect-error The workspace provides jsdom at runtime without package-local typings.
-    const { JSDOM } = await import("jsdom");
-    const dom = new JSDOM("<!doctype html><html><body></body></html>", {
-      url: "https://detail.1688.com/offer/1051175706079.html"
-    });
-    const pageWindow = dom.window as unknown as Window & {
-      context: unknown;
+    type TestEvent = { type: string; bubbles: boolean; target: unknown; initEvent(type: string, bubbles: boolean): void };
+    const documentListeners = new Map<string, Set<(event: TestEvent) => void>>();
+    const mailboxListeners = new Map<string, Set<() => void>>();
+    const attributes = new Map<string, string>();
+    const mailbox = {
+      hidden: false,
+      textContent: "",
+      setAttribute: (name: string, value: string) => attributes.set(name, value),
+      getAttribute: (name: string) => attributes.get(name) ?? null,
+      addEventListener: (type: string, listener: () => void) => {
+        const listeners = mailboxListeners.get(type) ?? new Set();
+        listeners.add(listener);
+        mailboxListeners.set(type, listeners);
+      },
+      removeEventListener: (type: string, listener: () => void) => mailboxListeners.get(type)?.delete(listener),
+      dispatchEvent: (event: TestEvent) => {
+        event.target = mailbox;
+        mailboxListeners.get(event.type)?.forEach((listener) => listener());
+        if (event.bubbles) documentListeners.get(event.type)?.forEach((listener) => listener(event));
+        return true;
+      },
+      remove: () => undefined
     };
-    pageWindow.context = {
-      result: {
-        data: {
-          productTitle: { fields: { title: "DOM邮箱测试商品" } },
-          gallery: {
-            fields: {
-              offerId: 1051175706079,
-              mainImage: ["https://cbu01.alicdn.com/img/ibank/mailbox.jpg"]
-            }
-          },
-          secretToken: "must-not-cross"
+    const documentValue = {
+      createElement: () => mailbox,
+      createEvent: () => ({
+        type: "",
+        bubbles: false,
+        target: null,
+        initEvent(type: string, bubbles: boolean) {
+          this.type = type;
+          this.bubbles = bubbles;
+        }
+      }),
+      documentElement: { append: () => undefined },
+      addEventListener: (type: string, listener: (event: TestEvent) => void) => {
+        const listeners = documentListeners.get(type) ?? new Set();
+        listeners.add(listener);
+        documentListeners.set(type, listeners);
+      },
+      removeEventListener: (type: string, listener: (event: TestEvent) => void) => documentListeners.get(type)?.delete(listener)
+    };
+    const pageWindow = {
+      document: documentValue,
+      setTimeout,
+      clearTimeout,
+      context: {
+        result: {
+          data: {
+            productTitle: { fields: { title: "DOM邮箱测试商品" } },
+            gallery: {
+              fields: {
+                offerId: 1051175706079,
+                mainImage: ["https://cbu01.alicdn.com/img/ibank/mailbox.jpg"]
+              }
+            },
+            secretToken: "must-not-cross"
+          }
         }
       }
+    } as unknown as Window & {
+      context: unknown;
     };
     const uninstall = installPageContextBridge(pageWindow);
+    try {
+      const snapshot = await requestPageContext(pageWindow, 100);
 
-    const snapshot = await requestPageContext(pageWindow, 100);
-
-    expect(snapshot).toMatchObject({
-      offerId: "1051175706079",
-      title: "DOM邮箱测试商品",
-      mainImages: ["https://cbu01.alicdn.com/img/ibank/mailbox.jpg"]
-    });
-    expect(JSON.stringify(snapshot)).not.toContain("must-not-cross");
-    uninstall();
-    dom.window.close();
+      expect(snapshot).toMatchObject({
+        offerId: "1051175706079",
+        title: "DOM邮箱测试商品",
+        mainImages: ["https://cbu01.alicdn.com/img/ibank/mailbox.jpg"]
+      });
+      expect(JSON.stringify(snapshot)).not.toContain("must-not-cross");
+    } finally {
+      uninstall();
+    }
   });
 
   it("returns only allowlisted product fields from the 1688 page context", () => {

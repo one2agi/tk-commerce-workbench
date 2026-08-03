@@ -725,12 +725,44 @@ export class ImageGenerationRepository {
    * Accept a partial successful batch.
    */
   async acceptPartial(batchId: string, acceptedAssetIds: string[]): Promise<void> {
-    await this.pool.query(
-      `UPDATE ${schema.imageGenerationBatches}
-       SET accepted_asset_ids = $1, state = 'partial_success', updated_at = now()
-       WHERE id = $2`,
-      [JSON.stringify(acceptedAssetIds), batchId]
-    );
+    const client = await this.pool.connect();
+    try {
+      await client.query("BEGIN");
+      const batch = await client.query<{ product_id: string; revision_id: string }>(
+        `SELECT product_id, revision_id
+         FROM ${schema.imageGenerationBatches}
+         WHERE id = $1
+         FOR UPDATE`,
+        [batchId]
+      );
+      const row = batch.rows[0];
+      if (!row) throw commandError("batch_not_found");
+      await client.query(
+        `UPDATE ${schema.imageGenerationBatches}
+         SET accepted_asset_ids = $1::jsonb, state = 'partial_success', updated_at = now()
+         WHERE id = $2`,
+        [JSON.stringify(acceptedAssetIds), batchId]
+      );
+      await client.query(
+        `UPDATE ${schema.productRevisions}
+         SET working_draft = working_draft || $2::jsonb,
+             version = version + 1
+         WHERE id = $1`,
+        [row.revision_id, JSON.stringify({ finalAssetOrder: acceptedAssetIds })]
+      );
+      await client.query(
+        `UPDATE ${schema.products}
+         SET state_automation = 'ready', updated_at = now()
+         WHERE id = $1`,
+        [row.product_id]
+      );
+      await client.query("COMMIT");
+    } catch (error) {
+      await client.query("ROLLBACK").catch(() => undefined);
+      throw error;
+    } finally {
+      client.release();
+    }
   }
 
   /**

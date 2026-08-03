@@ -27,7 +27,7 @@ function baseline(): WorkspaceSettingsView {
     },
     providerOptions: { listingProvider: "miaoshou", listingModel: "v3", canvasWorkflow: "wf-1" },
     retryPolicy: { maxAttempts: 5, initialDelaySeconds: 30 },
-    secretStatus: { miaoshouConfigured: true, canvasConfigured: true, llmConfigured: true, exchangeRateConfigured: false },
+    secretStatus: { miaoshouConfigured: true, canvasConfigured: true, llmConfigured: true, exchangeRateConfigured: false, imageGenerationConfigured: true, imageGenerationPath: "headless" },
     applicationNote: ""
   };
 }

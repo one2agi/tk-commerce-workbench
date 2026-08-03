@@ -215,7 +215,9 @@ describe("operational pages", () => {
         miaoshouConfigured: true,
         canvasConfigured: false,
         llmConfigured: true,
-        exchangeRateConfigured: true
+        exchangeRateConfigured: true,
+        imageGenerationConfigured: true,
+        imageGenerationPath: "headless"
       },
       workerConcurrency: 2,
       maxCanvasRunsPerDay: 50,

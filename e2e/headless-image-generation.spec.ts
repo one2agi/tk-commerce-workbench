@@ -19,6 +19,7 @@ import { join } from "node:path";
 import { expect, test } from "@playwright/test";
 
 import { createFakePorts } from "../packages/contracts/src/testing/fake-ports.js";
+import type { AssetPublishingPort } from "../packages/contracts/src/ports.js";
 import { ContentAddressedStore } from "../packages/db/src/assets/content-addressed-store.js";
 import { INITIAL_SQL } from "../packages/db/src/migrations/0000_initial.js";
 import { JobRepository } from "../packages/db/src/repositories/job-repository.js";
@@ -26,13 +27,86 @@ import { PipelineRepository, pipelineRepositories } from "../packages/db/src/rep
 import { ApprovalRepository } from "../packages/db/src/repositories/approval-repository.js";
 import { AuditRepository } from "../packages/db/src/repositories/audit-repository.js";
 import { CanvasQuotaRepository } from "../packages/db/src/repositories/canvas-quota-repository.js";
-import { buildWorkerRuntime } from "../apps/worker/src/main.js";
-import { adaptLeasedJobRepository, runWorkerLoop } from "../apps/worker/src/runtime/worker-loop.js";
+import { ImageGenerationRepository } from "../packages/db/src/repositories/image-generation-repository.js";
+import { buildWorkerRuntime, type HandlerRegistryInput } from "../apps/worker/src/main.js";
+import { adaptLeasedJobRepository } from "../apps/worker/src/runtime/worker-loop.js";
 import { createStagingCleanupCodec } from "../apps/worker/src/runtime/staging-cleanup-codec.js";
 import { openE2eDatabase } from "./fixtures/test-database.js";
 import { startMockMiaoshouServer, type MockMiaoshouServer } from "./fixtures/miaoshou-server.js";
 
 const EXTENSION_TOKEN = "wave3-e2e-extension";
+
+const testJpeg = (payload: string) => Buffer.concat([
+  Buffer.from([
+    0xff, 0xd8,
+    0xff, 0xe0, 0x00, 0x02,
+    0xff, 0xc0, 0x00, 0x0b, 0x08,
+    0x04, 0xb0, 0x04, 0xb0,
+    0x01, 0x01, 0x11, 0x00
+  ]),
+  Buffer.from(payload)
+]);
+
+const testPng = (payload: string) => Buffer.concat([
+  Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]),
+  Buffer.from([
+    0x00, 0x00, 0x00, 0x0d,
+    0x49, 0x48, 0x44, 0x52,
+    0x00, 0x00, 0x04, 0xb0,
+    0x00, 0x00, 0x04, 0xb0,
+    0x08, 0x06, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00
+  ]),
+  Buffer.from(payload)
+]);
+
+const publishing: AssetPublishingPort = {
+  publish: async ({ assets }) => assets.map((asset) => ({
+    remoteUrl: `https://published.test/${asset.assetId}.${asset.extension}`
+  })),
+  release: async () => undefined
+};
+
+const adapterLimits: HandlerRegistryInput["adapterLimits"] = {
+  miaoshou: { concurrency: 1, minIntervalMs: 0 },
+  llm: { concurrency: 1, minIntervalMs: 0 },
+  exchangeRate: { concurrency: 1, minIntervalMs: 0 },
+  canvas: { concurrency: 1, minIntervalMs: 0 },
+  staging: { concurrency: 1, minIntervalMs: 0 },
+  imageGeneration: { concurrency: 1, minIntervalMs: 0 }
+};
+
+function runtimeRepositories(
+  pipeline: PipelineRepository,
+  imageGeneration: ImageGenerationRepository,
+  approvals: ApprovalRepository,
+  jobs: JobRepository
+): HandlerRegistryInput["repositories"] {
+  return {
+    ...pipelineRepositories(pipeline),
+    prepareMiaoshouWriteback: {
+      bindCanonicalAndEnqueueEdit: (...args: Parameters<ApprovalRepository["bindCanonicalAndEnqueueEdit"]>) =>
+        approvals.bindCanonicalAndEnqueueEdit(...args)
+    },
+    miaoshouEdit: {
+      loadSnapshot: (id: string) => approvals.loadSnapshot(id),
+      saveSucceeded: (...args: Parameters<ApprovalRepository["saveSucceeded"]>) => approvals.saveSucceeded(...args),
+      saveValidationFailure: (...args: Parameters<ApprovalRepository["saveValidationFailure"]>) => approvals.saveValidationFailure(...args),
+      saveResultUnknown: (...args: Parameters<ApprovalRepository["saveResultUnknown"]>) => approvals.saveResultUnknown(...args),
+      saveReconciliationResultUnknown: (...args: Parameters<ApprovalRepository["saveReconciliationResultUnknown"]>) => approvals.saveReconciliationResultUnknown(...args),
+      saveReconciled: (...args: Parameters<ApprovalRepository["saveReconciled"]>) => approvals.saveReconciled(...args),
+      persistReconciliationContext: (context, fence) => jobs.persistMiaoshouReconciliationContext(
+        fence.jobId,
+        fence.owner,
+        fence.leaseToken,
+        new Date(),
+        context
+      )
+    },
+    imageGeneration,
+    imageSlot: imageGeneration
+  };
+}
 
 // ---------------------------------------------------------------------------
 // Seed helpers
@@ -48,10 +122,17 @@ async function seedProductWithLocalImages(
   await pool.query(`
     INSERT INTO local_operators (id, handle, display_name)
     VALUES ('op_e2e', 'e2e-operator', 'E2E Operator')
-    ON CONFLICT (handle) DO NOTHING;
+    ON CONFLICT (handle) DO NOTHING
+  `);
+  await pool.query(`
     INSERT INTO products (id, operator_id, source_url, source_item_id, canonical_success_detail_id, locale, currency, state_source, state_automation)
     VALUES ($1, 'op_e2e', 'https://detail.1688.com/offer/892408514788.html', '892408514788', '3799770548', 'th-TH', 'THB', 'success', 'not_started')
   `, [productId]);
+
+  await pool.query(`
+    INSERT INTO product_revisions (id, product_id, draft_version, source_title, source_payload, working_draft)
+    VALUES ($1, $2, 1, '测试商品', '{"mainImages":[],"detailImages":[]}'::jsonb, '{}')
+  `, [revisionId, productId]);
 
   const assetIds: string[] = [];
   for (let i = 0; i < inputCount; i++) {
@@ -62,11 +143,6 @@ async function seedProductWithLocalImages(
       VALUES ($1, $2, $3, $4, 'main', 'ready', 1200, 1200, $5, 'jpg')
     `, [assetId, productId, revisionId, `https://cbu01.alicdn.com/img/ibank/O${i}.jpg`, `/data/assets/test_${i}.jpg`]);
   }
-
-  await pool.query(`
-    INSERT INTO product_revisions (id, product_id, draft_version, source_title, source_payload, working_draft)
-    VALUES ($1, $2, 1, '测试商品', '{"mainImages":[],"detailImages":[]}'::jsonb, '{}')
-  `, [revisionId, productId]);
 
   return { productId, revisionId, assetIds };
 }
@@ -81,17 +157,33 @@ async function createImageGenerationBatch(
   const batchId = `batch_${randomUUID().slice(0, 8)}`;
   // Stable id so ON CONFLICT DO NOTHING is actually meaningful
   const templateVersionId = `ig_tmpl_v1`;
+  const recipe = JSON.stringify({
+    version: 1,
+    inputCount: assetIds.length,
+    outputCount,
+    mustPreserve: ["product identity"],
+    visualDirection: "clean marketplace photography",
+    forbidden: ["brand logos"],
+    roles: [{ key: "default", instruction: "show the product clearly" }],
+    providerParameters: {}
+  });
 
   await pool.query(`
     INSERT INTO image_generation_templates (id, name, category_key, parent_category_key, active_version_id, enabled, archived_at, created_at, updated_at)
-    VALUES ('ig_tmpl_1', 'Headless Test', '服装', NULL, $1, true, NULL, now(), now())
-    ON CONFLICT (id) DO NOTHING;
+    VALUES ('ig_tmpl_1', 'Headless Test', '服装', NULL, NULL, true, NULL, now(), now())
+    ON CONFLICT (id) DO NOTHING
+  `);
+  await pool.query(`
     INSERT INTO image_generation_template_versions (id, template_id, version, lifecycle_state, recipe, activated_at, created_at)
     VALUES ($1, 'ig_tmpl_1', 1, 'active',
-            '{"inputCounts":{"default":4,"min":1,"max":6},"outputCounts":{"default":5,"min":1,"max":8},"mustPreserve":[],"visualDirection":"clean","forbidden":[],"roles":[]}'::jsonb,
+            $2::jsonb,
             now(), now())
-    ON CONFLICT (template_id, version) DO NOTHING;
-  `, [templateVersionId]);
+    ON CONFLICT (template_id, version) DO NOTHING
+  `, [templateVersionId, recipe]);
+  await pool.query(
+    "UPDATE image_generation_templates SET active_version_id = $1 WHERE id = 'ig_tmpl_1'",
+    [templateVersionId]
+  );
 
   await pool.query(`
     INSERT INTO image_generation_batches
@@ -99,9 +191,9 @@ async function createImageGenerationBatch(
        category_key, template_id, template_version_id, template_version, recipe_snapshot,
        product_facts_snapshot, product_facts_digest, state, accepted_asset_ids, created_at, updated_at)
     VALUES ($1, $2, $3, $1, $4, $5, '服装', 'ig_tmpl_1', $6, 1,
-            '{"inputCounts":{"default":4,"min":1,"max":6},"outputCounts":{"default":5,"min":1,"max":8}}'::jsonb,
-            '{}', 'digest_${randomUUID().slice(0, 8)}', 'generating', '{}', now(), now())
-  `, [batchId, productId, revisionId, assetIds, outputCount, templateVersionId]);
+            $7::jsonb,
+            '{}', 'digest_${randomUUID().slice(0, 8)}', 'generating', '[]', now(), now())
+  `, [batchId, productId, revisionId, JSON.stringify(assetIds), outputCount, templateVersionId, recipe]);
 
   for (let i = 0; i < outputCount; i++) {
     const slotId = `slot_${batchId}_${i + 1}`;
@@ -110,8 +202,14 @@ async function createImageGenerationBatch(
       INSERT INTO image_generation_slots
         (id, batch_id, slot_number, role, prompt, prompt_hash, business_key, state, attempt,
          remote_task_id, remote_output_url, archived_asset_id, error, excluded_at, created_at, updated_at)
-      VALUES ($1, $2, $3, 'default', NULL, NULL, $4, 'queued', 0, NULL, NULL, NULL, NULL, NULL, now(), now())
-    `, [slotId, batchId, i + 1, businessKey]);
+      VALUES ($1, $2, $3, 'default', $5::jsonb, NULL, $4, 'queued', 0, NULL, NULL, NULL, NULL, NULL, now(), now())
+    `, [slotId, batchId, i + 1, businessKey, JSON.stringify({
+      slot: i + 1,
+      role: "default",
+      prompt: `E2E generated image ${i + 1}`,
+      mustPreserve: [],
+      forbidden: []
+    })]);
   }
 
   return { batchId, templateVersionId };
@@ -127,10 +225,12 @@ test.describe("Canvas-off headless writeback", () => {
   let database: Awaited<ReturnType<typeof openE2eDatabase>>;
   let assetRoot: string;
   let miaoshouServer: MockMiaoshouServer;
+  let previousDatabaseUrl: string | undefined;
+  let previousTestDatabaseUrl: string | undefined;
 
   async function setup() {
-    const previousDatabaseUrl = process.env.DATABASE_URL;
-    const previousTestDatabaseUrl = process.env.TEST_DATABASE_URL;
+    previousDatabaseUrl = process.env.DATABASE_URL;
+    previousTestDatabaseUrl = process.env.TEST_DATABASE_URL;
     database = await openE2eDatabase(process.env.TEST_DATABASE_URL);
     assetRoot = await mkdtemp(join(tmpdir(), "tk-igen-canvasoff-"));
     await database.reset();
@@ -157,8 +257,10 @@ test.describe("Canvas-off headless writeback", () => {
     await miaoshouServer.close();
     await database.close();
     await rm(assetRoot, { recursive: true, force: true });
-    delete process.env.DATABASE_URL;
-    delete process.env.TEST_DATABASE_URL;
+    if (previousDatabaseUrl === undefined) delete process.env.DATABASE_URL;
+    else process.env.DATABASE_URL = previousDatabaseUrl;
+    if (previousTestDatabaseUrl === undefined) delete process.env.TEST_DATABASE_URL;
+    else process.env.TEST_DATABASE_URL = previousTestDatabaseUrl;
     delete process.env.MIAOSHOU_BASE_URL;
     delete process.env.CANVAS_BASE_URL;
     delete process.env.IMAGE_GENERATION_PATH;
@@ -181,19 +283,36 @@ test.describe("Canvas-off headless writeback", () => {
       const archId = `asset_arch_${i}_${randomUUID().slice(0, 8)}`;
       archivedAssetIds.push(archId);
       await database.pool.query(
+        `INSERT INTO assets
+           (id, product_id, revision_id, remote_url, kind, state, width, height, sha256, local_path, extension)
+         VALUES ($1, $2, $3, $4, 'generated', 'ready', 1200, 1200, $5, $6, 'png')`,
+        [archId, productId, revisionId, `https://provider.test/${archId}.png`, `sha256-${archId}`, `/data/assets/${archId}.png`]
+      );
+      await database.pool.query(
         `UPDATE image_generation_slots SET state = 'succeeded', archived_asset_id = $1 WHERE id = $2`,
         [archId, slotRows.rows[i]!.id]
       );
     }
     await database.pool.query(
-      `UPDATE image_generation_batches SET state = 'succeeded', accepted_asset_ids = $1 WHERE id = $2`,
-      [archivedAssetIds, batchId]
+      `UPDATE product_revisions
+       SET working_draft = working_draft || $1::jsonb
+       WHERE id = $2`,
+      [JSON.stringify({ templateMatch: { templateVersion: 1 } }), revisionId]
+    );
+    await new ImageGenerationRepository(database.pool).acceptPartial(batchId, archivedAssetIds);
+    await database.pool.query(
+      `INSERT INTO listing_drafts
+         (id, product_id, revision_id, draft_version, target_locale, style, title, description, attributes, provider)
+       VALUES ('listing_run_1', $1, $2, 1, 'th-TH', 'clean', '测试商品', '测试描述', '[]'::jsonb, 'e2e')`,
+      [productId, revisionId]
     );
 
     // Build runtime with image generation port
     const ports = createFakePorts();
+    ports.miaoshouEdit.responses.push({ kind: "succeeded", remoteDetailId: "3799770548" as never });
     const jobs = new JobRepository(database.pool);
     const pipeline = new PipelineRepository(database.pool);
+    const imageGeneration = new ImageGenerationRepository(database.pool);
     const approvals = new ApprovalRepository(database.pool);
     const auditRepository = new AuditRepository(database.pool);
     const store = new ContentAddressedStore({
@@ -203,10 +322,7 @@ test.describe("Canvas-off headless writeback", () => {
         status: 200,
         headers: { "content-type": url.endsWith(".jpg") ? "image/jpeg" : "image/png" },
         body: (async function* () {
-          const sig = url.endsWith(".jpg")
-            ? Buffer.from([0xff, 0xd8, 0xff, 0xe0])
-            : Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
-          yield Buffer.concat([sig, Buffer.from(url)]);
+          yield url.endsWith(".jpg") ? testJpeg(url) : testPng(url);
         })()
       })
     });
@@ -230,23 +346,9 @@ test.describe("Canvas-off headless writeback", () => {
         staging: ports.assetStaging,
         imageGeneration: ports.imageGeneration,
         imagePlanner: ports.imagePlanner,
-        publishing: ports.assetStaging
+        publishing
       },
-      repositories: {
-        collect: pipelineRepositories(pipeline),
-        prepareMiaoshouWriteback: pipeline,
-        archive: pipelineRepositories(pipeline),
-        listing: pipelineRepositories(pipeline),
-        pricing: pipelineRepositories(pipeline),
-        exchangeRate: pipelineRepositories(pipeline),
-        templates: pipelineRepositories(pipeline),
-        images: pipelineRepositories(pipeline),
-        canvas: pipelineRepositories(pipeline),
-        finalPreview: pipelineRepositories(pipeline),
-        miaoshouEdit: pipeline,
-        imageGeneration: pipeline,
-        imageSlot: pipeline
-      } as Parameters<typeof buildWorkerRuntime>[0]["repositories"],
+      repositories: runtimeRepositories(pipeline, imageGeneration, approvals, jobs),
       reachability: { assertReachable: async () => undefined },
       cleanupCodec: createStagingCleanupCodec("wave3-e2e-cleanup-secret"),
       store,
@@ -262,16 +364,8 @@ test.describe("Canvas-off headless writeback", () => {
       audit,
       now: () => new Date(),
       maxCanvasRunsPerDay: 10,
-      adapterLimits: {
-        miaoshou: { concurrency: 1, minIntervalMs: 0 },
-        llm: { concurrency: 1, minIntervalMs: 0 },
-        exchangeRate: { concurrency: 1, minIntervalMs: 0 },
-        canvas: { concurrency: 1, minIntervalMs: 0 },
-        staging: { concurrency: 1, minIntervalMs: 0 },
-        imageGeneration: { concurrency: 1, minIntervalMs: 0 },
-        imagePlanner: { concurrency: 1, minIntervalMs: 0 },
-        publishing: { concurrency: 1, minIntervalMs: 0 }
-      } as Parameters<typeof buildWorkerRuntime>[0]["adapterLimits"]
+      imageGenerationPath: "headless",
+      adapterLimits
     });
 
     // Confirm approval and enqueue Miaoshou writeback
@@ -280,37 +374,12 @@ test.describe("Canvas-off headless writeback", () => {
       productId,
       expectedDraftVersion: 1,
       expectedListingRunId: "listing_run_1",
-      expectedPricingRunId: "pricing_run_1",
       expectedTemplateVersion: 1,
-      orderedFinalAssetIds: archivedAssetIds as never
-    });
-
-    const { createMiaoshouEditHandler } = await import("../apps/worker/src/handlers/miaoshou-edit.js");
-    const editHandler = createMiaoshouEditHandler({
-      edit: ports.miaoshouEdit,
-      staging: ports.assetStaging,
-      repository: {
-        loadSnapshot: (id: string) => approvals.loadSnapshot(id),
-        saveSucceeded: (...args: Parameters<ApprovalRepository["saveSucceeded"]>) => approvals.saveSucceeded(...args),
-        saveValidationFailure: (...args: Parameters<ApprovalRepository["saveValidationFailure"]>) => approvals.saveValidationFailure(...args),
-        saveResultUnknown: (...args: Parameters<ApprovalRepository["saveResultUnknown"]>) => approvals.saveResultUnknown(...args),
-        saveReconciled: (...args: Parameters<ApprovalRepository["saveReconciled"]>) => approvals.saveReconciled(...args),
-        persistReconciliationContext: async () => true
-      },
-      reachability: { assertReachable: async () => undefined },
-      audit,
-      cleanupCodec: createStagingCleanupCodec("wave3-e2e-cleanup-key")
-    });
-
-    await jobs.enqueue({
-      kind: "miaoshou_edit",
-      businessKey: `miaoshou:${productId}:approved`,
-      payload: { version: 1, approvalSnapshotId: approval.approvalSnapshotId }
+      orderedFinalAssetIds: archivedAssetIds
     });
 
     await runtime.run({
       jobs: adaptLeasedJobRepository(jobs),
-      handlers: { miaoshou_edit: editHandler },
       workerId: "miaoshou_writeback",
       leaseMs: 30_000,
       maxJobs: 1
@@ -354,11 +423,13 @@ test.describe("Canvas-off headless writeback", () => {
     const ports = createFakePorts();
     const jobs = new JobRepository(database.pool);
     const pipeline = new PipelineRepository(database.pool);
+    const imageGeneration = new ImageGenerationRepository(database.pool);
+    const approvals = new ApprovalRepository(database.pool);
     const auditRepository = new AuditRepository(database.pool);
     const store = new ContentAddressedStore({
       assetRoot,
       resolveHost: async () => ["93.184.216.34"],
-      fetch: async () => ({ status: 200, headers: { "content-type": "image/png" }, body: (async function* () { yield Buffer.from([0x89, 0x50, 0x4e, 0x47]); })() })
+      fetch: async () => ({ status: 200, headers: { "content-type": "image/png" }, body: (async function* () { yield testPng("headless-e2e"); })() })
     });
     const audit = {
       append: async (event: Record<string, unknown>) => auditRepository.append({
@@ -367,8 +438,6 @@ test.describe("Canvas-off headless writeback", () => {
       })
     };
 
-    // Track whether submit is called
-    let submitCallCount = 0;
     ports.imageGeneration.submitResult = { kind: "accepted", remoteTaskId: "should_not_be_called" as never };
 
     const runtime = buildWorkerRuntime({
@@ -381,23 +450,9 @@ test.describe("Canvas-off headless writeback", () => {
         staging: ports.assetStaging,
         imageGeneration: ports.imageGeneration,
         imagePlanner: ports.imagePlanner,
-        publishing: ports.assetStaging
+        publishing
       },
-      repositories: {
-        collect: pipelineRepositories(pipeline),
-        prepareMiaoshouWriteback: pipeline,
-        archive: pipelineRepositories(pipeline),
-        listing: pipelineRepositories(pipeline),
-        pricing: pipelineRepositories(pipeline),
-        exchangeRate: pipelineRepositories(pipeline),
-        templates: pipelineRepositories(pipeline),
-        images: pipelineRepositories(pipeline),
-        canvas: pipelineRepositories(pipeline),
-        finalPreview: pipelineRepositories(pipeline),
-        miaoshouEdit: pipeline,
-        imageGeneration: pipeline,
-        imageSlot: pipeline
-      } as Parameters<typeof buildWorkerRuntime>[0]["repositories"],
+      repositories: runtimeRepositories(pipeline, imageGeneration, approvals, jobs),
       reachability: { assertReachable: async () => undefined },
       cleanupCodec: createStagingCleanupCodec("wave3-e2e-cleanup-secret"),
       store,
@@ -413,27 +468,21 @@ test.describe("Canvas-off headless writeback", () => {
       audit,
       now: () => new Date(),
       maxCanvasRunsPerDay: 10,
-      adapterLimits: {
-        miaoshou: { concurrency: 1, minIntervalMs: 0 },
-        llm: { concurrency: 1, minIntervalMs: 0 },
-        exchangeRate: { concurrency: 1, minIntervalMs: 0 },
-        canvas: { concurrency: 1, minIntervalMs: 0 },
-        staging: { concurrency: 1, minIntervalMs: 0 },
-        imageGeneration: { concurrency: 1, minIntervalMs: 0 },
-        imagePlanner: { concurrency: 1, minIntervalMs: 0 },
-        publishing: { concurrency: 1, minIntervalMs: 0 }
-      } as Parameters<typeof buildWorkerRuntime>[0]["adapterLimits"]
+      imageGenerationPath: "headless",
+      adapterLimits
     });
 
     // Enqueue slot job with reconciliation intent (simulating restart after crash)
     await jobs.enqueue({
       kind: "image_generate_slot",
       businessKey: `slot:${batchId}:${slotToRecover.slot_number}`,
+      batchKey: batchId,
       payload: {
         version: 1,
         batchId,
         slotId: slotToRecover.id,
         slotNumber: slotToRecover.slot_number,
+        attempt: 0,
         reconciliationIntent: { version: 1, operation: "image_generate_slot", idempotencyKey: `slot:${batchId}:${slotToRecover.slot_number}` }
       }
     });
@@ -484,7 +533,7 @@ test.describe("Canvas-off headless writeback", () => {
 
     // Simulate: remote task id persisted, but we're polling (fetch returns pending)
     await database.pool.query(
-      `UPDATE image_generation_slots SET state = 'generating', remote_task_id = $1 WHERE id = $2`,
+      `UPDATE image_generation_slots SET state = 'polling', remote_task_id = $1 WHERE id = $2`,
       [remoteTaskId, slot.id]
     );
 
@@ -492,11 +541,13 @@ test.describe("Canvas-off headless writeback", () => {
     ports.imageGeneration.fetchResult = { state: "pending" };
     const jobs = new JobRepository(database.pool);
     const pipeline = new PipelineRepository(database.pool);
+    const imageGeneration = new ImageGenerationRepository(database.pool);
+    const approvals = new ApprovalRepository(database.pool);
     const auditRepository = new AuditRepository(database.pool);
     const store = new ContentAddressedStore({
       assetRoot,
       resolveHost: async () => ["93.184.216.34"],
-      fetch: async () => ({ status: 200, headers: { "content-type": "image/png" }, body: (async function* () { yield Buffer.from([0x89, 0x50, 0x4e, 0x47]); })() })
+      fetch: async () => ({ status: 200, headers: { "content-type": "image/png" }, body: (async function* () { yield testPng("headless-e2e"); })() })
     });
     const audit = {
       append: async (event: Record<string, unknown>) => auditRepository.append({
@@ -515,23 +566,9 @@ test.describe("Canvas-off headless writeback", () => {
         staging: ports.assetStaging,
         imageGeneration: ports.imageGeneration,
         imagePlanner: ports.imagePlanner,
-        publishing: ports.assetStaging
+        publishing
       },
-      repositories: {
-        collect: pipelineRepositories(pipeline),
-        prepareMiaoshouWriteback: pipeline,
-        archive: pipelineRepositories(pipeline),
-        listing: pipelineRepositories(pipeline),
-        pricing: pipelineRepositories(pipeline),
-        exchangeRate: pipelineRepositories(pipeline),
-        templates: pipelineRepositories(pipeline),
-        images: pipelineRepositories(pipeline),
-        canvas: pipelineRepositories(pipeline),
-        finalPreview: pipelineRepositories(pipeline),
-        miaoshouEdit: pipeline,
-        imageGeneration: pipeline,
-        imageSlot: pipeline
-      } as Parameters<typeof buildWorkerRuntime>[0]["repositories"],
+      repositories: runtimeRepositories(pipeline, imageGeneration, approvals, jobs),
       reachability: { assertReachable: async () => undefined },
       cleanupCodec: createStagingCleanupCodec("wave3-e2e-cleanup-secret"),
       store,
@@ -547,23 +584,20 @@ test.describe("Canvas-off headless writeback", () => {
       audit,
       now: () => new Date(),
       maxCanvasRunsPerDay: 10,
-      adapterLimits: {
-        miaoshou: { concurrency: 1, minIntervalMs: 0 },
-        llm: { concurrency: 1, minIntervalMs: 0 },
-        exchangeRate: { concurrency: 1, minIntervalMs: 0 },
-        canvas: { concurrency: 1, minIntervalMs: 0 },
-        staging: { concurrency: 1, minIntervalMs: 0 },
-        imageGeneration: { concurrency: 1, minIntervalMs: 0 },
-        imagePlanner: { concurrency: 1, minIntervalMs: 0 },
-        publishing: { concurrency: 1, minIntervalMs: 0 }
-      } as Parameters<typeof buildWorkerRuntime>[0]["adapterLimits"]
+      imageGenerationPath: "headless",
+      adapterLimits
     });
 
     await jobs.enqueue({
       kind: "image_generate_slot",
       businessKey: `slot:${batchId}:${slot.slot_number}`,
-      payload: { version: 1, batchId, slotId: slot.id, slotNumber: slot.slot_number, reconciliationIntent: { version: 1, operation: "image_generate_slot", idempotencyKey: `slot:${batchId}:${slot.slot_number}` } }
+      batchKey: batchId,
+      payload: { version: 1, batchId, slotId: slot.id, slotNumber: slot.slot_number, attempt: 0, reconciliationIntent: { version: 1, operation: "image_generate_slot", idempotencyKey: `slot:${batchId}:${slot.slot_number}` } }
     });
+    await database.pool.query(
+      `UPDATE jobs SET remote_task_id = $1 WHERE kind = 'image_generate_slot' AND business_key = $2`,
+      [remoteTaskId, `slot:${batchId}:${slot.slot_number}`]
+    );
 
     // Submit should NOT be called — we already have a remote task id
     await runtime.run({ jobs: adaptLeasedJobRepository(jobs), workerId: "polling_recovery", leaseMs: 30_000, maxJobs: 1 });
@@ -585,19 +619,35 @@ test.describe("Canvas-off headless writeback", () => {
 
     const { productId, revisionId, assetIds } = await seedProductWithLocalImages(database.pool, 2);
 
-    // Create a batch but do NOT create slots yet — simulating mid-planning crash
+    // Create a batch with waiting slots but no prompts yet — simulating a crash before planning persisted.
     const batchId = `batch_planning_${randomUUID().slice(0, 8)}`;
     const templateVersionId = `ig_tmpl_v1`;
+    const recipe = JSON.stringify({
+      version: 1,
+      inputCount: assetIds.length,
+      outputCount: 3,
+      mustPreserve: ["product identity"],
+      visualDirection: "clean marketplace photography",
+      forbidden: ["brand logos"],
+      roles: [{ key: "default", instruction: "show the product clearly" }],
+      providerParameters: {}
+    });
     await database.pool.query(`
       INSERT INTO image_generation_templates (id, name, category_key, parent_category_key, active_version_id, enabled, archived_at, created_at, updated_at)
-      VALUES ('ig_tmpl_1', 'Headless Test', '服装', NULL, $1, true, NULL, now(), now())
-      ON CONFLICT (id) DO NOTHING;
+      VALUES ('ig_tmpl_1', 'Headless Test', '服装', NULL, NULL, true, NULL, now(), now())
+      ON CONFLICT (id) DO NOTHING
+    `);
+    await database.pool.query(`
       INSERT INTO image_generation_template_versions (id, template_id, version, lifecycle_state, recipe, activated_at, created_at)
       VALUES ($1, 'ig_tmpl_1', 1, 'active',
-              '{"inputCounts":{"default":4,"min":1,"max":6},"outputCounts":{"default":5,"min":1,"max":8},"mustPreserve":[],"visualDirection":"clean","forbidden":[],"roles":[]}'::jsonb,
+              $2::jsonb,
               now(), now())
-      ON CONFLICT (template_id, version) DO NOTHING;
-    `, [templateVersionId]);
+      ON CONFLICT (template_id, version) DO NOTHING
+    `, [templateVersionId, recipe]);
+    await database.pool.query(
+      "UPDATE image_generation_templates SET active_version_id = $1 WHERE id = 'ig_tmpl_1'",
+      [templateVersionId]
+    );
 
     await database.pool.query(`
       INSERT INTO image_generation_batches
@@ -605,18 +655,34 @@ test.describe("Canvas-off headless writeback", () => {
          category_key, template_id, template_version_id, template_version, recipe_snapshot,
          product_facts_snapshot, product_facts_digest, state, accepted_asset_ids, created_at, updated_at)
       VALUES ($1, $2, $3, $1, $4, 3, '服装', 'ig_tmpl_1', $5, 1,
-              '{"inputCounts":{"default":4,"min":1,"max":6},"outputCounts":{"default":5,"min":1,"max":8}}'::jsonb,
-              '{}', 'digest_${randomUUID().slice(0, 8)}', 'planning', '{}', now(), now())
-    `, [batchId, productId, revisionId, assetIds, templateVersionId]);
+              $6::jsonb,
+              '{}', 'digest_${randomUUID().slice(0, 8)}', 'planning', '[]', now(), now())
+    `, [batchId, productId, revisionId, JSON.stringify(assetIds), templateVersionId, recipe]);
+
+    for (let slotNumber = 1; slotNumber <= 3; slotNumber++) {
+      await database.pool.query(
+        `INSERT INTO image_generation_slots
+           (id, batch_id, slot_number, role, business_key, state)
+         VALUES ($1, $2, $3, 'default', $4, 'waiting_for_plan')`,
+        [
+          `slot_${batchId}_${slotNumber}`,
+          batchId,
+          slotNumber,
+          `slot:${batchId}:${slotNumber}`
+        ]
+      );
+    }
 
     const ports = createFakePorts();
     const jobs = new JobRepository(database.pool);
     const pipeline = new PipelineRepository(database.pool);
+    const imageGeneration = new ImageGenerationRepository(database.pool);
+    const approvals = new ApprovalRepository(database.pool);
     const auditRepository = new AuditRepository(database.pool);
     const store = new ContentAddressedStore({
       assetRoot,
       resolveHost: async () => ["93.184.216.34"],
-      fetch: async () => ({ status: 200, headers: { "content-type": "image/png" }, body: (async function* () { yield Buffer.from([0x89, 0x50, 0x4e, 0x47]); })() })
+      fetch: async () => ({ status: 200, headers: { "content-type": "image/png" }, body: (async function* () { yield testPng("headless-e2e"); })() })
     });
     const audit = {
       append: async (event: Record<string, unknown>) => auditRepository.append({
@@ -627,7 +693,7 @@ test.describe("Canvas-off headless writeback", () => {
 
     // Track how many times the planner is called
     let plannerCallCount = 0;
-    ports.imagePlanner.plan = async ({ idempotencyKey }: { idempotencyKey: string; productFacts: Record<string, unknown>; localImagePaths: string[]; recipe: { version: number; inputCount: number; outputCount: number; roles: string[] }; requestedOutputCount: number }) => {
+    ports.imagePlanner.plan = async () => {
       plannerCallCount++;
       // Return 3 prompts for the 3 requested outputs
       return {
@@ -651,23 +717,9 @@ test.describe("Canvas-off headless writeback", () => {
         staging: ports.assetStaging,
         imageGeneration: ports.imageGeneration,
         imagePlanner: ports.imagePlanner,
-        publishing: ports.assetStaging
+        publishing
       },
-      repositories: {
-        collect: pipelineRepositories(pipeline),
-        prepareMiaoshouWriteback: pipeline,
-        archive: pipelineRepositories(pipeline),
-        listing: pipelineRepositories(pipeline),
-        pricing: pipelineRepositories(pipeline),
-        exchangeRate: pipelineRepositories(pipeline),
-        templates: pipelineRepositories(pipeline),
-        images: pipelineRepositories(pipeline),
-        canvas: pipelineRepositories(pipeline),
-        finalPreview: pipelineRepositories(pipeline),
-        miaoshouEdit: pipeline,
-        imageGeneration: pipeline,
-        imageSlot: pipeline
-      } as Parameters<typeof buildWorkerRuntime>[0]["repositories"],
+      repositories: runtimeRepositories(pipeline, imageGeneration, approvals, jobs),
       reachability: { assertReachable: async () => undefined },
       cleanupCodec: createStagingCleanupCodec("wave3-e2e-cleanup-secret"),
       store,
@@ -683,22 +735,15 @@ test.describe("Canvas-off headless writeback", () => {
       audit,
       now: () => new Date(),
       maxCanvasRunsPerDay: 10,
-      adapterLimits: {
-        miaoshou: { concurrency: 1, minIntervalMs: 0 },
-        llm: { concurrency: 1, minIntervalMs: 0 },
-        exchangeRate: { concurrency: 1, minIntervalMs: 0 },
-        canvas: { concurrency: 1, minIntervalMs: 0 },
-        staging: { concurrency: 1, minIntervalMs: 0 },
-        imageGeneration: { concurrency: 1, minIntervalMs: 0 },
-        imagePlanner: { concurrency: 1, minIntervalMs: 0 },
-        publishing: { concurrency: 1, minIntervalMs: 0 }
-      } as Parameters<typeof buildWorkerRuntime>[0]["adapterLimits"]
+      imageGenerationPath: "headless",
+      adapterLimits
     });
 
     // Enqueue the planning job
     await jobs.enqueue({
       kind: "image_prompt_plan",
       businessKey: `plan:${batchId}`,
+      batchKey: batchId,
       payload: { version: 1, batchId }
     });
 
@@ -717,22 +762,31 @@ test.describe("Canvas-off headless writeback", () => {
     // Verify: planner was called exactly once
     expect(plannerCallCount).toBe(1);
 
+    // Keep the retry checkpoint focused on the planner rather than allowing one of
+    // the newly queued slot jobs to win the next oldest-job claim.
+    await database.pool.query(
+      `UPDATE jobs SET status = 'succeeded' WHERE batch_key = $1 AND kind = 'image_generate_slot'`,
+      [batchId]
+    );
+
     // Simulate restart by enqueuing another planning job with same batchId
     // (this would happen if the worker crashed after planning succeeded but before acknowledging)
     plannerCallCount = 0;
     await jobs.enqueue({
       kind: "image_prompt_plan",
       businessKey: `plan:${batchId}:retry`,
+      batchKey: batchId,
       payload: { version: 1, batchId }
     });
 
     // On restart the handler should be idempotent — same planner result, no duplicate slots
     await runtime.run({ jobs: adaptLeasedJobRepository(jobs), workerId: "plan_restart", leaseMs: 30_000, maxJobs: 1 });
 
-    // Planner should NOT have been called again on restart (same batch, same result)
-    // OR if it was called, slots should still be exactly 3 (idempotent save)
+    // The provider receives the same stable idempotency key, while repository
+    // persistence must not duplicate the already planned slots.
     const slotCountAfterRestart = await database.pool.query(`SELECT COUNT(*) as c FROM image_generation_slots WHERE batch_id = $1`, [batchId]);
     expect(Number(slotCountAfterRestart.rows[0]?.c)).toBe(3);
+    expect(plannerCallCount).toBe(1);
   });
 
   test("restart during output download — does not resubmit, retains archived asset", async () => {
@@ -751,7 +805,7 @@ test.describe("Canvas-off headless writeback", () => {
     // On restart the handler must poll again (not resubmit) and complete archival.
     const remoteTaskIdDuringDownload = `remote_during_download_${randomUUID().slice(0, 8)}`;
     await database.pool.query(
-      `UPDATE image_generation_slots SET state = 'generating', remote_task_id = $1 WHERE id = $2`,
+      `UPDATE image_generation_slots SET state = 'polling', remote_task_id = $1 WHERE id = $2`,
       [remoteTaskIdDuringDownload, slot.id]
     );
 
@@ -760,11 +814,13 @@ test.describe("Canvas-off headless writeback", () => {
     ports.imageGeneration.fetchResult = { state: "succeeded", outputUrl: "https://fixtures.invalid/downloaded.png" };
     const jobs = new JobRepository(database.pool);
     const pipeline = new PipelineRepository(database.pool);
+    const imageGeneration = new ImageGenerationRepository(database.pool);
+    const approvals = new ApprovalRepository(database.pool);
     const auditRepository = new AuditRepository(database.pool);
     const store = new ContentAddressedStore({
       assetRoot,
       resolveHost: async () => ["93.184.216.34"],
-      fetch: async () => ({ status: 200, headers: { "content-type": "image/png" }, body: (async function* () { yield Buffer.from([0x89, 0x50, 0x4e, 0x47]); })() })
+      fetch: async () => ({ status: 200, headers: { "content-type": "image/png" }, body: (async function* () { yield testPng("headless-e2e"); })() })
     });
     const audit = {
       append: async (event: Record<string, unknown>) => auditRepository.append({
@@ -783,23 +839,9 @@ test.describe("Canvas-off headless writeback", () => {
         staging: ports.assetStaging,
         imageGeneration: ports.imageGeneration,
         imagePlanner: ports.imagePlanner,
-        publishing: ports.assetStaging
+        publishing
       },
-      repositories: {
-        collect: pipelineRepositories(pipeline),
-        prepareMiaoshouWriteback: pipeline,
-        archive: pipelineRepositories(pipeline),
-        listing: pipelineRepositories(pipeline),
-        pricing: pipelineRepositories(pipeline),
-        exchangeRate: pipelineRepositories(pipeline),
-        templates: pipelineRepositories(pipeline),
-        images: pipelineRepositories(pipeline),
-        canvas: pipelineRepositories(pipeline),
-        finalPreview: pipelineRepositories(pipeline),
-        miaoshouEdit: pipeline,
-        imageGeneration: pipeline,
-        imageSlot: pipeline
-      } as Parameters<typeof buildWorkerRuntime>[0]["repositories"],
+      repositories: runtimeRepositories(pipeline, imageGeneration, approvals, jobs),
       reachability: { assertReachable: async () => undefined },
       cleanupCodec: createStagingCleanupCodec("wave3-e2e-cleanup-secret"),
       store,
@@ -815,25 +857,17 @@ test.describe("Canvas-off headless writeback", () => {
       audit,
       now: () => new Date(),
       maxCanvasRunsPerDay: 10,
-      adapterLimits: {
-        miaoshou: { concurrency: 1, minIntervalMs: 0 },
-        llm: { concurrency: 1, minIntervalMs: 0 },
-        exchangeRate: { concurrency: 1, minIntervalMs: 0 },
-        canvas: { concurrency: 1, minIntervalMs: 0 },
-        staging: { concurrency: 1, minIntervalMs: 0 },
-        imageGeneration: { concurrency: 1, minIntervalMs: 0 },
-        imagePlanner: { concurrency: 1, minIntervalMs: 0 },
-        publishing: { concurrency: 1, minIntervalMs: 0 }
-      } as Parameters<typeof buildWorkerRuntime>[0]["adapterLimits"]
+      imageGenerationPath: "headless",
+      adapterLimits
     });
 
     // Job with remote_task_id matching the slot (simulating restart mid-download).
     // enqueue() does not surface remoteTaskId, so insert the row directly.
     const jobId = `job_download_recovery_${randomUUID().slice(0, 8)}`;
     await database.pool.query(
-      `INSERT INTO jobs (id, kind, business_key, idempotency_key, payload, status, max_attempts, remote_task_id)
-       VALUES ($1, 'image_generate_slot', $2, $2, $3::jsonb, 'queued', 3, $4)`,
-      [jobId, `slot:${batchId}:${slot.slot_number}`, JSON.stringify({ version: 1, batchId, slotId: slot.id, slotNumber: slot.slot_number }), remoteTaskIdDuringDownload]
+      `INSERT INTO jobs (id, kind, business_key, idempotency_key, payload, status, max_attempts, batch_key, remote_task_id)
+       VALUES ($1, 'image_generate_slot', $2, $2, $3::jsonb, 'queued', 3, $4, $5)`,
+      [jobId, `slot:${batchId}:${slot.slot_number}`, JSON.stringify({ version: 1, batchId, slotId: slot.id, slotNumber: slot.slot_number, attempt: 0 }), batchId, remoteTaskIdDuringDownload]
     );
 
     // Should NOT submit again — remote task already known; must poll and complete archival

@@ -54,6 +54,8 @@ interface RuntimeConfig {
   canvasConfigured: boolean;
   llmConfigured: boolean;
   exchangeRateConfigured: boolean;
+  imageGenerationConfigured: boolean;
+  imageGenerationPath: "canvas" | "headless";
 }
 
 export function loadRuntimeConfig(env: NodeJS.ProcessEnv = process.env): RuntimeConfig & { databaseUrl: string } {
@@ -68,7 +70,9 @@ export function loadRuntimeConfig(env: NodeJS.ProcessEnv = process.env): Runtime
     miaoshouConfigured: config.miaoshouConfigured,
     canvasConfigured: config.canvasConfigured,
     llmConfigured: config.llmConfigured,
-    exchangeRateConfigured: config.exchangeRateConfigured
+    exchangeRateConfigured: config.exchangeRateConfigured,
+    imageGenerationConfigured: config.imageGenerationConfigured,
+    imageGenerationPath: config.imageGenerationPath
   };
 }
 
@@ -401,7 +405,9 @@ export function createServerServices(input: {
     miaoshouConfigured: input.config.miaoshouConfigured,
     canvasConfigured: input.config.canvasConfigured,
     llmConfigured: input.config.llmConfigured,
-    exchangeRateConfigured: input.config.exchangeRateConfigured
+    exchangeRateConfigured: input.config.exchangeRateConfigured,
+    imageGenerationConfigured: input.config.imageGenerationConfigured,
+    imageGenerationPath: input.config.imageGenerationPath
   };
   return {
     verifyExtensionToken: createExtensionTokenVerifier(input.config.extensionToken),

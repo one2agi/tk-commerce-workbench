@@ -10,7 +10,10 @@ function containsAny(text: string, keywords: string[]): boolean {
 
 export function inferImageCategory(input: { sourceTitle: string; sourceAttributes: Array<{ name: string; value: string }> }): string {
   const { sourceTitle, sourceAttributes } = input;
-  const text = sourceTitle;
+  const text = [
+    sourceTitle,
+    ...sourceAttributes.flatMap(({ name, value }) => [name, value])
+  ].join(" ");
 
   if (containsAny(text, HAT_KEYWORDS)) return "women.hat";
   if (containsAny(text, JEWELRY_KEYWORDS)) return "jewelry";

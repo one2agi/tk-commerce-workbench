@@ -37,7 +37,7 @@ function viewFixture(overrides: Partial<WorkspaceSettingsView> = {}): WorkspaceS
     },
     providerOptions: { listingProvider: "miaoshou", listingModel: "v3", canvasWorkflow: "wf-1" },
     retryPolicy: { maxAttempts: 5, initialDelaySeconds: 30 },
-    secretStatus: { miaoshouConfigured: true, canvasConfigured: true, llmConfigured: true, exchangeRateConfigured: false },
+    secretStatus: { miaoshouConfigured: true, canvasConfigured: true, llmConfigured: true, exchangeRateConfigured: false, imageGenerationConfigured: true, imageGenerationPath: "headless" },
     applicationNote: "",
     ...overrides
   };
@@ -168,15 +168,18 @@ describe("RetryPolicySection", () => {
 });
 
 describe("SecretStatusSection", () => {
-  it("renders four pills with the configured state for each", () => {
+  it("renders adapter, image-generation, and routing status pills", () => {
     const { container } = render(
       <SecretStatusSection draft={viewFixture()} />
     );
-    expect(container.querySelectorAll(".tk-pill.is-ok")).toHaveLength(3);
+    expect(container.querySelectorAll(".tk-pill.is-ok")).toHaveLength(5);
     expect(container.querySelectorAll(".tk-pill.is-warn")).toHaveLength(1);
     const ctx = within(container);
     expect(ctx.getByText("妙手")).toBeInTheDocument();
-    expect(ctx.getByText("Canvas")).toBeInTheDocument();
+    expect(ctx.getAllByText("Canvas")).toHaveLength(1);
+    expect(ctx.getByText("图片生成")).toBeInTheDocument();
+    expect(ctx.getByText("路径")).toBeInTheDocument();
+    expect(ctx.getByText("无头")).toBeInTheDocument();
     expect(ctx.getByText("LLM")).toBeInTheDocument();
     expect(ctx.getByText("汇率")).toBeInTheDocument();
   });

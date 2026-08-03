@@ -484,7 +484,6 @@ describe("parse1688DetailPage", () => {
         };
       }).TKParser;
       let clock = 0;
-      let delays = 0;
       let contextReads = 0;
       const context = (stock: number) => ({
         offerId: "892408514788",
@@ -528,7 +527,6 @@ describe("parse1688DetailPage", () => {
         now: () => clock,
         delay: async (milliseconds: number) => {
           clock += milliseconds;
-          delays += 1;
         },
         readPageContext: async () => {
           contextReads += 1;

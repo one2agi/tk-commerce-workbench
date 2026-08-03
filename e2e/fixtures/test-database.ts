@@ -102,6 +102,16 @@ export async function seedHeadlessBatchForProduct(
   const revisionId = `rev_${randomUUID().slice(0, 8)}`;
   const batchId = `batch_${randomUUID().slice(0, 8)}`;
   const templateVersionId = "ig_tmpl_v1";
+  const recipe = JSON.stringify({
+    version: 1,
+    inputCount,
+    outputCount,
+    mustPreserve: ["product identity"],
+    visualDirection: "clean marketplace photography",
+    forbidden: ["brand logos"],
+    roles: [{ key: "default", instruction: "show the product clearly" }],
+    providerParameters: {}
+  });
 
   await pool.query(
     `INSERT INTO local_operators (id, handle, display_name)
@@ -117,6 +127,12 @@ export async function seedHeadlessBatchForProduct(
      VALUES ($1, $2, 'https://detail.1688.com/offer/892408514788.html',
              '892408514788', '3799770548', 'th-TH', 'THB', 'success', 'not_started')`,
     [productId, operatorId]
+  );
+
+  await pool.query(
+    `INSERT INTO product_revisions (id, product_id, draft_version, source_title, source_payload, working_draft)
+     VALUES ($1, $2, 1, '测试商品', '{"mainImages":[],"detailImages":[]}'::jsonb, '{}')`,
+    [revisionId, productId]
   );
 
   const inputAssetIds: string[] = [];
@@ -137,25 +153,23 @@ export async function seedHeadlessBatchForProduct(
   }
 
   await pool.query(
-    `INSERT INTO product_revisions (id, product_id, draft_version, source_title, source_payload, working_draft)
-     VALUES ($1, $2, 1, '测试商品', '{"mainImages":[],"detailImages":[]}'::jsonb, '{}')`,
-    [revisionId, productId]
-  );
-
-  await pool.query(
     `INSERT INTO image_generation_templates
        (id, name, category_key, parent_category_key, active_version_id, enabled, archived_at, created_at, updated_at)
-     VALUES ('ig_tmpl_1', 'Headless Test', '服装', NULL, $1, true, NULL, now(), now())
+     VALUES ('ig_tmpl_1', 'Headless Test', '服装', NULL, NULL, true, NULL, now(), now())
      ON CONFLICT (id) DO NOTHING;`,
-    [templateVersionId]
+    []
   );
   await pool.query(
     `INSERT INTO image_generation_template_versions
        (id, template_id, version, lifecycle_state, recipe, activated_at, created_at)
      VALUES ($1, 'ig_tmpl_1', 1, 'active',
-             '{"inputCounts":{"default":4,"min":1,"max":6},"outputCounts":{"default":5,"min":1,"max":8},"mustPreserve":[],"visualDirection":"clean","forbidden":[],"roles":[]}'::jsonb,
+             $2::jsonb,
              now(), now())
      ON CONFLICT (template_id, version) DO NOTHING;`,
+    [templateVersionId, recipe]
+  );
+  await pool.query(
+    `UPDATE image_generation_templates SET active_version_id = $1 WHERE id = 'ig_tmpl_1'`,
     [templateVersionId]
   );
 
@@ -165,9 +179,9 @@ export async function seedHeadlessBatchForProduct(
         category_key, template_id, template_version_id, template_version, recipe_snapshot,
         product_facts_snapshot, product_facts_digest, state, accepted_asset_ids, created_at, updated_at)
      VALUES ($1, $2, $3, $1, $4, $5, '服装', 'ig_tmpl_1', $6, 1,
-             '{"inputCounts":{"default":4,"min":1,"max":6},"outputCounts":{"default":5,"min":1,"max":8}}'::jsonb,
-             '{}', 'digest_${randomUUID().slice(0, 8)}', $7, '{}', now(), now())`,
-    [batchId, productId, revisionId, inputAssetIds, outputCount, templateVersionId, batchState]
+             $8::jsonb,
+             '{}', 'digest_${randomUUID().slice(0, 8)}', $7, '[]', now(), now())`,
+    [batchId, productId, revisionId, JSON.stringify(inputAssetIds), outputCount, templateVersionId, batchState, recipe]
   );
 
   const slotIds: string[] = [];

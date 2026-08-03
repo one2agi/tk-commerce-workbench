@@ -2334,6 +2334,43 @@ describe("integration: image generation repository", () => {
     expect(projection).not.toBeNull();
     expect(projection!.slots.map((s) => s.state)).toEqual(["succeeded", "failed", "queued"]);
   });
+
+  test("accepting generated slots makes the exact ordered assets approval-ready", async () => {
+    const input = await fixtureStart({
+      idempotencyKey: `start:accept-ready:${newId("idem")}`,
+      outputCount: 2
+    });
+    const { batchId } = await imageGen.createBatch(input);
+    const slots = await handle.pool.query<{ id: string }>(
+      "SELECT id FROM image_generation_slots WHERE batch_id = $1 ORDER BY slot_number",
+      [batchId]
+    );
+    const assetIds = [newId("accepted_asset"), newId("accepted_asset")];
+    for (let index = 0; index < assetIds.length; index++) {
+      await handle.pool.query(
+        `INSERT INTO assets (id, product_id, revision_id, remote_url, kind, state, local_path, extension)
+         VALUES ($1, $2, $3, $4, 'generated', 'ready', $5, 'png')`,
+        [assetIds[index], input.productId, input.revisionId, `https://cdn.test/accepted-${index}.png`, `/assets/accepted-${index}.png`]
+      );
+      await handle.pool.query(
+        "UPDATE image_generation_slots SET state = 'succeeded', archived_asset_id = $1 WHERE id = $2",
+        [assetIds[index], slots.rows[index]!.id]
+      );
+    }
+
+    const acceptedOrder = [assetIds[1]!, assetIds[0]!];
+    await imageGen.acceptPartial(batchId, acceptedOrder);
+
+    const state = await handle.pool.query<{ state_automation: string; working_draft: Record<string, unknown> }>(
+      `SELECT product.state_automation, revision.working_draft
+       FROM products product
+       JOIN product_revisions revision ON revision.product_id = product.id
+       WHERE revision.id = $1`,
+      [input.revisionId]
+    );
+    expect(state.rows[0]?.state_automation).toBe("ready");
+    expect(state.rows[0]?.working_draft.finalAssetOrder).toEqual(acceptedOrder);
+  });
 });
 
 // T13 fix: every accepted assetId must come from a succeeded, archived, not-excluded slot.
@@ -2494,6 +2531,27 @@ describe("integration: ApprovalRepository T13 acceptance wiring", () => {
 
   test("accepts a confirmation where every asset is produced by a succeeded, archived, non-excluded slot", async () => {
     const fixture = await slotFixture();
+    const result = await approvals.confirmAndEnqueue({
+      version: 1,
+      productId: fixture.productId,
+      expectedDraftVersion: 1,
+      expectedListingRunId: "run-listing-slots",
+      expectedTemplateVersion: 1,
+      orderedFinalAssetIds: [fixture.assetA, fixture.assetB]
+    });
+    expect(result.approvalSnapshotId).toMatch(/^approval_/);
+  });
+
+  test("keeps completed legacy Canvas outputs eligible for approval", async () => {
+    const fixture = await slotFixture();
+    await handle.pool.query("DELETE FROM image_generation_slots WHERE batch_id = $1", [fixture.batchId]);
+    await handle.pool.query(
+      `INSERT INTO canvas_runs
+         (id, product_id, revision_id, template_id, template_version, state, outputs)
+       VALUES ($1, $2, $3, 'legacy-canvas-template', 1, 'succeeded', $4::jsonb)`,
+      [newId("canvas"), fixture.productId, fixture.revisionId, JSON.stringify([fixture.assetA, fixture.assetB])]
+    );
+
     const result = await approvals.confirmAndEnqueue({
       version: 1,
       productId: fixture.productId,

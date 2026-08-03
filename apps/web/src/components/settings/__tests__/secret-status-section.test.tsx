@@ -47,7 +47,7 @@ describe("SecretStatusSection", () => {
       imageGenerationConfigured: true,
       imageGenerationPath: "canvas"
     })} />);
-    expect(screen.getByText("Canvas")).toBeInTheDocument();
+    expect(screen.getAllByText("Canvas")).toHaveLength(2);
     expect(screen.getByText("图片生成已配置")).toBeInTheDocument();
   });
 

@@ -23,12 +23,21 @@ describe("FinalImageOrder", () => {
   it("orders accepted successful generated assets without source-image mixing", () => {
     const workspaceWithAcceptedSlots = () => ({
       reviewFacts: {
+        skuCount: null,
+        stock: null,
+        weightKg: null,
+        dimensions: null,
+        canonicalMiaoshouTarget: null,
         orderedFinalImages: [
           { assetId: "generated_hero", previewUrl: "/api/v1/assets/generated_hero/content", thumbnailUrl: "/api/v1/assets/generated_hero/content?variant=thumbnail" },
           { assetId: "generated_detail", previewUrl: "/api/v1/assets/generated_detail/content", thumbnailUrl: "/api/v1/assets/generated_detail/content?variant=thumbnail" }
         ]
       },
       originalListing: {
+        sourceTitle: "Source product",
+        description: "",
+        sourceAttributes: [],
+        saleAttributes: [],
         mainImages: ["https://source.1688.com/hero.jpg"],
         detailImages: []
       }

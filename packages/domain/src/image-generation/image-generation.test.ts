@@ -29,6 +29,13 @@ describe("headless image-generation rules", () => {
   ])("infers %s as %s", (sourceTitle, expected) => {
     expect(inferImageCategory({ sourceTitle, sourceAttributes: [] })).toBe(expected);
   });
+
+  it("uses structured attributes when the title alone is generic", () => {
+    expect(inferImageCategory({
+      sourceTitle: "夏季新品",
+      sourceAttributes: [{ name: "品类", value: "草帽" }]
+    })).toBe("women.hat");
+  });
   it("creates a deterministic paid-call key", () => {
     expect(imageSlotBusinessKey({ revisionId: "rev_1", templateVersionId: "tv_2", slot: 3, promptHash: "abc" }))
       .toBe("rev_1:tv_2:3:abc");

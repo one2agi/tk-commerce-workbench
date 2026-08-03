@@ -23,7 +23,7 @@ function baselineFixture(): WorkspaceSettingsView {
     },
     providerOptions: { listingProvider: "miaoshou", listingModel: "v3", canvasWorkflow: "wf-1" },
     retryPolicy: { maxAttempts: 5, initialDelaySeconds: 30 },
-    secretStatus: { miaoshouConfigured: true, canvasConfigured: true, llmConfigured: true, exchangeRateConfigured: true },
+    secretStatus: { miaoshouConfigured: true, canvasConfigured: true, llmConfigured: true, exchangeRateConfigured: true, imageGenerationConfigured: true, imageGenerationPath: "headless" },
     applicationNote: ""
   };
 }

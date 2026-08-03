@@ -117,7 +117,9 @@ test("sample 1688 URL converges duplicate collection and replays the same ingest
         miaoshouConfigured: true,
         canvasConfigured: false,
         llmConfigured: false,
-        exchangeRateConfigured: false
+        exchangeRateConfigured: false,
+        imageGenerationConfigured: false,
+        imageGenerationPath: "headless"
       }
     });
     web = await startWebServer({

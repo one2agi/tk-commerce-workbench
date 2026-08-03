@@ -26,6 +26,30 @@ import { adaptLeasedJobRepository, runWorkerLoop } from "./runtime/worker-loop.j
 let handle: TestDbHandle;
 const assetRoots: string[] = [];
 
+const jpeg = (payload: string) => Buffer.concat([
+  Buffer.from([
+    0xff, 0xd8,
+    0xff, 0xe0, 0x00, 0x02,
+    0xff, 0xc0, 0x00, 0x0b, 0x08,
+    0x04, 0xb0, 0x04, 0xb0,
+    0x01, 0x01, 0x11, 0x00
+  ]),
+  Buffer.from(payload)
+]);
+
+const png = (payload: string) => Buffer.concat([
+  Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]),
+  Buffer.from([
+    0x00, 0x00, 0x00, 0x0d,
+    0x49, 0x48, 0x44, 0x52,
+    0x00, 0x00, 0x04, 0xb0,
+    0x00, 0x00, 0x04, 0xb0,
+    0x08, 0x06, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00
+  ]),
+  Buffer.from(payload)
+]);
+
 beforeAll(async () => {
   handle = await bootTestDb();
   await handle.reset();
@@ -76,13 +100,10 @@ describe("real PostgreSQL worker composition", () => {
             body: (async function* () { yield Buffer.from("invalid png"); })()
           };
         }
-        const signature = url.endsWith(".jpg")
-          ? Buffer.from([0xff, 0xd8, 0xff, 0xe0])
-          : Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
         return {
           status: 200,
           headers: { "content-type": url.endsWith(".jpg") ? "image/jpeg" : "image/png" },
-          body: (async function* () { yield Buffer.concat([signature, Buffer.from(url)]); })()
+          body: (async function* () { yield url.endsWith(".jpg") ? jpeg(url) : png(url); })()
         };
       }
     });
@@ -182,8 +203,8 @@ describe("real PostgreSQL worker composition", () => {
     await makeRuntime().run({ jobs: adaptLeasedJobRepository(jobs), workerId: "runtime-after-restart", leaseMs: 30_000, workerConcurrency: 2, maxJobs: 10 });
 
     const product = await handle.pool.query("SELECT state_automation FROM products LIMIT 1");
-    expect(product.rows[0]?.state_automation).toBe("ready");
-    const dag = await handle.pool.query("SELECT kind, status, batch_key FROM jobs WHERE kind <> 'miaoshou_collect' ORDER BY created_at ASC");
+    const dag = await handle.pool.query("SELECT kind, status, batch_key, error FROM jobs WHERE kind <> 'miaoshou_collect' ORDER BY created_at ASC");
+    expect(product.rows[0]?.state_automation, JSON.stringify(dag.rows)).toBe("ready");
     expect(dag.rows.filter((row) => row.kind !== "staging_cleanup").map((row) => row.kind)).toEqual([
       "asset_archive", "listing_generate", "template_match", "image_select", "canvas_generate", "final_preview"
     ]);
