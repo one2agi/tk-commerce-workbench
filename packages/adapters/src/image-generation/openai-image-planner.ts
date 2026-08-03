@@ -1,10 +1,7 @@
 import { externalFailure, type ImagePromptPlannerPort, type PlannedImagePromptV1 } from "@tk/contracts";
 import { isRetryableHttpStatus } from "../http-status.js";
 import { plannerAuthFailed, plannerRateLimited, plannerRetryable, plannerSchemaInvalid, plannerTimeout } from "./provider-errors.js";
-
-const MAX_IMAGE_BYTES = 4 * 1024 * 1024; // 4 MB per image
-
-const ALLOWED_IMAGE_MIMES = new Set(["image/png", "image/jpeg", "image/webp"]);
+import { encodeLocalImageReferences, type EncodedImageMessage } from "./local-image-data-url.js";
 
 export interface OpenAiImagePlannerConfig {
   readonly baseUrl: string;
@@ -23,10 +20,8 @@ export function createOpenAiImagePlanner(config: OpenAiImagePlannerConfig): Imag
       const controller = new AbortController();
       const timer = setTimeout(() => controller.abort(), config.timeoutMs ?? 60_000);
 
-      // Build image data URLs from local paths after MIME and size validation
-      const imageMessages = await buildImageMessages(input.localImagePaths, fetchImpl);
-
       try {
+        const imageMessages = await encodeLocalImageReferences(input.references);
         const result = await callWithRepair(input, imageMessages, fetchImpl, baseUrl, config.apiKey, config.model, controller.signal);
         return result;
       } finally {
@@ -36,50 +31,9 @@ export function createOpenAiImagePlanner(config: OpenAiImagePlannerConfig): Imag
   };
 }
 
-async function buildImageMessages(
-  localImagePaths: string[],
-  fetchImpl: typeof fetch
-): Promise<Array<{ type: "image_url"; image_url: { url: string; detail: string } }>> {
-  const messages: Array<{ type: "image_url"; image_url: { url: string; detail: string } }> = [];
-
-  for (const path of localImagePaths) {
-    if (path.startsWith("data:")) {
-      // Validate data URL before including
-      const mimeMatch = path.match(/^data:([^;]+);base64,/);
-      if (!mimeMatch) continue;
-      const mime = mimeMatch[1]!;
-      if (!ALLOWED_IMAGE_MIMES.has(mime)) continue;
-
-      // Check size (base64 adds ~33% overhead; approximate)
-      const base64Content = path.split(",")[1] ?? "";
-      const byteSize = Math.ceil((base64Content.length * 3) / 4);
-      if (byteSize > MAX_IMAGE_BYTES) continue;
-
-      messages.push({ type: "image_url", image_url: { url: path, detail: "low" } });
-    } else {
-      // For file paths, read and convert to data URL if within limits
-      try {
-        const response = await fetchImpl(`file://${path}`);
-        if (!response.ok) continue;
-        const blob = await response.blob();
-        if (!ALLOWED_IMAGE_MIMES.has(blob.type)) continue;
-        const arrayBuffer = await blob.arrayBuffer();
-        if (arrayBuffer.byteLength > MAX_IMAGE_BYTES) continue;
-        const base64 = Buffer.from(arrayBuffer).toString("base64");
-        const dataUrl = `data:${blob.type};base64,${base64}`;
-        messages.push({ type: "image_url", image_url: { url: dataUrl, detail: "low" } });
-      } catch {
-        continue;
-      }
-    }
-  }
-
-  return messages;
-}
-
 async function callWithRepair(
   input: Parameters<ImagePromptPlannerPort["plan"]>[0],
-  imageMessages: Array<{ type: "image_url"; image_url: { url: string; detail: string } }>,
+  imageMessages: EncodedImageMessage[],
   fetchImpl: typeof fetch,
   baseUrl: string,
   apiKey: string,
@@ -106,7 +60,7 @@ async function callWithRepair(
 
 async function makePlanCall(
   input: Parameters<ImagePromptPlannerPort["plan"]>[0],
-  imageMessages: Array<{ type: "image_url"; image_url: { url: string; detail: string } }>,
+  imageMessages: EncodedImageMessage[],
   fetchImpl: typeof fetch,
   baseUrl: string,
   apiKey: string,
@@ -273,11 +227,18 @@ async function makeRepairCall(
 }
 
 function buildPromptText(input: Parameters<ImagePromptPlannerPort["plan"]>[0]): string {
+  const roles = input.recipe.roles
+    .map((role) => `- ${role.key}: ${role.instruction}`)
+    .join("\n");
   const lines = [
     `Generate ${input.requestedOutputCount} image prompt(s) for a product.`,
     `Input count: ${input.recipe.inputCount}.`,
     `Output count: ${input.requestedOutputCount}.`,
-    `Roles available: ${input.recipe.roles.join(", ")}.`,
+    `Visual direction: ${input.recipe.visualDirection}.`,
+    `Must preserve: ${input.recipe.mustPreserve.join(", ")}.`,
+    `Forbidden changes: ${input.recipe.forbidden.join(", ")}.`,
+    "Ordered roles:",
+    roles,
     "",
     `Product facts: ${JSON.stringify(input.productFacts)}.`,
     "",

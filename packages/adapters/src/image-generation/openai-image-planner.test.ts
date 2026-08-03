@@ -1,16 +1,15 @@
 import { describe, expect, it, vi } from "vitest";
+import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { idempotencyKey } from "@tk/contracts";
 import { createOpenAiImagePlanner } from "./openai-image-planner.js";
-import type { ImageGenerationRecipeV1 } from "@tk/contracts";
-
-const MAX_BYTES = 4 * 1024 * 1024; // 4 MB MIME+bytes limit for local data URLs
 
 function jsonResponse(body: unknown, init: ResponseInit = {}): Response {
   return new Response(JSON.stringify(body), { ...init, status: init.status ?? 200 });
 }
 
 // Sequence fetch helper: returns responses in order, or falls back to last response
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
 function sequenceFetch(responses: Response[]): any {
   let callIndex = 0;
   return vi.fn(async () => {
@@ -22,9 +21,25 @@ function sequenceFetch(responses: Response[]): any {
 
 function planInput(outputCount: number) {
   return {
-    productFacts: { title: "红色蝴蝶结发饰", category: "accessories" },
-    localImagePaths: [],
-    recipe: { version: 1 as const, inputCount: 3, outputCount, roles: ["hero", "detail"] },
+    productFacts: {
+      title: "红色蝴蝶结发饰",
+      category: "accessories",
+      attributes: [{ name: "材质", value: "蕾丝" }]
+    },
+    references: [],
+    recipe: {
+      version: 1 as const,
+      inputCount: 3,
+      outputCount,
+      mustPreserve: ["红色", "蝴蝶结轮廓"],
+      visualDirection: "干净的电商摄影，柔和自然光",
+      forbidden: ["改变商品颜色", "添加品牌标识"],
+      roles: [
+        { key: "hero", instruction: "正面主图，完整展示轮廓" },
+        { key: "detail", instruction: "展示蕾丝材质细节" }
+      ],
+      providerParameters: {}
+    },
     requestedOutputCount: outputCount,
     idempotencyKey: idempotencyKey("test:image_plan_1")
   };
@@ -92,15 +107,44 @@ describe("OpenAI image prompt planner", () => {
     await expect(planner.plan(planInput(1))).rejects.toMatchObject({ kind: "retryable", code: "image_planner_retryable" });
   });
 
-  it("sends selected images as local data URLs after validating MIME and byte limits", async () => {
+  it("sends real local images with complete product facts and category instructions", async () => {
     const validPngBase64 = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+P+/HgAFhAJ/wlseKgAAAABJRU5ErkJggg==";
-    const oversizedBase64 = "A".repeat(MAX_BYTES + 1);
+    const directory = await mkdtemp(join(tmpdir(), "tk-planner-"));
+    const imagePath = join(directory, "source.png");
+    await writeFile(imagePath, Buffer.from(validPngBase64, "base64"));
     const fetchImpl = vi.fn(async () => jsonResponse({ choices: [{ message: { content: JSON.stringify(validPlan(1)) } }] }));
     const planner = createOpenAiImagePlanner({ baseUrl: "https://llm.test/v1", apiKey: "secret", model: "gpt-4o", fetchImpl: fetchImpl as any });
-    // Input with valid and invalid image paths - invalid should be skipped or handled gracefully
-    await planner.plan({ ...planInput(1), localImagePaths: [`data:image/png;base64,${validPngBase64}`] });
-    const callBody = JSON.parse((fetchImpl.mock.calls[0] as unknown as [string, RequestInit])[1].body as string);
-    expect(callBody.messages).toBeDefined();
+    try {
+      await planner.plan({
+        ...planInput(1),
+        references: [{ assetId: "asset_1", localPath: imagePath, extension: "png" }]
+      });
+      const callBody = JSON.parse((fetchImpl.mock.calls[0] as unknown as [string, RequestInit])[1].body as string);
+      const userContent = callBody.messages[1].content as Array<Record<string, unknown>>;
+      expect(userContent[1]).toEqual({
+        type: "image_url",
+        image_url: { url: `data:image/png;base64,${validPngBase64}`, detail: "low" }
+      });
+      expect(userContent[0]?.text).toEqual(expect.stringContaining("红色蝴蝶结发饰"));
+      expect(userContent[0]?.text).toEqual(expect.stringContaining("干净的电商摄影，柔和自然光"));
+      expect(userContent[0]?.text).toEqual(expect.stringContaining("红色, 蝴蝶结轮廓"));
+      expect(userContent[0]?.text).toEqual(expect.stringContaining("改变商品颜色, 添加品牌标识"));
+      expect(userContent[0]?.text).toEqual(expect.stringContaining("hero: 正面主图，完整展示轮廓"));
+      expect(userContent[0]?.text).toEqual(expect.stringContaining("材质"));
+    } finally {
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
+
+  it("stops before the LLM call when a selected local reference is invalid", async () => {
+    const fetchImpl = vi.fn(async () => jsonResponse({ choices: [{ message: { content: JSON.stringify(validPlan(1)) } }] }));
+    const planner = createOpenAiImagePlanner({ baseUrl: "https://llm.test/v1", apiKey: "secret", model: "gpt-4o", fetchImpl: fetchImpl as any });
+
+    await expect(planner.plan({
+      ...planInput(1),
+      references: [{ assetId: "asset_missing", localPath: "/missing/product.png", extension: "png" }]
+    })).rejects.toMatchObject({ kind: "needs_input", code: "image_reference_unavailable" });
+    expect(fetchImpl).not.toHaveBeenCalled();
   });
 
   it("does not include credentials in repair call on schema failure", async () => {

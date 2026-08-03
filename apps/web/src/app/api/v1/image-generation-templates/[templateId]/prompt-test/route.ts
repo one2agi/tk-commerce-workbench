@@ -72,12 +72,19 @@ export function createPostHandler(dependencies: {
     // Call the planner (prompt-only, no batch/slot writes)
     const plannerResult = await planner.plan({
       productFacts: { productId },
-      localImagePaths: [],
+      references: [],
       recipe: {
         version: 1,
         inputCount: template.recipe.inputCounts.default,
         outputCount,
-        roles: template.recipe.roles.map((r) => r.key)
+        mustPreserve: [...template.recipe.mustPreserve],
+        visualDirection: template.recipe.visualDirection,
+        forbidden: [...template.recipe.forbidden],
+        roles: template.recipe.roles.map((role) => ({
+          key: role.key,
+          instruction: role.instruction
+        })),
+        providerParameters: {}
       },
       requestedOutputCount: outputCount,
       idempotencyKey: idempotencyKey(`prompt-test-${templateId}-${Date.now()}`)

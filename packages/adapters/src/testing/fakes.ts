@@ -57,7 +57,7 @@ export function createDeterministicAdapterFakes(): DeterministicAdapterFakes {
       return {
         prompts: Array.from({ length: input.requestedOutputCount }, (_, i) => ({
           slot: i + 1,
-          role: input.recipe.roles[i] ?? "hero",
+          role: input.recipe.roles[i]?.key ?? "hero",
           prompt: `Mock prompt for slot ${i + 1}: ${input.productFacts && typeof input.productFacts === "object" && "title" in input.productFacts ? String((input.productFacts as Record<string, unknown>).title) : "Product"}`,
           mustPreserve: [],
           forbidden: []

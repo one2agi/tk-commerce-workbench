@@ -1,12 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
-import { z } from "zod";
-import type { PlannedImagePromptV1 } from "@tk/contracts/ports";
-
-// Inline types mirroring production route
-const PromptTestBody = z.strictObject({
-  productId: z.string().trim().min(1),
-  outputCount: z.number().int().min(1).max(8)
-});
+import type { ImagePromptPlannerPort, PlannedImagePromptV1 } from "@tk/contracts/ports";
+import { createPostHandler } from "./route";
 
 // Minimal recipe for test fixtures
 const minimalRecipe = {
@@ -23,7 +17,7 @@ const minimalRecipe = {
 
 // Fake image prompt planner that returns canned prompts
 class FakeImagePlanner {
-  public readonly calls: { method: string; input: unknown }[] = [];
+  public readonly calls: { method: string; input: Parameters<ImagePromptPlannerPort["plan"]>[0] }[] = [];
   public planResult: { prompts: PlannedImagePromptV1[] } = {
     prompts: [
       { slot: 1, role: "hero", prompt: "A clean white background hero shot", mustPreserve: [], forbidden: [] },
@@ -31,7 +25,7 @@ class FakeImagePlanner {
     ]
   };
 
-  async plan(input: { productFacts: Record<string, unknown>; localImagePaths: string[]; recipe: { version: 1; inputCount: number; outputCount: number; roles: string[] }; requestedOutputCount: number; idempotencyKey: { kind: string; value: string } }): Promise<{ prompts: PlannedImagePromptV1[] }> {
+  async plan(input: Parameters<ImagePromptPlannerPort["plan"]>[0]): Promise<{ prompts: PlannedImagePromptV1[] }> {
     this.calls.push({ method: "plan", input });
     return this.planResult;
   }
@@ -153,67 +147,17 @@ function makeService(store: ReturnType<typeof makeInMemoryStore>) {
   };
 }
 
-// Inline handler that mirrors the production route behavior
 function makePromptTestHandler(deps: {
   service: ReturnType<typeof makeService>;
   planner: FakeImagePlanner;
   jobRepository: FakeJobRepository;
   recordAuditEvent: typeof fakeRecordAuditEvent;
 }) {
-  return async function handle(
-    request: Request,
-    context: { params: Promise<{ templateId: string }> }
-  ): Promise<Response> {
-    const hostname = new URL(request.url).hostname.replace(/^\[|\]$/g, "").toLowerCase();
-    const allowed = hostname === "localhost" || hostname === "::1" || hostname === "127.0.0.1";
-    if (!allowed) return Response.json({ error: "loopback_only" }, { status: 403 });
-
-    const contentType = request.headers.get("content-type")?.split(";", 1)[0]?.trim().toLowerCase();
-    const origin = request.headers.get("origin");
-    if (contentType !== "application/json" || !origin) {
-      return Response.json({ error: "same_origin_json_required" }, { status: 403 });
-    }
-
-    const { templateId } = await context.params;
-    const parsed = PromptTestBody.safeParse(await request.json().catch(() => null));
-    if (!parsed.success) {
-      return Response.json({ error: "invalid_request", detail: parsed.error.format() }, { status: 400 });
-    }
-
-    const { productId, outputCount } = parsed.data;
-
-    // Load template + active version
-    const { items } = await deps.service.list();
-    const template = items.find((t: any) => t.templateId === templateId);
-    if (!template) {
-      return Response.json({ error: "template_not_found" }, { status: 404 });
-    }
-
-    // Call the planner (prompt-only, no batch/slot writes)
-    const plannerResult = await deps.planner.plan({
-      productFacts: { productId },
-      localImagePaths: ["/api/v1/assets/asset_1", "/api/v1/assets/asset_2"],
-      recipe: {
-        version: 1 as const,
-        inputCount: template.recipe.inputCounts.default,
-        outputCount,
-        roles: template.recipe.roles.map((r: any) => r.key)
-      },
-      requestedOutputCount: outputCount,
-      idempotencyKey: { kind: "PromptTest", value: `prompt-test-${templateId}-${Date.now()}` }
-    });
-
-    // Record redacted audit event (no batch/slot writes)
-    deps.recordAuditEvent({
-      type: "prompt_test",
-      templateId,
-      productId,
-      outputCount,
-      promptsCount: plannerResult.prompts.length
-    });
-
-    return Response.json({ prompts: plannerResult.prompts });
-  };
+  return createPostHandler({
+    service: deps.service as never,
+    planner: deps.planner,
+    recordAuditEvent: deps.recordAuditEvent
+  });
 }
 
 function promptTestRequest(overrides: { productId?: string; outputCount?: number } = {}) {
@@ -277,8 +221,22 @@ describe("prompt-test route", () => {
     await handler(promptTestRequest({ outputCount: 3 }), { params: Promise.resolve({ templateId: "tmpl_1" }) });
 
     expect(planner.calls).toHaveLength(1);
-    const planInput = (planner.calls[0] as any).input;
+    const planInput = planner.calls[0]!.input;
     expect(planInput.requestedOutputCount).toBe(3);
+    expect(planInput.references).toEqual([]);
+    expect(planInput.recipe).toEqual({
+      version: 1,
+      inputCount: 2,
+      outputCount: 3,
+      mustPreserve: [],
+      visualDirection: "clean white background",
+      forbidden: [],
+      roles: [
+        { key: "hero", instruction: "Primary hero shot" },
+        { key: "detail", instruction: "Close-up detail view" }
+      ],
+      providerParameters: {}
+    });
   });
 
   it("records a redacted audit event", async () => {
