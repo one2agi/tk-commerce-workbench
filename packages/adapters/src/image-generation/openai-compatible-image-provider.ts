@@ -1,12 +1,16 @@
 import { externalFailure, reconcileRequiredFailure, type ImageGenerationPort } from "@tk/contracts";
 import { isRetryableHttpStatus } from "../http-status.js";
+import { encodeLocalImageReferences } from "./local-image-data-url.js";
 
 const CONNECT_TIMEOUT_MS = 30_000;
+const RESPONSE_TIMEOUT_MS = 30 * 60_000;
 
 export interface OpenAiCompatibleImageProviderConfig {
   readonly baseUrl: string;
   readonly apiKey: string;
   readonly model: string;
+  readonly connectTimeoutMs?: number;
+  readonly responseTimeoutMs?: number;
   readonly fetchImpl?: typeof fetch;
 }
 
@@ -18,15 +22,19 @@ export function createOpenAiCompatibleImageProvider(
 
   return {
     async submit(input) {
+      if (input.references.length === 0) {
+        throw externalFailure(
+          "needs_input",
+          "image_reference_count_invalid",
+          "Image generation requires at least one source image"
+        );
+      }
+      const body = await buildSubmitBody(input, config.model);
       const controller = new AbortController();
-      const connectTimer = setTimeout(() => controller.abort(), CONNECT_TIMEOUT_MS);
 
-      let submitted = false;
       let response: Response;
       try {
-        const body = buildSubmitBody(input, config.model);
-
-        response = await fetchImpl(`${baseUrl}/v1/images/generations`, {
+        response = await waitWithTimeout(fetchImpl(`${baseUrl}/v1/images/generations`, {
           method: "POST",
           signal: controller.signal,
           headers: {
@@ -35,14 +43,9 @@ export function createOpenAiCompatibleImageProvider(
             "Idempotency-Key": String(input.idempotencyKey)
           },
           body: JSON.stringify(body)
-        });
-        submitted = true;
-      } catch (err) {
-        clearTimeout(connectTimer);
-        // Network/timeout error — result unknown after transmission attempt
+        }), config.connectTimeoutMs ?? CONNECT_TIMEOUT_MS, controller);
+      } catch {
         throw reconcileRequiredFailure("image_submission_result_unknown", "Image submission result is unknown");
-      } finally {
-        clearTimeout(connectTimer);
       }
 
       // Timeout/disconnect during response reading maps to unknown
@@ -52,7 +55,11 @@ export function createOpenAiCompatibleImageProvider(
 
       let raw: unknown;
       try {
-        raw = await response.json();
+        raw = await waitWithTimeout(
+          response.json(),
+          config.responseTimeoutMs ?? RESPONSE_TIMEOUT_MS,
+          controller
+        );
       } catch {
         // Truncated/invalid JSON after successful HTTP — result unknown
         throw reconcileRequiredFailure("image_submission_result_unknown", "Image submission result is unknown");
@@ -79,18 +86,15 @@ export function createOpenAiCompatibleImageProvider(
 
     async fetch(input) {
       const controller = new AbortController();
-      const timer = setTimeout(() => controller.abort(), CONNECT_TIMEOUT_MS);
 
       try {
-        const response = await fetchImpl(`${baseUrl}/v1/images/generations/${input.remoteTaskId}`, {
+        const response = await waitWithTimeout(fetchImpl(`${baseUrl}/v1/images/generations/${input.remoteTaskId}`, {
           method: "GET",
           signal: controller.signal,
           headers: {
             "authorization": `Bearer ${config.apiKey}`
           }
-        });
-
-        clearTimeout(timer);
+        }), config.connectTimeoutMs ?? CONNECT_TIMEOUT_MS, controller);
 
         if (!response.ok) {
           if (isRetryableHttpStatus(response.status)) {
@@ -104,7 +108,11 @@ export function createOpenAiCompatibleImageProvider(
 
         let raw: unknown;
         try {
-          raw = await response.json();
+          raw = await waitWithTimeout(
+            response.json(),
+            config.responseTimeoutMs ?? RESPONSE_TIMEOUT_MS,
+            controller
+          );
         } catch {
           return { state: "pending" };
         }
@@ -129,31 +137,48 @@ export function createOpenAiCompatibleImageProvider(
 
         // Processing/queued
         return { state: "pending" };
-      } catch (err) {
-        clearTimeout(timer);
-        if (err instanceof Error && err.name === "AbortError") {
-          return { state: "pending" };
-        }
+      } catch {
         return { state: "pending" };
       }
     }
   };
 }
 
-function buildSubmitBody(input: Parameters<ImageGenerationPort["submit"]>[0], model: string) {
-  const imageMessages: Array<{ type: "image_url"; image_url: { url: string; detail: string } }> = [];
-
-  for (const path of input.referenceImagePaths) {
-    if (path.startsWith("data:")) {
-      imageMessages.push({ type: "image_url", image_url: { url: path, detail: "low" } });
-    }
-    // Non-data-URL paths are caller responsibility (asset staging); adapter sends prompt only.
-  }
+async function buildSubmitBody(input: Parameters<ImageGenerationPort["submit"]>[0], model: string) {
+  const imageMessages = await encodeLocalImageReferences(input.references);
+  const { extra_body: rawExtraBody, ...parameters } = input.parameters;
+  const extraBody = rawExtraBody && typeof rawExtraBody === "object" && !Array.isArray(rawExtraBody)
+    ? rawExtraBody as Record<string, unknown>
+    : {};
 
   return {
+    ...parameters,
     model,
     prompt: input.prompt.prompt,
     n: 1,
-    extra_body: imageMessages.length > 0 ? { image: imageMessages } : undefined
+    extra_body: {
+      ...extraBody,
+      image: imageMessages.map((message) => message.image_url.url)
+    }
   };
+}
+
+async function waitWithTimeout<T>(
+  promise: Promise<T>,
+  timeoutMs: number,
+  controller: AbortController
+): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const timeout = new Promise<never>((_, reject) => {
+    timer = setTimeout(() => {
+      controller.abort();
+      reject(new Error("image_provider_timeout"));
+    }, timeoutMs);
+  });
+
+  try {
+    return await Promise.race([promise, timeout]);
+  } finally {
+    if (timer !== undefined) clearTimeout(timer);
+  }
 }
