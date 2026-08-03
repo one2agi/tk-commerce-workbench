@@ -75,11 +75,11 @@ function partialWithWaitingSlot(): ImageGenerationViewV1 {
     successfulCount: 4,
     state: "partial",
     slots: [
-      { slotId: "slot_1", slotNumber: 1, role: "main", status: "succeeded", attempt: 1, localUrl: "/api/v1/assets/out_1", error: null },
-      { slotId: "slot_2", slotNumber: 2, role: "main", status: "succeeded", attempt: 1, localUrl: "/api/v1/assets/out_2", error: null },
-      { slotId: "slot_3", slotNumber: 3, role: "detail", status: "succeeded", attempt: 1, localUrl: "/api/v1/assets/out_3", error: null },
-      { slotId: "slot_4", slotNumber: 4, role: "detail", status: "failed", attempt: 1, localUrl: null, error: "provider_error" },
-      { slotId: "slot_5", slotNumber: 5, role: "detail", status: "queued", attempt: 1, localUrl: null, error: null }
+      { slotId: "slot_1", slotNumber: 1, role: "main", status: "succeeded", attempt: 1, localUrl: "/api/v1/assets/out_1", acceptedOrder: null, error: null },
+      { slotId: "slot_2", slotNumber: 2, role: "main", status: "succeeded", attempt: 1, localUrl: "/api/v1/assets/out_2", acceptedOrder: null, error: null },
+      { slotId: "slot_3", slotNumber: 3, role: "detail", status: "succeeded", attempt: 1, localUrl: "/api/v1/assets/out_3", acceptedOrder: null, error: null },
+      { slotId: "slot_4", slotNumber: 4, role: "detail", status: "failed", attempt: 1, localUrl: null, acceptedOrder: null, error: "provider_error" },
+      { slotId: "slot_5", slotNumber: 5, role: "detail", status: "queued", attempt: 1, localUrl: null, acceptedOrder: null, error: null }
     ],
     warnings: []
   };
@@ -102,11 +102,11 @@ function partialModel(): ImageGenerationViewV1 {
     successfulCount: 4,
     state: "partial",
     slots: [
-      { slotId: "slot_1", slotNumber: 1, role: "main", status: "succeeded", attempt: 1, localUrl: "/api/v1/assets/out_1", error: null },
-      { slotId: "slot_2", slotNumber: 2, role: "main", status: "succeeded", attempt: 1, localUrl: "/api/v1/assets/out_2", error: null },
-      { slotId: "slot_3", slotNumber: 3, role: "detail", status: "succeeded", attempt: 1, localUrl: "/api/v1/assets/out_3", error: null },
-      { slotId: "slot_4", slotNumber: 4, role: "detail", status: "failed", attempt: 1, localUrl: null, error: "provider_error" },
-      { slotId: "slot_5", slotNumber: 5, role: "detail", status: "succeeded", attempt: 1, localUrl: "/api/v1/assets/out_5", error: null }
+      { slotId: "slot_1", slotNumber: 1, role: "main", status: "succeeded", attempt: 1, localUrl: "/api/v1/assets/out_1", acceptedOrder: null, error: null },
+      { slotId: "slot_2", slotNumber: 2, role: "main", status: "succeeded", attempt: 1, localUrl: "/api/v1/assets/out_2", acceptedOrder: null, error: null },
+      { slotId: "slot_3", slotNumber: 3, role: "detail", status: "succeeded", attempt: 1, localUrl: "/api/v1/assets/out_3", acceptedOrder: null, error: null },
+      { slotId: "slot_4", slotNumber: 4, role: "detail", status: "failed", attempt: 1, localUrl: null, acceptedOrder: null, error: "provider_error" },
+      { slotId: "slot_5", slotNumber: 5, role: "detail", status: "succeeded", attempt: 1, localUrl: "/api/v1/assets/out_5", acceptedOrder: null, error: null }
     ],
     warnings: []
   };

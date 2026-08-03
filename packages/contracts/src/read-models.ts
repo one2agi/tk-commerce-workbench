@@ -207,6 +207,8 @@ export type ImageGenerationSlotViewV1 = Readonly<{
   status: string;
   attempt: number;
   localUrl: string | null;
+  /** One-based persisted position in the accepted final image order. */
+  acceptedOrder: number | null;
   error: string | null;
 }>;
 

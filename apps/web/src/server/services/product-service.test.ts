@@ -291,6 +291,35 @@ function workspaceRow(overrides: Record<string, unknown> = {}): Record<string, u
 }
 
 describe("ProductService.get imageGeneration projection", () => {
+  it("projects all ready source inputs before the first image generation batch", async () => {
+    const query = vi.fn().mockResolvedValue({
+      rows: [workspaceRow({
+        batch_id: null,
+        available_assets: [
+          { assetId: "asset-1", localUrl: "/api/v1/assets/asset-1/content", role: "main" },
+          { assetId: "asset-2", localUrl: "/api/v1/assets/asset-2/content", role: "detail" },
+          { assetId: "asset-3", localUrl: "/api/v1/assets/asset-3/content", role: null }
+        ]
+      })]
+    });
+
+    const result = await new ProductService({ query }).get("prod_1");
+
+    expect(result?.imageGeneration).toMatchObject({
+      batchId: null,
+      state: "not_started",
+      requestedCount: 4,
+      successfulCount: 0,
+      selectedInputs: [],
+      slots: []
+    });
+    expect(result?.imageGeneration?.availableInputs.map((item) => item.assetId)).toEqual([
+      "asset-1",
+      "asset-2",
+      "asset-3"
+    ]);
+  });
+
   it("keeps original and processed images separate and local", async () => {
     const query = vi.fn().mockResolvedValue({
       rows: [workspaceRow({
@@ -355,6 +384,35 @@ describe("ProductService.get imageGeneration projection", () => {
     expect(result?.imageGeneration?.selectedInputs.map((item) => item.assetId)).toEqual(["asset-2", "asset-1"]);
     expect(result?.imageGeneration?.slots[0]?.localUrl).toBe("/api/v1/assets/generated-1/content");
     expect(result?.imageGeneration?.slots[0]?.localUrl).not.toContain("provider.test");
+  });
+
+  it("projects the persisted accepted image order onto successful slots", async () => {
+    const query = vi.fn().mockResolvedValue({
+      rows: [workspaceRow({
+        batch_id: "batch-accepted",
+        batch_state: "partial_success",
+        batch_category_key: "apparel",
+        batch_requested_output_count: 3,
+        batch_selected_asset_ids: ["asset-1"],
+        batch_accepted_asset_ids: ["generated-2", "generated-1"],
+        available_assets: [
+          { assetId: "asset-1", localUrl: "/api/v1/assets/asset-1/content", role: "main" }
+        ],
+        slots_json: [
+          { slotId: "slot-1", slotNumber: 1, role: "main", status: "succeeded", attempt: 1, archivedAssetId: "generated-1", localUrl: "/api/v1/assets/generated-1/content", error: null },
+          { slotId: "slot-2", slotNumber: 2, role: "detail", status: "succeeded", attempt: 1, archivedAssetId: "generated-2", localUrl: "/api/v1/assets/generated-2/content", error: null },
+          { slotId: "slot-3", slotNumber: 3, role: "scene", status: "failed", attempt: 1, archivedAssetId: null, localUrl: null, error: "timeout" }
+        ]
+      })]
+    });
+
+    const result = await new ProductService({ query }).get("prod_1");
+
+    expect(result?.imageGeneration?.slots).toEqual(expect.arrayContaining([
+      expect.objectContaining({ slotId: "slot-1", acceptedOrder: 2 }),
+      expect.objectContaining({ slotId: "slot-2", acceptedOrder: 1 }),
+      expect.objectContaining({ slotId: "slot-3", acceptedOrder: null })
+    ]));
   });
 
   it("derives partial progress from persisted slots", async () => {

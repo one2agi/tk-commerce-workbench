@@ -307,21 +307,36 @@ function effectiveListingState(row: Record<string, unknown>): ProductPoolItemV1[
 
 function imageGenerationView(row: Record<string, unknown>): ProductWorkspaceV1["imageGeneration"] {
   const batchId = optionalString(row, "batch_id");
-  if (!batchId) return null;
-
   const availableAssets = Array.isArray(row.available_assets) ? row.available_assets as Array<Record<string, unknown>> : [];
-  const selectedAssetIds = strings(row.batch_selected_asset_ids);
-  const requestedCount = Number(row.batch_requested_output_count ?? 0);
-  const batchState = optionalString(row, "batch_state") ?? "planning";
-  const confirmedCategory = optionalString(row, "batch_confirmed_category");
-  const inferredCategory = optionalString(row, "batch_category_key");
-  const slotsRaw = Array.isArray(row.slots_json) ? row.slots_json as Array<Record<string, unknown>> : [];
-
   const availableInputs = availableAssets.map((a) => ({
     assetId: assetId(String(a.assetId ?? "")),
     localUrl: String(a.localUrl ?? ""),
     role: a.role as string | null
   }));
+
+  if (!batchId) {
+    return {
+      batchId: null,
+      availableInputs,
+      selectedInputs: [],
+      inferredCategory: null,
+      confirmedCategory: null,
+      requestedCount: 4,
+      successfulCount: 0,
+      state: "not_started",
+      slots: [],
+      warnings: []
+    };
+  }
+
+  const selectedAssetIds = strings(row.batch_selected_asset_ids);
+  const acceptedAssetIds = strings(row.batch_accepted_asset_ids);
+  const acceptedOrderByAssetId = new Map(acceptedAssetIds.map((id, index) => [id, index + 1]));
+  const requestedCount = Number(row.batch_requested_output_count ?? 0);
+  const batchState = optionalString(row, "batch_state") ?? "planning";
+  const confirmedCategory = optionalString(row, "batch_confirmed_category");
+  const inferredCategory = optionalString(row, "batch_category_key");
+  const slotsRaw = Array.isArray(row.slots_json) ? row.slots_json as Array<Record<string, unknown>> : [];
 
   const availableById = new Map(availableAssets.map((asset) => [String(asset.assetId ?? ""), asset]));
   const selectedInputs = selectedAssetIds.flatMap((selectedAssetId) => {
@@ -332,15 +347,19 @@ function imageGenerationView(row: Record<string, unknown>): ProductWorkspaceV1["
     }] : [];
   });
 
-  const slots = slotsRaw.map((s) => ({
-    slotId: String(s.slotId ?? ""),
-    slotNumber: Number(s.slotNumber ?? 0),
-    role: String(s.role ?? ""),
-    status: String(s.status ?? ""),
-    attempt: Number(s.attempt ?? 0),
-    localUrl: s.localUrl ? String(s.localUrl) : null,
-    error: s.error ? String(s.error) : null
-  }));
+  const slots = slotsRaw.map((s) => {
+    const archivedAssetId = typeof s.archivedAssetId === "string" ? s.archivedAssetId : null;
+    return {
+      slotId: String(s.slotId ?? ""),
+      slotNumber: Number(s.slotNumber ?? 0),
+      role: String(s.role ?? ""),
+      status: String(s.status ?? ""),
+      attempt: Number(s.attempt ?? 0),
+      localUrl: s.localUrl ? String(s.localUrl) : null,
+      acceptedOrder: archivedAssetId ? acceptedOrderByAssetId.get(archivedAssetId) ?? null : null,
+      error: s.error ? String(s.error) : null
+    };
+  });
 
   const successfulCount = slots.filter((s) => s.status === "succeeded").length;
 
@@ -525,6 +544,7 @@ export class ProductService {
               latest_batch.batch_category_key,
               latest_batch.batch_requested_output_count,
               latest_batch.batch_selected_asset_ids,
+              latest_batch.batch_accepted_asset_ids,
               latest_batch.batch_confirmed_category,
               slots.items AS slots_json
        FROM products p
@@ -571,6 +591,7 @@ export class ProductService {
                 b.category_key AS batch_category_key,
                 b.requested_output_count AS batch_requested_output_count,
                 b.selected_asset_ids AS batch_selected_asset_ids,
+                b.accepted_asset_ids AS batch_accepted_asset_ids,
                 b.confirmed_category AS batch_confirmed_category
          FROM image_generation_batches b
          WHERE b.revision_id = revision.id
@@ -586,6 +607,7 @@ export class ProductService {
                'role', s.role,
                'status', s.state,
                'attempt', s.attempt,
+               'archivedAssetId', s.archived_asset_id,
                'localUrl', CASE WHEN s.state = 'succeeded' AND archived.id IS NOT NULL
                           THEN '/api/v1/assets/' || archived.id || '/content'
                           ELSE NULL END,
