@@ -18,7 +18,7 @@ export function createOpenAiCompatibleImageProvider(
   config: OpenAiCompatibleImageProviderConfig
 ): ImageGenerationPort {
   const fetchImpl = config.fetchImpl ?? globalThis.fetch;
-  const baseUrl = config.baseUrl.replace(/\/+$/, "");
+  const urls = providerUrls(config.baseUrl);
 
   return {
     async submit(input) {
@@ -34,7 +34,7 @@ export function createOpenAiCompatibleImageProvider(
 
       let response: Response;
       try {
-        response = await waitWithTimeout(fetchImpl(`${baseUrl}/v1/images/generations`, {
+        response = await waitWithTimeout(fetchImpl(urls.submit, {
           method: "POST",
           signal: controller.signal,
           headers: {
@@ -73,6 +73,9 @@ export function createOpenAiCompatibleImageProvider(
         if (typeof first.url === "string" && first.url.length > 0) {
           return { kind: "completed", outputUrl: first.url };
         }
+        if (typeof first.task_id === "string" && first.task_id.length > 0) {
+          return { kind: "accepted", remoteTaskId: first.task_id };
+        }
       }
 
       // Async: return remote task ID for polling
@@ -88,7 +91,7 @@ export function createOpenAiCompatibleImageProvider(
       const controller = new AbortController();
 
       try {
-        const response = await waitWithTimeout(fetchImpl(`${baseUrl}/v1/images/generations/${input.remoteTaskId}`, {
+        const response = await waitWithTimeout(fetchImpl(`${urls.tasks}/${input.remoteTaskId}`, {
           method: "GET",
           signal: controller.signal,
           headers: {
@@ -118,6 +121,18 @@ export function createOpenAiCompatibleImageProvider(
         }
 
         const result = raw as Record<string, unknown>;
+        const providerData = result.data && !Array.isArray(result.data)
+          ? result.data as Record<string, unknown>
+          : undefined;
+        const providerResult = providerData?.result as Record<string, unknown> | undefined;
+        const providerImages = providerResult?.images;
+        if (Array.isArray(providerImages) && providerImages.length > 0) {
+          const firstImage = providerImages[0] as Record<string, unknown>;
+          const imageUrls = firstImage.url;
+          if (Array.isArray(imageUrls) && typeof imageUrls[0] === "string" && imageUrls[0].length > 0) {
+            return { state: "succeeded", outputUrl: imageUrls[0] };
+          }
+        }
 
         // Completed with URL
         if (result.data && Array.isArray(result.data) && result.data.length > 0) {
@@ -128,7 +143,7 @@ export function createOpenAiCompatibleImageProvider(
         }
 
         // Explicit failed status
-        if (result.status === "failed" || result.status === "error") {
+        if (result.status === "failed" || result.status === "error" || providerData?.status === "failed") {
           return {
             state: "failed",
             failure: externalFailure("retryable", "image_generation_failed", "Image generation failed on provider")
@@ -156,11 +171,24 @@ async function buildSubmitBody(input: Parameters<ImageGenerationPort["submit"]>[
     model,
     prompt: input.prompt.prompt,
     n: 1,
+    image_urls: imageMessages.map((message) => message.image_url.url),
     extra_body: {
       ...extraBody,
       image: imageMessages.map((message) => message.image_url.url)
     }
   };
+}
+
+function providerUrls(rawBaseUrl: string): { submit: string; tasks: string } {
+  const baseUrl = rawBaseUrl.replace(/\/+$/, "");
+  if (baseUrl.endsWith("/v1/images/generations")) {
+    const origin = baseUrl.slice(0, -"/v1/images/generations".length);
+    return { submit: baseUrl, tasks: `${origin}/v1/tasks` };
+  }
+  if (baseUrl.endsWith("/v1")) {
+    return { submit: `${baseUrl}/images/generations`, tasks: `${baseUrl}/tasks` };
+  }
+  return { submit: `${baseUrl}/v1/images/generations`, tasks: `${baseUrl}/v1/tasks` };
 }
 
 async function waitWithTimeout<T>(

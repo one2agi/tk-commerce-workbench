@@ -48,6 +48,55 @@ function slotInput(slotKey: string) {
 }
 
 describe("OpenAI-compatible image provider", () => {
+  it("submits APIMart image references and accepts its task id response", async () => {
+    const fetchImpl = vi.fn(async () => jsonResponse({
+      code: 200,
+      data: [{ status: "submitted", task_id: "task_apimart_123" }]
+    }));
+    const provider = createOpenAiCompatibleImageProvider({
+      baseUrl: "https://api.apimart.ai/v1/images/generations",
+      apiKey: "test-key",
+      model: "gpt-image-2",
+      fetchImpl
+    });
+
+    await expect(provider.submit(slotInput("slot-apimart-submit"))).resolves.toEqual({
+      kind: "accepted",
+      remoteTaskId: "task_apimart_123"
+    });
+    const [url, request] = fetchImpl.mock.calls[0] as unknown as [string, RequestInit];
+    const body = JSON.parse(request.body as string);
+    expect(url).toBe("https://api.apimart.ai/v1/images/generations");
+    expect(body.image_urls).toHaveLength(1);
+    expect(body.image_urls[0]).toMatch(/^data:image\/png;base64,/);
+  });
+
+  it("polls the APIMart task endpoint and reads its completed image URL", async () => {
+    const fetchImpl = vi.fn(async () => jsonResponse({
+      code: 200,
+      data: {
+        id: "task_apimart_123",
+        status: "completed",
+        progress: 100,
+        result: { images: [{ url: ["https://upload.apimart.ai/result.png"] }] }
+      }
+    }));
+    const provider = createOpenAiCompatibleImageProvider({
+      baseUrl: "https://api.apimart.ai/v1/images/generations",
+      apiKey: "test-key",
+      model: "gpt-image-2",
+      fetchImpl
+    });
+
+    await expect(provider.fetch({ remoteTaskId: "task_apimart_123" })).resolves.toEqual({
+      state: "succeeded",
+      outputUrl: "https://upload.apimart.ai/result.png"
+    });
+    expect((fetchImpl.mock.calls[0] as unknown as [string, RequestInit])[0]).toBe(
+      "https://api.apimart.ai/v1/tasks/task_apimart_123"
+    );
+  });
+
   it("sends one slot with a stable idempotency header", async () => {
     const fetchImpl = vi.fn(async () => jsonResponse({ id: "task_123", status: "queued" }));
     const provider = createOpenAiCompatibleImageProvider(config(fetchImpl));
