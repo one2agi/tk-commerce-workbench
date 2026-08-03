@@ -2181,6 +2181,32 @@ describe("integration: image generation repository", () => {
     expect(persisted.rows[0]?.archived_asset_id).not.toBe("/data/assets/aa/generated.png");
   });
 
+  test("retries slot four with a versioned payload that preserves slot number and increments attempt", async () => {
+    const input = await fixtureStart({ idempotencyKey: `start:retry:${newId("idem")}`, outputCount: 4 });
+    const { batchId } = await imageGen.createBatch(input);
+    const slot = (await handle.pool.query(
+      "SELECT id FROM image_generation_slots WHERE batch_id = $1 AND slot_number = 4",
+      [batchId]
+    )).rows[0]!;
+    await handle.pool.query(
+      "UPDATE image_generation_slots SET state = 'failed', error = '{}'::jsonb WHERE id = $1",
+      [slot.id]
+    );
+
+    expect(await imageGen.retrySlot(String(slot.id))).toBe(true);
+    const retried = await handle.pool.query(
+      `SELECT s.attempt, j.payload
+       FROM image_generation_slots s
+       JOIN jobs j ON j.batch_key = s.batch_id AND j.kind = 'image_generate_slot'
+       WHERE s.id = $1 AND (j.payload->>'attempt')::integer = 1`,
+      [slot.id]
+    );
+    expect(retried.rows[0]).toMatchObject({
+      attempt: 1,
+      payload: { version: 1, batchId, slotId: slot.id, slotNumber: 4, attempt: 1 }
+    });
+  });
+
   test("rejects a ready asset owned by another product revision inside batch creation", async () => {
     const input = await fixtureStart({ idempotencyKey: `start:foreign:${newId("idem")}` });
     const otherProductId = await catalog.insertProduct({

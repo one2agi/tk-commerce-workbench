@@ -22,6 +22,7 @@ const slotJob = (
     batchId,
     slotId,
     slotNumber,
+    attempt: 0,
     ...(reconciliationIntent ? { reconciliationIntent: { version: 1, operation: "image_generate_slot", idempotencyKey: `slot:${batchId}:${slotNumber}` } } : {})
   },
   leaseToken: "lease-1",
@@ -65,6 +66,38 @@ function buildHandler(
 
 describe("createGenerateImageSlotHandler", () => {
 
+  it("retries archival from a persisted provider output without another paid call", async () => {
+    const provider: ImageGenerationPort = {
+      submit: vi.fn(async () => { throw new Error("submit must not be called"); }),
+      fetch: vi.fn(async () => { throw new Error("fetch must not be called"); })
+    } as unknown as ImageGenerationPort;
+    const storeArchive = vi.fn(async (url: string) => ({
+      remoteUrl: url, finalUrl: url, sha256: "sha-recovered", path: "/data/assets/recovered.png",
+      extension: "png", bytes: 1024, width: 1024, height: 1024
+    }));
+    const archiveSlotOutput = vi.fn(async () => "asset_recovered");
+    const repository: SlotRepo = {
+      loadSlotExecution: vi.fn(async () => ({
+        slotId: "slot_1", batchId: "batch_1", slotNumber: 1, role: "default",
+        prompt: defaultPrompt, state: "archiving", attempt: 0, remoteTaskId: null,
+        remoteOutputUrl: "https://provider.test/recovered.png", error: null,
+        references: defaultReferences, parameters: {}
+      })),
+      saveRemoteTask: vi.fn(async () => true),
+      saveRemoteOutput: vi.fn(async () => true),
+      archiveSlotOutput,
+      markSlotFailed: vi.fn(async () => true)
+    };
+    const handler = buildHandler(provider, { archive: storeArchive }, repository, { append: vi.fn(async () => undefined) });
+
+    await handler(slotJob(), execution());
+
+    expect(provider.submit).not.toHaveBeenCalled();
+    expect(provider.fetch).not.toHaveBeenCalled();
+    expect(storeArchive).toHaveBeenCalledWith("https://provider.test/recovered.png");
+    expect(archiveSlotOutput).toHaveBeenCalled();
+  });
+
   it("polls an existing task instead of submitting again", async () => {
     const fetchMock = vi.fn(async () => ({ state: "succeeded" as const, outputUrl: "https://provider.test/out.png" }));
     const provider: ImageGenerationPort = {
@@ -79,6 +112,7 @@ describe("createGenerateImageSlotHandler", () => {
     const repository: SlotRepo = {
       loadSlotExecution: vi.fn(async () => ({ slotId: "slot_1", batchId: "batch_1", slotNumber: 1, role: "default", prompt: defaultPrompt, state: "queued", attempt: 0, remoteTaskId: "remote_1", remoteOutputUrl: null, error: null, references: defaultReferences, parameters: {} })),
       saveRemoteTask: vi.fn(async () => true),
+      saveRemoteOutput: vi.fn(async () => true),
       archiveSlotOutput,
       markSlotFailed: vi.fn(async () => true),
     };
@@ -101,6 +135,7 @@ describe("createGenerateImageSlotHandler", () => {
     const repository: SlotRepo = {
       loadSlotExecution: vi.fn(async () => ({ slotId: "slot_1", batchId: "batch_1", slotNumber: 1, role: "default", prompt: defaultPrompt, state: "queued", attempt: 0, remoteTaskId: "remote_1", remoteOutputUrl: null, error: null, references: defaultReferences, parameters: {} })),
       saveRemoteTask: vi.fn(async () => true),
+      saveRemoteOutput: vi.fn(async () => true),
       archiveSlotOutput,
       markSlotFailed: vi.fn(async () => true),
     };
@@ -118,6 +153,7 @@ describe("createGenerateImageSlotHandler", () => {
     const repository: SlotRepo = {
       loadSlotExecution: vi.fn(async () => ({ slotId: "slot_1", batchId: "batch_1", slotNumber: 1, role: "default", prompt: defaultPrompt, state: "queued", attempt: 0, remoteTaskId: null, remoteOutputUrl: null, error: null, references: defaultReferences, parameters: {} })),
       saveRemoteTask: vi.fn(async () => true),
+      saveRemoteOutput: vi.fn(async () => true),
       archiveSlotOutput: vi.fn(async () => "asset_generated"),
       markSlotFailed: vi.fn(async () => true),
     };
@@ -136,6 +172,7 @@ describe("createGenerateImageSlotHandler", () => {
     const repository: SlotRepo = {
       loadSlotExecution: vi.fn(async () => ({ slotId: "slot_1", batchId: "batch_1", slotNumber: 1, role: "default", prompt: defaultPrompt, state: "queued", attempt: 0, remoteTaskId: null, remoteOutputUrl: null, error: null, references: defaultReferences, parameters: {} })),
       saveRemoteTask: vi.fn(async () => true),
+      saveRemoteOutput: vi.fn(async () => true),
       archiveSlotOutput: vi.fn(async () => "asset_generated"),
       markSlotFailed: vi.fn(async () => true),
     };
@@ -155,6 +192,7 @@ describe("createGenerateImageSlotHandler", () => {
     const repository: SlotRepo = {
       loadSlotExecution: vi.fn(async () => ({ slotId: "slot_1", batchId: "batch_1", slotNumber: 1, role: "default", prompt: defaultPrompt, state: "queued", attempt: 0, remoteTaskId: null, remoteOutputUrl: null, error: null, references: defaultReferences, parameters: {} })),
       saveRemoteTask: vi.fn(async () => true),
+      saveRemoteOutput: vi.fn(async () => true),
       archiveSlotOutput: vi.fn(async () => "asset_generated"),
       markSlotFailed: vi.fn(async () => true),
     };
@@ -176,6 +214,7 @@ describe("createGenerateImageSlotHandler", () => {
     const repository: SlotRepo = {
       loadSlotExecution: vi.fn(async () => ({ slotId: "slot_1", batchId: "batch_1", slotNumber: 1, role: "default", prompt: defaultPrompt, state: "queued", attempt: 0, remoteTaskId: null, remoteOutputUrl: null, error: null, references: defaultReferences, parameters: { size: "1024x1024" } })),
       saveRemoteTask: vi.fn(async () => true),
+      saveRemoteOutput: vi.fn(async () => true),
       markSlotFailed: vi.fn(async () => true),
       archiveSlotOutput
     };
@@ -208,6 +247,7 @@ describe("createGenerateImageSlotHandler", () => {
     const repository: SlotRepo = {
       loadSlotExecution: vi.fn(async () => ({ slotId: "slot_1", batchId: "batch_1", slotNumber: 1, role: "default", prompt: defaultPrompt, state: "queued", attempt: 0, remoteTaskId: "remote_1", remoteOutputUrl: null, error: null, references: defaultReferences, parameters: {} })),
       saveRemoteTask: vi.fn(async () => true),
+      saveRemoteOutput: vi.fn(async () => true),
       archiveSlotOutput,
       markSlotFailed: vi.fn(async () => true),
     };
@@ -230,6 +270,7 @@ describe("createGenerateImageSlotHandler", () => {
     const repository: SlotRepo = {
       loadSlotExecution: vi.fn(async () => ({ slotId: "slot_1", batchId: "batch_1", slotNumber: 1, role: "default", prompt: defaultPrompt, state: "queued", attempt: 0, remoteTaskId: "remote_1", remoteOutputUrl: null, error: null, references: defaultReferences, parameters: {} })),
       saveRemoteTask: vi.fn(async () => true),
+      saveRemoteOutput: vi.fn(async () => true),
       archiveSlotOutput,
       markSlotFailed: vi.fn(async () => true),
     };
@@ -252,6 +293,7 @@ describe("createGenerateImageSlotHandler", () => {
     const repository: SlotRepo = {
       loadSlotExecution: vi.fn(async () => ({ slotId: "slot_1", batchId: "batch_1", slotNumber: 1, role: "default", prompt: defaultPrompt, state: "queued", attempt: 0, remoteTaskId: "remote_1", remoteOutputUrl: null, error: null, references: defaultReferences, parameters: {} })),
       saveRemoteTask: vi.fn(async () => true),
+      saveRemoteOutput: vi.fn(async () => true),
       archiveSlotOutput,
       markSlotFailed: vi.fn(async () => true),
     };
@@ -277,6 +319,7 @@ describe("createGenerateImageSlotHandler", () => {
     const repository: SlotRepo = {
       loadSlotExecution: vi.fn(async () => ({ slotId: "slot_1", batchId: "batch_1", slotNumber: 1, role: "default", prompt: defaultPrompt, state: "queued", attempt: 0, remoteTaskId: "remote_1", remoteOutputUrl: null, error: null, references: defaultReferences, parameters: {} })),
       saveRemoteTask: vi.fn(async () => true),
+      saveRemoteOutput: vi.fn(async () => true),
       archiveSlotOutput: vi.fn(async () => null),
       markSlotFailed: vi.fn(async () => true),
     };
@@ -292,6 +335,7 @@ describe("createGenerateImageSlotHandler", () => {
     const repository: SlotRepo = {
       loadSlotExecution: vi.fn(async () => ({ slotId: "slot_1", batchId: "batch_1", slotNumber: 1, role: "default", prompt: defaultPrompt, state: "queued", attempt: 0, remoteTaskId: null, remoteOutputUrl: null, error: null, references: defaultReferences, parameters: {} })),
       saveRemoteTask: vi.fn(async () => true),
+      saveRemoteOutput: vi.fn(async () => true),
       archiveSlotOutput: vi.fn(async () => "asset_generated"),
       markSlotFailed: vi.fn(async () => true),
     };
@@ -312,6 +356,7 @@ describe("createGenerateImageSlotHandler", () => {
     const repository: SlotRepo = {
       loadSlotExecution: vi.fn(async () => ({ slotId: "slot_1", batchId: "batch_1", slotNumber: 1, role: "default", prompt: defaultPrompt, state: "queued", attempt: 0, remoteTaskId: "remote_persisted", remoteOutputUrl: null, error: null, references: defaultReferences, parameters: {} })),
       saveRemoteTask: vi.fn(async () => true),
+      saveRemoteOutput: vi.fn(async () => true),
       archiveSlotOutput: vi.fn(async () => "asset_generated"),
       markSlotFailed: vi.fn(async () => true),
     };
@@ -334,6 +379,7 @@ describe("createGenerateImageSlotHandler", () => {
     const repository: SlotRepo = {
       loadSlotExecution: vi.fn(async () => ({ slotId: "slot_1", batchId: "batch_1", slotNumber: 1, role: "default", prompt: defaultPrompt, state: "queued", attempt: 0, remoteTaskId: null, remoteOutputUrl: null, error: null, references: defaultReferences, parameters: {} })),
       saveRemoteTask: vi.fn(async () => true),
+      saveRemoteOutput: vi.fn(async () => true),
       archiveSlotOutput: vi.fn(async () => "asset_generated"),
       markSlotFailed: vi.fn(async () => true),
     };

@@ -1,4 +1,4 @@
-import { idempotencyKey, type ImageGenerationPort, type PlannedImagePromptV1, type ResolvedImageReferenceV1 } from "@tk/contracts";
+import { idempotencyKey, parseImageGenerateSlotJobPayload, type ImageGenerationPort, type PlannedImagePromptV1, type ResolvedImageReferenceV1 } from "@tk/contracts";
 import { NeedsInputError, RetryableJobError, type WorkerHandler } from "../runtime/worker-loop.js";
 
 export interface SlotRepository {
@@ -21,6 +21,7 @@ export interface SlotRepository {
   } | null>;
 
   saveRemoteTask(slotId: string, fence: SlotFence, remoteTaskId: string): Promise<boolean>;
+  saveRemoteOutput(slotId: string, fence: SlotFence, remoteOutputUrl: string): Promise<boolean>;
   markSlotFailed(slotId: string, error: unknown, fence: SlotFence): Promise<boolean>;
   archiveSlotOutput(
     slotId: string,
@@ -95,12 +96,7 @@ async function archiveAndPersist(input: GenerateImageSlotDeps, options: {
 
 export function createGenerateImageSlotHandler(input: GenerateImageSlotDeps): WorkerHandler {
   return async (job, execution) => {
-    const { batchId, slotId, slotNumber } = job.payload as {
-      batchId: string;
-      slotId: string;
-      slotNumber: number;
-      version: number;
-    };
+    const { batchId, slotId, slotNumber } = parseImageGenerateSlotJobPayload(job.payload);
 
     const fence: SlotFence = {
       jobId: job.jobId,
@@ -115,6 +111,11 @@ export function createGenerateImageSlotHandler(input: GenerateImageSlotDeps): Wo
 
     if (slot.prompt === null) {
       throw new NeedsInputError("slot_prompt_not_ready", "Slot prompt is not ready");
+    }
+
+    if (slot.remoteOutputUrl) {
+      await archiveAndPersist(input, { slotId, outputUrl: slot.remoteOutputUrl, fence, execution });
+      return { next: [] };
     }
 
     // If a remote task is already persisted, recover by polling
@@ -146,6 +147,10 @@ export function createGenerateImageSlotHandler(input: GenerateImageSlotDeps): Wo
         throw result.failure;
       }
 
+      execution.assertLease();
+      if (!await input.repository.saveRemoteOutput(slotId, fence, result.outputUrl)) {
+        throw new NeedsInputError("slot_write_conflict", "Slot state changed before output checkpoint; retry");
+      }
       await archiveAndPersist(input, { slotId, outputUrl: result.outputUrl, fence, execution });
 
       return { next: [] };
@@ -218,6 +223,10 @@ export function createGenerateImageSlotHandler(input: GenerateImageSlotDeps): Wo
 
     if (submitResult.kind === "completed") {
       // Synchronous completion with URL — go straight to archival
+      execution.assertLease();
+      if (!await input.repository.saveRemoteOutput(slotId, fence, submitResult.outputUrl)) {
+        throw new NeedsInputError("slot_write_conflict", "Slot state changed before output checkpoint; retry");
+      }
       await archiveAndPersist(input, { slotId, outputUrl: submitResult.outputUrl, fence, execution });
 
       return { next: [] };
@@ -256,6 +265,10 @@ export function createGenerateImageSlotHandler(input: GenerateImageSlotDeps): Wo
     }
 
     // Succeeded
+    execution.assertLease();
+    if (!await input.repository.saveRemoteOutput(slotId, fence, fetchResult.outputUrl)) {
+      throw new NeedsInputError("slot_write_conflict", "Slot state changed before output checkpoint; retry");
+    }
     await archiveAndPersist(input, { slotId, outputUrl: fetchResult.outputUrl, fence, execution });
 
     return { next: [] };

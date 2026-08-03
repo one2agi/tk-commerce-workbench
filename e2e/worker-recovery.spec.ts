@@ -320,7 +320,7 @@ test.describe("headless image generation restart safety", () => {
       remoteTaskId: "remote_poll_1"
     });
 
-    let submitCalls = 0;
+    const submitCalls = 0;
     let pollCalls = 0;
 
     await runWorkerLoop({
@@ -378,7 +378,7 @@ test.describe("headless image generation restart safety", () => {
       remoteTaskId: "remote_download_1"
     });
 
-    let submitCalls = 0;
+    const submitCalls = 0;
 
     await runWorkerLoop({
       jobs,

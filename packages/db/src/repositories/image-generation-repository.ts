@@ -4,6 +4,7 @@
 // transitions, and idempotent re-entry via unique constraints.
 
 import { strict as assert } from "node:assert";
+import { createHash } from "node:crypto";
 import type { ImageGenerationRecipeV1, PlannedImagePromptV1, ResolvedImageReferenceV1 } from "@tk/contracts";
 import { schema, type DbPool } from "../schema/index.js";
 
@@ -358,6 +359,7 @@ export class ImageGenerationRepository {
       await client.query("BEGIN");
 
       for (const prompt of input.prompts) {
+        const promptHash = createHash("sha256").update(JSON.stringify(prompt)).digest("hex");
         const slotResult = await client.query<{ id: string }>(
           `UPDATE ${schema.imageGenerationSlots}
            SET prompt = $1::jsonb,
@@ -368,7 +370,7 @@ export class ImageGenerationRepository {
            RETURNING id`,
           [
             JSON.stringify(prompt),
-            Buffer.from(JSON.stringify(prompt)).toString("base64"),
+            promptHash,
             input.batchId,
             prompt.slot
           ]
@@ -376,8 +378,6 @@ export class ImageGenerationRepository {
         if (slotResult.rowCount && slotResult.rowCount > 0) {
           assert(slotResult.rows[0], "updated slot must be returned");
           const slotId = slotResult.rows[0].id;
-          // Derive business_key from prompt hash for idempotency
-          const promptHash = Buffer.from(JSON.stringify(prompt)).toString("base64");
           const jobId = newId("job");
           await client.query(
             `INSERT INTO ${schema.jobs}
@@ -386,8 +386,8 @@ export class ImageGenerationRepository {
              ON CONFLICT (kind, business_key) DO NOTHING`,
             [
               jobId,
-              `slot:${input.batchId}:${prompt.slot}:${promptHash.slice(0, 12)}`,
-              JSON.stringify({ batchId: input.batchId, slotId, slotNumber: prompt.slot, version: 1 }),
+              `slot:${input.batchId}:${prompt.slot}:${promptHash}`,
+              JSON.stringify({ version: 1, batchId: input.batchId, slotId, slotNumber: prompt.slot, attempt: 0 }),
               input.batchId
             ]
           );
@@ -414,7 +414,8 @@ export class ImageGenerationRepository {
        FROM ${schema.imageGenerationSlots} s
        JOIN ${schema.imageGenerationBatches} b ON b.id = s.batch_id
        JOIN ${schema.jobs} j ON j.batch_key = s.batch_id AND j.kind = 'image_generate_slot'
-       WHERE s.id = $1 AND j.id = $2 AND j.owner = $3 AND j.lease_token = $4
+       WHERE s.id = $1 AND j.id = $2 AND j.status = 'running'
+         AND j.owner = $3 AND j.lease_token = $4 AND j.lease_expires_at > now()
        FOR UPDATE OF s`,
       [slotId, fence.jobId, fence.owner, fence.leaseToken]
     );
@@ -470,8 +471,23 @@ export class ImageGenerationRepository {
        FROM ${schema.jobs} j
        WHERE s.id = $2 AND j.batch_key = s.batch_id
          AND j.id = $3 AND j.owner = $4 AND j.lease_token = $5
+         AND j.status = 'running' AND j.lease_expires_at > now()
          AND s.state = 'queued'`,
       [remoteTaskId, slotId, fence.jobId, fence.owner, fence.leaseToken]
+    );
+    return (result.rowCount ?? 0) > 0;
+  }
+
+  async saveRemoteOutput(slotId: string, fence: SlotFence, remoteOutputUrl: string): Promise<boolean> {
+    const result = await this.pool.query(
+      `UPDATE ${schema.imageGenerationSlots} s
+       SET remote_output_url = $1, state = 'archiving', updated_at = now()
+       FROM ${schema.jobs} j
+       WHERE s.id = $2 AND j.id = $3 AND j.batch_key = s.batch_id
+         AND j.owner = $4 AND j.lease_token = $5
+         AND j.status = 'running' AND j.lease_expires_at > now()
+         AND s.state IN ('queued', 'polling', 'archiving')`,
+      [remoteOutputUrl, slotId, fence.jobId, fence.owner, fence.leaseToken]
     );
     return (result.rowCount ?? 0) > 0;
   }
@@ -638,7 +654,7 @@ export class ImageGenerationRepository {
 
       // Load the slot and its batch to get the prompt hash for idempotency
       const slot = await client.query(
-        `SELECT s.id, s.batch_id, s.prompt, s.attempt, s.state
+        `SELECT s.id, s.batch_id, s.slot_number, s.prompt, s.attempt, s.state
          FROM ${schema.imageGenerationSlots} s
          WHERE s.id = $1 AND s.state = 'failed'`,
         [slotId]
@@ -648,12 +664,14 @@ export class ImageGenerationRepository {
         return false;
       }
 
-      const row = slot.rows[0] as { id: string; batch_id: string; prompt: PlannedImagePromptV1 | null; attempt: number; state: string };
+      const row = slot.rows[0] as { id: string; batch_id: string; slot_number: number; prompt: PlannedImagePromptV1 | null; attempt: number; state: string };
 
       // Reset slot state to queued and increment attempt
       await client.query(
         `UPDATE ${schema.imageGenerationSlots}
-         SET state = 'queued', error = NULL, attempt = attempt + 1, updated_at = now()
+         SET state = 'queued', error = NULL, attempt = attempt + 1,
+             remote_task_id = NULL, remote_output_url = NULL, archived_asset_id = NULL,
+             updated_at = now()
          WHERE id = $1`,
         [slotId]
       );
@@ -661,6 +679,11 @@ export class ImageGenerationRepository {
       // Insert a new job for this retry (idempotent via business_key conflict)
       const newAttempt = row.attempt + 1;
       const jobId = newId("job");
+      const promptAttemptHash = createHash("sha256")
+        .update(JSON.stringify(row.prompt ?? {}))
+        .update(":")
+        .update(String(newAttempt))
+        .digest("hex");
       await client.query(
         `INSERT INTO ${schema.jobs}
          (id, kind, business_key, idempotency_key, payload, status, max_attempts, batch_key, created_at, updated_at)
@@ -668,8 +691,8 @@ export class ImageGenerationRepository {
          ON CONFLICT (kind, business_key) DO NOTHING`,
         [
           jobId,
-          `slot:${row.batch_id}:${slotId}:retry:${newAttempt}`,
-          JSON.stringify({ batchId: row.batch_id, slotId, slotNumber: 0, version: newAttempt }),
+          `slot:${row.batch_id}:${row.slot_number}:${promptAttemptHash}`,
+          JSON.stringify({ version: 1, batchId: row.batch_id, slotId, slotNumber: row.slot_number, attempt: newAttempt }),
           row.batch_id
         ]
       );
