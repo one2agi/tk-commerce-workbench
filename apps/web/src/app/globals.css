@@ -2291,6 +2291,12 @@ select.tk-igen-category:focus-visible {
   margin-bottom: 12px;
 }
 
+.tk-template-message.is-error {
+  border-color: #fecaca;
+  color: #b91c1c;
+  background: #fef2f2;
+}
+
 .tk-template-actions {
   display: flex;
   gap: 8px;
@@ -2301,6 +2307,68 @@ select.tk-igen-category:focus-visible {
   margin-top: 16px;
   padding-top: 16px;
   border-top: 1px solid #e2e8f0;
+}
+
+.tk-template-advanced label {
+  display: grid;
+  gap: 5px;
+  margin-bottom: 10px;
+  color: #475569;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.tk-template-advanced input,
+.tk-template-advanced textarea {
+  width: 100%;
+  min-width: 0;
+  padding: 8px 10px;
+  border: 1px solid #cbd5e1;
+  border-radius: 6px;
+  color: #1e293b;
+  background: #fff;
+}
+
+.tk-template-advanced textarea {
+  min-height: 72px;
+  resize: vertical;
+}
+
+.tk-template-count-editor {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+  margin-bottom: 12px;
+}
+
+.tk-template-count-editor > div {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 7px;
+  padding: 10px;
+  border-radius: 7px;
+  background: #f8fafc;
+}
+
+.tk-template-count-editor strong {
+  grid-column: 1 / -1;
+  font-size: 12px;
+}
+
+.tk-template-role-editor {
+  display: grid;
+  gap: 8px;
+  margin-bottom: 12px;
+}
+
+.tk-template-role-editor > div {
+  display: grid;
+  grid-template-columns: minmax(100px, 0.35fr) 1fr;
+  gap: 8px;
+}
+
+.tk-template-role-editor textarea {
+  min-height: 52px;
 }
 
 .tk-template-advanced fieldset {
@@ -2381,4 +2449,12 @@ select.tk-igen-category:focus-visible {
 .tk-empty {
   color: #94a3b8;
   font-style: italic;
+}
+
+@media (max-width: 760px) {
+  .tk-template-count-editor,
+  .tk-template-role-editor > div,
+  .tk-form-row {
+    grid-template-columns: 1fr;
+  }
 }

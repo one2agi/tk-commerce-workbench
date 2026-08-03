@@ -172,6 +172,28 @@ describe("ImageGenerationTemplateService lifecycle", () => {
     expect(active!.lifecycleState).toBe("active");
   });
 
+  it("lists a newly created draft and appends edits without mutating it", async () => {
+    const store = createInMemoryStore();
+    const service = new ImageGenerationTemplateService({
+      createTemplate: store.createTemplate.bind(store), createVersion: store.createVersion.bind(store),
+      getVersionsByTemplate: store.getVersionsByTemplate.bind(store), getVersion: store.getVersion.bind(store),
+      getTemplate: store.getTemplate.bind(store), updateVersionArchived: store.updateVersionArchived.bind(store),
+      updateTemplateActiveVersion: store.updateTemplateActiveVersion.bind(store), listTemplates: store.listTemplates.bind(store),
+      resolveActiveByCategory: store.resolveActiveByCategory.bind(store), getTemplateByCategoryKey: store.getTemplateByCategoryKey.bind(store)
+    });
+    const created = await service.createDraft({ name: "Hat", categoryKey: "women.hat", recipe: minimalRecipe });
+    expect((await service.list()).items).toEqual([expect.objectContaining({ version: 1, lifecycleState: "draft" })]);
+
+    const edited = await service.updateDraft({
+      templateId: created.templateId,
+      expectedVersion: 1,
+      recipeOverride: { visualDirection: "Beach holiday" }
+    });
+
+    expect(edited).toMatchObject({ version: 2, lifecycleState: "draft" });
+    expect((await store.getVersionsByTemplate(created.templateId))[0]?.recipe.visualDirection).toBe("");
+  });
+
   it("restores an old version by copying it to a new draft", async () => {
     const store = createInMemoryStore();
     const service = new ImageGenerationTemplateService({

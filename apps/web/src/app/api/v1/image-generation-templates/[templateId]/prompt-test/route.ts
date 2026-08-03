@@ -7,7 +7,8 @@ import { idempotencyKey } from "@tk/contracts/ids";
 
 const PromptTestBody = z.strictObject({
   productId: z.string().trim().min(1),
-  outputCount: z.number().int().min(1).max(8)
+  outputCount: z.number().int().min(1).max(8),
+  version: z.number().int().positive()
 });
 
 // Extend ServerServices to include imagePromptPlanner
@@ -57,11 +58,11 @@ export function createPostHandler(dependencies: {
       return Response.json({ error: "invalid_request", detail: parsed.error.format() }, { status: 400 });
     }
 
-    const { productId, outputCount } = parsed.data;
+    const { productId, outputCount, version } = parsed.data;
 
     // Load the template's active version
     const { items } = await dependencies.service.list();
-    const template = items.find((t) => t.templateId === templateId);
+    const template = items.find((t) => t.templateId === templateId && t.version === version);
     if (!template) {
       return Response.json({ error: "template_not_found" }, { status: 404 });
     }

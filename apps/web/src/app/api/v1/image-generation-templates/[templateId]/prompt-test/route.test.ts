@@ -164,7 +164,7 @@ function promptTestRequest(overrides: { productId?: string; outputCount?: number
   return new Request("http://127.0.0.1/api/v1/image-generation-templates/tmpl_1/prompt-test", {
     method: "POST",
     headers: { origin: "http://127.0.0.1", "content-type": "application/json" },
-    body: JSON.stringify({ productId: "prod_1", outputCount: 5, ...overrides })
+    body: JSON.stringify({ productId: "prod_1", outputCount: 5, version: 1, ...overrides })
   });
 }
 

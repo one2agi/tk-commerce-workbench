@@ -163,8 +163,8 @@ export class ImageGenerationTemplateService {
   }
 
   /**
-   * Append a new draft version (version N+1) based on the current active version.
-   * The currently-active version is NOT modified.
+   * Append a new immutable draft version based on the version the user edited.
+   * Existing active and historical versions are never modified.
    */
   async updateDraft(input: {
     templateId: string;
@@ -176,14 +176,15 @@ export class ImageGenerationTemplateService {
     if (!template) throw new Error("template_not_found");
 
     const versions = await this.store.getVersionsByTemplate(input.templateId);
-    const active = versions.find((v) => v.lifecycleState === "active");
-    if (!active) throw new Error("no_active_version");
-
-    if (active.version !== input.expectedVersion) {
+    const latestVersion = Math.max(...versions.map((version) => version.version));
+    const source = versions.find((version) => version.version === input.expectedVersion
+      && version.lifecycleState !== "archived")
+      ?? versions.find((version) => version.version === input.expectedVersion);
+    if (!source || latestVersion !== input.expectedVersion) {
       throw new Error("version_conflict");
     }
 
-    const baseRecipe = active.recipe as ValidatedRecipe;
+    const baseRecipe = source.recipe as ValidatedRecipe;
     const nextRecipe: ValidatedRecipe = {
       ...baseRecipe,
       ...(input.recipeOverride ?? {}),
@@ -192,7 +193,7 @@ export class ImageGenerationTemplateService {
 
     const nextVersion = await this.store.createVersion({
       templateId: input.templateId,
-      version: active.version + 1,
+      version: latestVersion + 1,
       lifecycleState: "draft",
       recipe: nextRecipe
     });
@@ -320,16 +321,24 @@ export class ImageGenerationTemplateService {
   }
 
   /**
-   * List all templates with their active version info.
+   * List every meaningful version so new drafts and pending edits remain manageable.
    */
   async list(): Promise<{ items: ImageGenerationTemplateViewV1[] }> {
     const templates = await this.store.listTemplates();
     const items: ImageGenerationTemplateViewV1[] = [];
 
     for (const template of templates) {
-      if (template.activeVersionId) {
-        const version = await this.store.getVersion(template.activeVersionId);
-        if (version) items.push(toView(template, version));
+      const versions = await this.store.getVersionsByTemplate(template.id);
+      const byVersion = new Map<number, ImageGenerationTemplateVersion>();
+      for (const version of versions) {
+        const existing = byVersion.get(version.version);
+        const priority = { archived: 0, draft: 1, active: 2 } as const;
+        if (!existing || priority[version.lifecycleState] > priority[existing.lifecycleState]) {
+          byVersion.set(version.version, version);
+        }
+      }
+      for (const version of [...byVersion.values()].sort((a, b) => b.version - a.version)) {
+        items.push(toView(template, version));
       }
     }
 

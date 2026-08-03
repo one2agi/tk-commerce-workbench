@@ -34,6 +34,7 @@ describe("product safety boundary", () => {
         `${match[1]} ${relative(apiRoot, file).replaceAll("\\", "/").replace(/\/route\.ts$/, "")}`);
     }).sort();
     expect(mutationRoutes).toEqual([
+      "PATCH image-generation-templates/[templateId]",
       "PATCH products/[productId]/draft",
       "PATCH products/[productId]/image-generations/[batchId]/slots/[slotId]",
       "PATCH settings",

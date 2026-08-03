@@ -28,6 +28,8 @@ beforeAll(() => {
   })) {
     Object.defineProperty(globalThis, name, { value, configurable: true });
   }
+  Object.defineProperty(dom.window.HTMLElement.prototype, "attachEvent", { value: vi.fn(), configurable: true });
+  Object.defineProperty(dom.window.HTMLElement.prototype, "detachEvent", { value: vi.fn(), configurable: true });
 }, 30000);
 
 vi.setConfig({ testTimeout: 30000, hookTimeout: 30000 });
@@ -98,7 +100,6 @@ describe("ImageGenerationTemplateManager", () => {
     const { getAllByRole } = render(<ImageGenerationTemplateManager items={[activeTemplate(), draftTemplate(), archivedTemplate()]} />);
     const buttons = getAllByRole("button");
     const buttonNames = buttons.map(b => b.textContent);
-    expect(buttonNames).toContain("测试提示词");
     expect(buttonNames).toContain("启用此版本");
     expect(buttonNames).toContain("恢复为新草稿");
   });
@@ -120,13 +121,16 @@ describe("ImageGenerationTemplateManager", () => {
       json: () => Promise.resolve({ prompts: [] })
     });
 
-    const { getByRole } = render(<ImageGenerationTemplateManager items={[draftTemplate()]} />);
+    const { getByRole, getByLabelText } = render(<ImageGenerationTemplateManager items={[draftTemplate()]} />);
 
+    await user.click(getByRole("button", { name: "高级设置" }));
+    await user.type(getByLabelText("样例商品 ID"), "prod_example_1");
     await user.click(getByRole("button", { name: "测试提示词" }));
     expect(globalThis.fetch).toHaveBeenCalledTimes(1);
     const [url, opts] = (globalThis.fetch as ReturnType<typeof vi.fn>).mock.calls[0]!;
     expect(url).toContain("/prompt-test");
     expect(opts.method).toBe("POST");
+    expect(JSON.parse(opts.body)).toEqual({ productId: "prod_example_1", outputCount: 4, version: 1 });
   });
 
   it("calls activate API when 启用此版本 is clicked", async () => {
@@ -169,11 +173,36 @@ describe("ImageGenerationTemplateManager", () => {
 
   it("shows active version badge", () => {
     const { getByText } = render(<ImageGenerationTemplateManager items={[activeTemplate()]} />);
-    expect(getByText("进行中")).toBeVisible();
+    expect(getByText("已启用")).toBeVisible();
   });
 
   it("shows draft version badge", () => {
     const { getByText } = render(<ImageGenerationTemplateManager items={[draftTemplate()]} />);
     expect(getByText("草稿")).toBeVisible();
+  });
+
+  it("edits advanced fields by appending a new immutable draft version", async () => {
+    const user = userEvent.setup({ document: globalThis.document });
+    globalThis.fetch = vi.fn().mockResolvedValueOnce({ ok: true, json: () => Promise.resolve({ version: 3 }) });
+    const { getByRole, getByLabelText, findByText } = render(<ImageGenerationTemplateManager items={[activeTemplate()]} />);
+
+    await user.click(getByRole("button", { name: "高级设置" }));
+    const direction = getByLabelText("视觉方向");
+    await user.clear(direction);
+    await user.type(direction, "海边度假场景，保留帽檐结构");
+    await user.click(getByRole("button", { name: "保存为新草稿版本" }));
+
+    const [url, opts] = (globalThis.fetch as ReturnType<typeof vi.fn>).mock.calls[0]!;
+    expect(url).toBe("/api/v1/image-generation-templates/tpl_1");
+    expect(opts.method).toBe("PATCH");
+    expect(JSON.parse(opts.body)).toMatchObject({ expectedVersion: 2, recipe: { visualDirection: "海边度假场景，保留帽檐结构" } });
+    expect(await findByText(/当前已启用版本没有被修改/)).toBeInTheDocument();
+  });
+
+  it("requires an explicit sample product before prompt testing", async () => {
+    const user = userEvent.setup({ document: globalThis.document });
+    const { getByRole } = render(<ImageGenerationTemplateManager items={[draftTemplate()]} />);
+    await user.click(getByRole("button", { name: "高级设置" }));
+    expect(getByRole("button", { name: "测试提示词" })).toBeDisabled();
   });
 });
