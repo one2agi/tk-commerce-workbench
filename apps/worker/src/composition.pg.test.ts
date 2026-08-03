@@ -11,6 +11,7 @@ import {
   ContentAddressedStore,
   ExchangeRateRepository,
   INITIAL_SQL,
+  ImageGenerationRepository,
   JobRepository,
   PipelineRepository,
   bootTestDb,
@@ -43,6 +44,7 @@ describe("real PostgreSQL worker composition", () => {
     const rates = new ExchangeRateRepository(handle.pool);
     const auditRepository = new AuditRepository(handle.pool);
     const quota = new CanvasQuotaRepository(handle.pool);
+    const imageGeneration = new ImageGenerationRepository(handle.pool);
     await rates.recordManualOverride({ base: "CNY", target: "THB", rate: "4.80", observedAt: "2026-07-16T00:00:00Z" });
     await handle.pool.query(
       `INSERT INTO templates
@@ -55,6 +57,11 @@ describe("real PostgreSQL worker composition", () => {
     );
 
     const ports = createFakePorts();
+    const publishing = {
+      publish: vi.fn(async ({ assets }: { assets: Array<{ assetId: string }> }) =>
+        assets.map(({ assetId }) => ({ remoteUrl: `https://published.test/${assetId}` }))),
+      release: vi.fn(async () => undefined)
+    };
     let rejectedCanvasOutput: string | null = null;
     const assetRoot = await mkdtemp(join(tmpdir(), "tk-canvas-assets-"));
     assetRoots.push(assetRoot);
@@ -103,10 +110,22 @@ describe("real PostgreSQL worker composition", () => {
       payload: event.payload as Record<string, unknown> | undefined
     }) };
     const makeRuntime = () => buildWorkerRuntime({
-      ports: { miaoshou: ports.miaoshouSource, miaoshouEdit: ports.miaoshouEdit, llm: ports.llm, exchangeRate: ports.exchangeRate, canvas: ports.canvas, staging: ports.assetStaging },
+      ports: {
+        miaoshou: ports.miaoshouSource,
+        miaoshouEdit: ports.miaoshouEdit,
+        llm: ports.llm,
+        exchangeRate: ports.exchangeRate,
+        canvas: ports.canvas,
+        staging: ports.assetStaging,
+        publishing,
+        imagePlanner: ports.imagePlanner,
+        imageGeneration: ports.imageGeneration
+      },
       repositories: {
         ...pipelineRepositories(pipeline),
         prepareMiaoshouWriteback: {} as never,
+        imageGeneration,
+        imageSlot: imageGeneration,
         miaoshouEdit: {} as never
       },
       reachability: { assertReachable: async () => undefined },
@@ -126,9 +145,11 @@ describe("real PostgreSQL worker composition", () => {
       // integration remains valid after the original authoring date.
       now: () => new Date(),
       maxCanvasRunsPerDay: 10,
+      imageGenerationPath: "canvas",
       adapterLimits: {
         miaoshou: { concurrency: 1, minIntervalMs: 0 }, llm: { concurrency: 1, minIntervalMs: 0 }, exchangeRate: { concurrency: 1, minIntervalMs: 0 },
-        canvas: { concurrency: 1, minIntervalMs: 0 }, staging: { concurrency: 1, minIntervalMs: 0 }
+        canvas: { concurrency: 1, minIntervalMs: 0 }, staging: { concurrency: 1, minIntervalMs: 0 },
+        imageGeneration: { concurrency: 1, minIntervalMs: 0 }
       }
     });
     await jobs.enqueue({
@@ -319,6 +340,11 @@ describe("real PostgreSQL worker composition", () => {
       payload: { version: 1, approvalSnapshotId, productId, canonicalSuccessDetailId: "canonical-edit" }
     });
     const ports = createFakePorts();
+    const publishing = {
+      publish: vi.fn(async ({ assets }: { assets: Array<{ assetId: string }> }) =>
+        assets.map(({ assetId }) => ({ remoteUrl: `https://published.test/${assetId}` }))),
+      release: vi.fn(async () => undefined)
+    };
     let applyCount = 0;
     let remoteDetail: Record<string, unknown> = {
       commonCollectBoxDetailId: "canonical-edit",
@@ -381,6 +407,7 @@ describe("real PostgreSQL worker composition", () => {
     const makeHandler = () => createMiaoshouEditHandler({
       edit: makeEdit(),
       staging: ports.assetStaging,
+      publishing,
       repository,
       reachability: { assertReachable: async () => undefined },
       cleanupCodec: { protect: () => "protected", unprotect: () => ({ remoteUrls: [], expiresAt: "2026-07-16T01:00:00Z" }) },

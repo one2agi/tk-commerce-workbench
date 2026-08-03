@@ -26,7 +26,7 @@ export function createImageSelectHandler(input: {
     // Headless path: mark ready for image generation and return no next job
     // The product-detail command from Task 9 will create the headless batch and planner job
     if (input.imageGenerationPath === "headless") {
-      await input.repository.markReadyForImageGeneration(revisionId, execution.fence);
+      requireFencedWrite(await input.repository.markReadyForImageGeneration(revisionId, execution.fence));
       return { next: [] };
     }
 

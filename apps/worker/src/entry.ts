@@ -28,6 +28,7 @@ import {
   ApprovalRepository,
   CanvasQuotaRepository,
   ContentAddressedStore,
+  ImageGenerationRepository,
   JobRepository,
   PipelineRepository,
   createNodePinnedAssetFetch,
@@ -306,6 +307,7 @@ export function createWorkerApplication(input: CreateWorkerApplicationInput = {}
     persistReconciliationContext: (context: Parameters<JobRepository["persistMiaoshouReconciliationContext"]>[4], fence: { jobId: string; owner: string; leaseToken: string }) =>
       jobs.persistMiaoshouReconciliationContext(fence.jobId, fence.owner, fence.leaseToken, new Date(), context)
   };
+  const imageGenerationRepository = new ImageGenerationRepository(pool);
   const runtime = buildWorkerRuntime({
     ports: {
       miaoshou,
@@ -325,6 +327,8 @@ export function createWorkerApplication(input: CreateWorkerApplicationInput = {}
           ...args: Parameters<ApprovalRepository["bindCanonicalAndEnqueueEdit"]>
         ) => approvals.bindCanonicalAndEnqueueEdit(...args)
       },
+      imageGeneration: imageGenerationRepository,
+      imageSlot: imageGenerationRepository,
       miaoshouEdit: miaoshouEditRepository
     },
     reachability: { assertReachable: async (urls) => { await Promise.all(urls.map(assertStagedUrlReachable)); } },
@@ -335,12 +339,14 @@ export function createWorkerApplication(input: CreateWorkerApplicationInput = {}
     audit: auditPort(new AuditRepository(pool)),
     now: () => new Date(),
     maxCanvasRunsPerDay: config.maxCanvasRunsPerDay,
+    imageGenerationPath: config.imageGenerationPath,
     adapterLimits: {
       miaoshou: { concurrency: 1, minIntervalMs: LIVE_MIAOSHOU_MIN_INTERVAL_MS },
       llm: { concurrency: 1, minIntervalMs: 0 },
       exchangeRate: { concurrency: 1, minIntervalMs: 0 },
       canvas: { concurrency: 1, minIntervalMs: 0 },
-      staging: { concurrency: 1, minIntervalMs: 0 }
+      staging: { concurrency: 1, minIntervalMs: 0 },
+      imageGeneration: { concurrency: 1, minIntervalMs: 0 }
     }
   });
 

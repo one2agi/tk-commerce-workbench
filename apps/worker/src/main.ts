@@ -74,6 +74,7 @@ export interface HandlerRegistryInput {
   audit: Parameters<typeof createCollectHandler>[0]["audit"];
   now: () => Date;
   maxCanvasRunsPerDay: number;
+  imageGenerationPath: "canvas" | "headless";
   adapterLimits: Readonly<Record<CoreAdapterName, AdapterLimit>>;
 }
 
@@ -114,7 +115,10 @@ export function buildHandlerRegistry(input: HandlerRegistryInput): Readonly<Reco
     listing_generate: createGenerateListingHandler({ llm, repository: input.repositories.listing, audit: input.audit }),
     pricing_calculate: createPricingHandler({ repository: input.repositories.pricing }),
     template_match: createTemplateMatchHandler({ repository: input.repositories.templates }),
-    image_select: createImageSelectHandler({ repository: input.repositories.images }),
+    image_select: createImageSelectHandler({
+      repository: input.repositories.images,
+      imageGenerationPath: input.imageGenerationPath
+    }),
     canvas_generate: createCanvasHandler({ canvas, staging, store: input.store, repository: input.repositories.canvas, quota: input.quota, audit: input.audit, now: input.now, cleanupCodec: input.cleanupCodec, maxRunsPerDay: input.maxCanvasRunsPerDay }),
     final_preview: createFinalPreviewHandler({ repository: input.repositories.finalPreview }),
     exchange_rate_refresh: createExchangeRateRefreshHandler({ port: exchangeRate, repository: input.repositories.exchangeRate, audit: input.audit, now: input.now }),

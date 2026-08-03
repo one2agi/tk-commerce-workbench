@@ -353,10 +353,24 @@ export class ImageGenerationRepository {
    * Save planned prompts and enqueue one image_generate_slot job per slot.
    * Updates only slots in 'waiting_for_plan' state.
    */
-  async savePlanAndQueueSlots(input: SavePlanAndQueueSlotsInput): Promise<void> {
+  async savePlanAndQueueSlots(
+    batchId: string,
+    input: Pick<SavePlanAndQueueSlotsInput, "prompts">,
+    fence: SlotFence
+  ): Promise<void> {
     const client = await this.pool.connect();
     try {
       await client.query("BEGIN");
+
+      const activeJob = await client.query(
+        `SELECT id FROM ${schema.jobs}
+         WHERE id = $1 AND kind = 'image_prompt_plan' AND batch_key = $2
+           AND status = 'running' AND owner = $3 AND lease_token = $4
+           AND lease_expires_at > now()
+         FOR UPDATE`,
+        [fence.jobId, batchId, fence.owner, fence.leaseToken]
+      );
+      if (!activeJob.rowCount) throw commandError("lease_fence_lost");
 
       for (const prompt of input.prompts) {
         const promptHash = createHash("sha256").update(JSON.stringify(prompt)).digest("hex");
@@ -371,7 +385,7 @@ export class ImageGenerationRepository {
           [
             JSON.stringify(prompt),
             promptHash,
-            input.batchId,
+            batchId,
             prompt.slot
           ]
         );
@@ -386,9 +400,9 @@ export class ImageGenerationRepository {
              ON CONFLICT (kind, business_key) DO NOTHING`,
             [
               jobId,
-              `slot:${input.batchId}:${prompt.slot}:${promptHash}`,
-              JSON.stringify({ version: 1, batchId: input.batchId, slotId, slotNumber: prompt.slot, attempt: 0 }),
-              input.batchId
+              `slot:${batchId}:${prompt.slot}:${promptHash}`,
+              JSON.stringify({ version: 1, batchId, slotId, slotNumber: prompt.slot, attempt: 0 }),
+              batchId
             ]
           );
         }

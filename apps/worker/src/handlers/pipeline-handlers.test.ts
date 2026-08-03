@@ -742,7 +742,8 @@ describe("persisted ready-preview DAG nodes", () => {
         referenceUrls: ["https://reference.test/a.jpg"],
         candidates: [{ assetId: "a", url: "local:a", role: "primary" as const, score: 1, perceptualHash: "hash-a" }]
       })),
-      saveSelection: vi.fn(async () => true)
+      saveSelection: vi.fn(async () => true),
+      markReadyForImageGeneration: vi.fn(async () => true)
     };
     const result = await invoke(createImageSelectHandler({ repository, imageGenerationPath: "canvas" }), job("image_select", { revisionId: "rev_legacy" }));
     expect(result.next).toEqual([expect.objectContaining({ kind: "canvas_generate" })]);
@@ -755,7 +756,8 @@ describe("persisted ready-preview DAG nodes", () => {
         referenceUrls: ["https://reference.test/a.jpg"],
         candidates: [{ assetId: "a", url: "local:a", role: "primary" as const, score: 1, perceptualHash: "hash-a" }]
       })),
-      saveSelection: vi.fn(async () => true)
+      saveSelection: vi.fn(async () => true),
+      markReadyForImageGeneration: vi.fn(async () => true)
     };
     const result = await invoke(createImageSelectHandler({ repository, imageGenerationPath: "canvas" }), job("image_select", { revisionId: "rev-1" }));
     expect(repository.saveSelection).toHaveBeenCalledWith(expect.objectContaining({ assetIds: ["a"] }), execution.fence);

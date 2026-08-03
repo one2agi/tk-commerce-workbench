@@ -50,11 +50,17 @@ const references = [
   { assetId: "asset_1", localPath: "/assets/first.jpg", extension: "jpg" as const }
 ];
 
+const savePlanMock = () => vi.fn(async (
+  _batchId: string,
+  _input: { prompts: PlannedImagePromptV1[] },
+  _fence: WorkerExecutionContext["fence"]
+) => undefined);
+
 function deps(overrides: {
   planner?: ImagePromptPlannerPort;
   repository?: PlanImagesDeps["repository"];
-  audit?: { append: ReturnType<typeof vi.fn> };
-}) {
+  audit?: PlanImagesDeps["audit"];
+}): PlanImagesDeps {
   const planner = overrides.planner ?? {
     plan: vi.fn(async () => ({ prompts: validPlan(1).prompts }))
   };
@@ -69,7 +75,7 @@ function deps(overrides: {
       references,
       productFacts: {}
     })),
-    savePlanAndQueueSlots: vi.fn(async () => undefined)
+    savePlanAndQueueSlots: savePlanMock()
   };
   const audit = overrides.audit ?? { append: vi.fn(async () => undefined) };
   return { planner, repository, audit };
@@ -88,7 +94,7 @@ describe("plan-images handler", () => {
         references,
         productFacts: {}
       })),
-      savePlanAndQueueSlots: vi.fn(async () => undefined)
+      savePlanAndQueueSlots: savePlanMock()
     };
     const planner = { plan: vi.fn(async () => ({ prompts: validPlan(5).prompts })) };
     const handler = createPlanImagesHandler(deps({ planner, repository }));
@@ -115,7 +121,7 @@ describe("plan-images handler", () => {
         references,
         productFacts: {}
       })),
-      savePlanAndQueueSlots: vi.fn(async () => undefined)
+      savePlanAndQueueSlots: savePlanMock()
     };
     const planner = { plan: vi.fn(async () => ({ prompts: validPlan(4).prompts })) };
     const handler = createPlanImagesHandler(deps({ planner, repository }));
@@ -135,7 +141,7 @@ describe("plan-images handler", () => {
         references,
         productFacts: { title: "Test Product" }
       })),
-      savePlanAndQueueSlots: vi.fn(async () => undefined)
+      savePlanAndQueueSlots: savePlanMock()
     };
     const planner = { plan: vi.fn(async () => ({ prompts: validPlan(3).prompts })) };
     const handler = createPlanImagesHandler(deps({ planner, repository }));
@@ -155,7 +161,7 @@ describe("plan-images handler", () => {
         references,
         productFacts: {}
       })),
-      savePlanAndQueueSlots: vi.fn(async () => undefined)
+      savePlanAndQueueSlots: savePlanMock()
     };
     const planSpy = vi.fn(async () => ({ prompts: validPlan(3).prompts }));
     const planner = { plan: planSpy };
@@ -184,7 +190,7 @@ describe("plan-images handler", () => {
         references,
         productFacts: {}
       })),
-      savePlanAndQueueSlots: vi.fn(async () => undefined)
+      savePlanAndQueueSlots: savePlanMock()
     };
     const planner = { plan: vi.fn(async () => { throw new Error("transient failure"); }) };
     const handler = createPlanImagesHandler(deps({ planner, repository }));
@@ -203,7 +209,7 @@ describe("plan-images handler", () => {
         references,
         productFacts: {}
       })),
-      savePlanAndQueueSlots: vi.fn(async () => undefined)
+      savePlanAndQueueSlots: savePlanMock()
     };
     const planner = { plan: vi.fn(async () => ({ prompts: validPlan(3).prompts })) };
     const handler = createPlanImagesHandler(deps({ planner, repository }));

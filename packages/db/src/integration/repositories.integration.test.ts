@@ -2096,6 +2096,20 @@ describe("integration: image generation repository", () => {
     };
   }
 
+  async function claimPlanner(batchId: string) {
+    const planner = (await handle.pool.query(
+      "SELECT id FROM jobs WHERE batch_key = $1 AND kind = 'image_prompt_plan'",
+      [batchId]
+    )).rows[0]!;
+    const fence = { jobId: String(planner.id), owner: "planner-worker", leaseToken: newId("lease") };
+    await handle.pool.query(
+      `UPDATE jobs SET status = 'running', owner = $2, lease_token = $3,
+         lease_expires_at = now() + interval '5 minutes' WHERE id = $1`,
+      [fence.jobId, fence.owner, fence.leaseToken]
+    );
+    return fence;
+  }
+
   test("creates batch, planner job, and requested slots atomically and idempotently", async () => {
     const input = await fixtureStart({ idempotencyKey: `start:rev_1:abc${newId("idem")}`, outputCount: 3 });
     const first = await imageGen.createBatch(input);
@@ -2116,6 +2130,35 @@ describe("integration: image generation repository", () => {
     )).rows.map((row) => row.role)).toEqual(["primary", "detail", "lifestyle"]);
   });
 
+  test("rejects an expired planner lease before prompts or slot jobs are written", async () => {
+    const input = await fixtureStart({ idempotencyKey: `start:planner-fence:${newId("idem")}`, outputCount: 1 });
+    const { batchId } = await imageGen.createBatch(input);
+    const fence = await claimPlanner(batchId);
+    await handle.pool.query(
+      "UPDATE jobs SET lease_expires_at = now() - interval '1 second' WHERE id = $1",
+      [fence.jobId]
+    );
+
+    await expect(imageGen.savePlanAndQueueSlots(batchId, {
+      prompts: [{
+        slot: 1,
+        role: "primary",
+        prompt: "must not be persisted",
+        mustPreserve: [],
+        forbidden: []
+      }]
+    }, fence)).rejects.toMatchObject({ code: "lease_fence_lost" });
+
+    expect((await handle.pool.query(
+      "SELECT state, prompt FROM image_generation_slots WHERE batch_id = $1",
+      [batchId]
+    )).rows).toEqual([expect.objectContaining({ state: "waiting_for_plan", prompt: null })]);
+    expect((await handle.pool.query(
+      "SELECT count(*)::integer AS count FROM jobs WHERE batch_key = $1 AND kind = 'image_generate_slot'",
+      [batchId]
+    )).rows[0]?.count).toBe(0);
+  });
+
   test("atomically creates a ready generated asset and stores its id on the fenced slot", async () => {
     const input = await fixtureStart({ idempotencyKey: `start:archive:${newId("idem")}`, outputCount: 1 });
     const { batchId } = await imageGen.createBatch(input);
@@ -2123,8 +2166,7 @@ describe("integration: image generation repository", () => {
       "SELECT id, slot_number, role FROM image_generation_slots WHERE batch_id = $1",
       [batchId]
     )).rows[0]!;
-    await imageGen.savePlanAndQueueSlots({
-      batchId,
+    await imageGen.savePlanAndQueueSlots(batchId, {
       prompts: [{
         slot: Number(slot.slot_number),
         role: String(slot.role),
@@ -2132,7 +2174,7 @@ describe("integration: image generation repository", () => {
         mustPreserve: [],
         forbidden: []
       }]
-    });
+    }, await claimPlanner(batchId));
     const job = (await handle.pool.query(
       "SELECT id FROM jobs WHERE batch_key = $1 AND kind = 'image_generate_slot'",
       [batchId]
@@ -2255,7 +2297,7 @@ describe("integration: image generation repository", () => {
       mustPreserve: [] as string[],
       forbidden: [] as string[]
     }));
-    await imageGen.savePlanAndQueueSlots({ batchId, prompts: plannedPrompts });
+    await imageGen.savePlanAndQueueSlots(batchId, { prompts: plannedPrompts }, await claimPlanner(batchId));
 
     // Create a real archived asset for the succeeded slot
     const succeededAssetId = newId("succeeded_asset");
