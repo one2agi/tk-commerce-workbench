@@ -161,6 +161,13 @@ export type { ImageGenerationPort } from "./image-generation.js";
 
 export type { ImageGenerationRecipeV1 } from "./image-generation.js";
 
+export type {
+  FrozenImageGenerationRecipeV1,
+  ImageGenerateSlotJobPayloadV1,
+  ImageGenerationRoleV1,
+  ResolvedImageReferenceV1
+} from "./image-generation.js";
+
 // ----- Asset staging -----
 
 export type StagedAsset = Readonly<{
