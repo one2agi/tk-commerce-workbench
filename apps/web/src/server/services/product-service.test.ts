@@ -322,10 +322,39 @@ describe("ProductService.get imageGeneration projection", () => {
 
     const result = await new ProductService({ query }).get("prod_1");
 
+    const sql = String(query.mock.calls[0]?.[0]);
+    expect(sql).toContain("a.kind <> 'generated'");
+    expect(sql).toContain("archived.state = 'ready'");
+    expect(sql).toContain("archived.local_path IS NOT NULL");
     expect(result?.imageGeneration?.availableInputs).toHaveLength(6);
     expect(result?.imageGeneration?.selectedInputs[0]?.localUrl).toMatch(/^\/api\/v1\/assets\//);
     expect(result?.imageGeneration?.slots.find((slot) => slot.status === "succeeded")?.localUrl).toMatch(/^\/api\/v1\/assets\//);
     expect(result?.originalListing?.mainImages).not.toContain(result?.imageGeneration?.slots[0]?.localUrl);
+  });
+
+  it("preserves selected source order and never projects provider URLs as generated thumbnails", async () => {
+    const query = vi.fn().mockResolvedValue({
+      rows: [workspaceRow({
+        batch_id: "batch-order",
+        batch_state: "generating",
+        batch_category_key: "apparel",
+        batch_requested_output_count: 2,
+        batch_selected_asset_ids: ["asset-2", "asset-1"],
+        available_assets: [
+          { assetId: "asset-1", localUrl: "/api/v1/assets/asset-1/content", role: "main" },
+          { assetId: "asset-2", localUrl: "/api/v1/assets/asset-2/content", role: "detail" }
+        ],
+        slots_json: [
+          { slotId: "slot-1", slotNumber: 1, role: "main", status: "succeeded", attempt: 1, localUrl: "/api/v1/assets/generated-1/content", remoteOutputUrl: "https://provider.test/generated-1.png", error: null }
+        ]
+      })]
+    });
+
+    const result = await new ProductService({ query }).get("prod_1");
+
+    expect(result?.imageGeneration?.selectedInputs.map((item) => item.assetId)).toEqual(["asset-2", "asset-1"]);
+    expect(result?.imageGeneration?.slots[0]?.localUrl).toBe("/api/v1/assets/generated-1/content");
+    expect(result?.imageGeneration?.slots[0]?.localUrl).not.toContain("provider.test");
   });
 
   it("derives partial progress from persisted slots", async () => {

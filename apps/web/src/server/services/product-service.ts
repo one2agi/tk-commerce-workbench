@@ -311,7 +311,6 @@ function imageGenerationView(row: Record<string, unknown>): ProductWorkspaceV1["
 
   const availableAssets = Array.isArray(row.available_assets) ? row.available_assets as Array<Record<string, unknown>> : [];
   const selectedAssetIds = strings(row.batch_selected_asset_ids);
-  const selectedAssetIdSet = new Set(selectedAssetIds);
   const requestedCount = Number(row.batch_requested_output_count ?? 0);
   const batchState = optionalString(row, "batch_state") ?? "planning";
   const confirmedCategory = optionalString(row, "batch_confirmed_category");
@@ -324,12 +323,14 @@ function imageGenerationView(row: Record<string, unknown>): ProductWorkspaceV1["
     role: a.role as string | null
   }));
 
-  const selectedInputs = availableAssets
-    .filter((a) => selectedAssetIdSet.has(String(a.assetId ?? "")))
-    .map((a) => ({
+  const availableById = new Map(availableAssets.map((asset) => [String(asset.assetId ?? ""), asset]));
+  const selectedInputs = selectedAssetIds.flatMap((selectedAssetId) => {
+    const a = availableById.get(selectedAssetId);
+    return a ? [{
       assetId: assetId(String(a.assetId ?? "")),
       localUrl: String(a.localUrl ?? "")
-    }));
+    }] : [];
+  });
 
   const slots = slotsRaw.map((s) => ({
     slotId: String(s.slotId ?? ""),
@@ -344,12 +345,15 @@ function imageGenerationView(row: Record<string, unknown>): ProductWorkspaceV1["
   const successfulCount = slots.filter((s) => s.status === "succeeded").length;
 
   let state: ProductWorkspaceV1["imageGeneration"] extends null ? never : NonNullable<ProductWorkspaceV1["imageGeneration"]>["state"];
-  if (batchState === "planning") state = "planning";
-  else if (batchState === "generating") state = successfulCount === requestedCount ? "succeeded" : successfulCount > 0 ? "partial" : "generating";
-  else if (batchState === "succeeded") state = "succeeded";
-  else if (batchState === "partial") state = "partial";
+  const statuses = new Set(slots.map((slot) => slot.status));
+  if (batchState === "partial_success" || batchState === "partial") state = "partial";
+  else if (requestedCount > 0 && successfulCount === requestedCount) state = "succeeded";
+  else if (successfulCount > 0) state = "partial";
+  else if (statuses.has("running") || statuses.has("queued")) state = "generating";
+  else if (statuses.has("waiting_for_plan")) state = "planning";
+  else if (slots.length > 0 && [...statuses].every((status) => status === "failed" || status === "excluded")) state = "failed";
   else if (batchState === "failed") state = "failed";
-  else state = "not_started";
+  else state = "planning";
 
   return {
     batchId,
@@ -560,6 +564,7 @@ export class ProductService {
          WHERE a.revision_id = revision.id
            AND a.state = 'ready'
            AND a.local_path IS NOT NULL
+           AND a.kind <> 'generated'
        ) available_assets ON true
        LEFT JOIN LATERAL (
          SELECT b.id AS batch_id, b.state AS batch_state,
@@ -581,8 +586,8 @@ export class ProductService {
                'role', s.role,
                'status', s.state,
                'attempt', s.attempt,
-               'localUrl', CASE WHEN s.archived_asset_id IS NOT NULL
-                          THEN '/api/v1/assets/' || s.archived_asset_id || '/content'
+               'localUrl', CASE WHEN s.state = 'succeeded' AND archived.id IS NOT NULL
+                          THEN '/api/v1/assets/' || archived.id || '/content'
                           ELSE NULL END,
                'error', s.error
              )
@@ -591,6 +596,12 @@ export class ProductService {
            '[]'::jsonb
          ) AS items
          FROM image_generation_slots s
+         LEFT JOIN assets archived
+           ON archived.id = s.archived_asset_id
+          AND archived.revision_id = revision.id
+          AND archived.kind = 'generated'
+          AND archived.state = 'ready'
+          AND archived.local_path IS NOT NULL
          WHERE s.batch_id = latest_batch.batch_id
        ) slots ON true
        WHERE p.id = $1`,

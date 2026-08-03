@@ -227,4 +227,21 @@ describe("ImageGenerationPanel", () => {
     expect(getByRole("button", { name: "重新生成这张" })).toBeInTheDocument();
     expect(getAllByRole("button", { name: "放大" })).toHaveLength(4);
   });
+
+  it("renders a thumbnail only for a successful slot with a durable local URL", () => {
+    const model = partialModel();
+    const unsafe = {
+      ...model,
+      slots: model.slots.map((slot) => slot.slotId === "slot_4"
+        ? { ...slot, localUrl: "https://provider.test/transient.png" }
+        : slot)
+    } satisfies ImageGenerationViewV1;
+
+    const { queryByRole, getAllByRole } = render(
+      <ImageGenerationPanel productId="prod_1" revisionId="rev_1" imageGeneration={unsafe} />
+    );
+
+    expect(queryByRole("img", { name: "第 4 张" })).not.toBeInTheDocument();
+    expect(getAllByRole("img").every((image) => !image.getAttribute("src")?.includes("provider.test"))).toBe(true);
+  });
 });

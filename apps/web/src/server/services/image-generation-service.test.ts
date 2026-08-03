@@ -340,7 +340,7 @@ describe("ImageGenerationService", () => {
       const service = new ImageGenerationService(makeContext(repo, store));
 
       await expect(
-        service.acceptPartial({ productId: "prod_1", batchId: "batch_1", orderedSlotIds: ["slot_1", "slot_2"] })
+        service.acceptPartial({ productId: "prod_1", batchId: "batch_1", orderedSlotIds: [] })
       ).rejects.toMatchObject({ code: "no_successful_slots" });
     });
 
@@ -360,10 +360,58 @@ describe("ImageGenerationService", () => {
       repo.acceptPartial.mockResolvedValue(undefined);
 
       const service = new ImageGenerationService(makeContext(repo, store));
-      const result = await service.acceptPartial({ productId: "prod_1", batchId: "batch_1", orderedSlotIds: ["slot_1", "slot_2", "slot_3"] });
+      const result = await service.acceptPartial({ productId: "prod_1", batchId: "batch_1", orderedSlotIds: ["slot_1", "slot_2"] });
 
       expect(result.acceptedAssetIds).toEqual(["arch_1", "arch_2"]);
       expect(repo.acceptPartial).toHaveBeenCalledWith("batch_1", ["arch_1", "arch_2"]);
+    });
+
+    it("preserves the operator's slot order when accepting successful outputs", async () => {
+      const repo = mockRepository();
+      repo.getProductProjection.mockResolvedValue({
+        productId: "prod_1",
+        batchId: "batch_1",
+        state: "planning",
+        slots: [
+          { slotId: "slot_1", slotNumber: 1, role: "hero", state: "succeeded", attempt: 1, remoteOutputUrl: "http://provider/1.png", archivedAssetId: "arch_1", error: null },
+          { slotId: "slot_2", slotNumber: 2, role: "detail", state: "succeeded", attempt: 1, remoteOutputUrl: "http://provider/2.png", archivedAssetId: "arch_2", error: null }
+        ]
+      });
+      const service = new ImageGenerationService(makeContext(repo, mockTemplateStore()));
+
+      const result = await service.acceptPartial({
+        productId: "prod_1",
+        batchId: "batch_1",
+        orderedSlotIds: ["slot_2", "slot_1"]
+      });
+
+      expect(result.acceptedAssetIds).toEqual(["arch_2", "arch_1"]);
+      expect(repo.acceptPartial).toHaveBeenCalledWith("batch_1", ["arch_2", "arch_1"]);
+    });
+
+    it.each([
+      { orderedSlotIds: ["slot_1", "slot_1"], code: "duplicate_slot_ids" },
+      { orderedSlotIds: ["slot_foreign"], code: "slot_not_found" },
+      { orderedSlotIds: ["slot_2"], code: "slot_not_successful" }
+    ])("rejects invalid partial acceptance: $code", async ({ orderedSlotIds, code }) => {
+      const repo = mockRepository();
+      repo.getProductProjection.mockResolvedValue({
+        productId: "prod_1",
+        batchId: "batch_1",
+        state: "planning",
+        slots: [
+          { slotId: "slot_1", slotNumber: 1, role: "hero", state: "succeeded", attempt: 1, remoteOutputUrl: "http://provider/1.png", archivedAssetId: "arch_1", error: null },
+          { slotId: "slot_2", slotNumber: 2, role: "detail", state: "failed", attempt: 1, remoteOutputUrl: null, archivedAssetId: null, error: {} }
+        ]
+      });
+      const service = new ImageGenerationService(makeContext(repo, mockTemplateStore()));
+
+      await expect(service.acceptPartial({
+        productId: "prod_1",
+        batchId: "batch_1",
+        orderedSlotIds
+      })).rejects.toMatchObject({ code });
+      expect(repo.acceptPartial).not.toHaveBeenCalled();
     });
   });
 });

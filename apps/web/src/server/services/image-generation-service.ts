@@ -235,12 +235,21 @@ export class ImageGenerationService {
       throw Object.assign(new Error("batch_not_found"), { code: "batch_not_found" });
     }
 
+    if (new Set(orderedSlotIds).size !== orderedSlotIds.length) {
+      throw Object.assign(new Error("duplicate_slot_ids"), { code: "duplicate_slot_ids" });
+    }
+
+    const slotsById = new Map(projection.slots.map((slot) => [slot.slotId, slot]));
     const successfulAssets: string[] = [];
     for (const slotId of orderedSlotIds) {
-      const slot = projection.slots.find((s) => s.slotId === slotId);
-      if (slot && slot.state === "succeeded" && slot.archivedAssetId) {
-        successfulAssets.push(slot.archivedAssetId);
+      const slot = slotsById.get(slotId);
+      if (!slot) {
+        throw Object.assign(new Error("slot_not_found"), { code: "slot_not_found" });
       }
+      if (slot.state !== "succeeded" || !slot.archivedAssetId) {
+        throw Object.assign(new Error("slot_not_successful"), { code: "slot_not_successful" });
+      }
+      successfulAssets.push(slot.archivedAssetId);
     }
 
     if (successfulAssets.length === 0) {

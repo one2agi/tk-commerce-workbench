@@ -86,7 +86,7 @@ function SlotCard({
   return (
     <div className="tk-igen-slot-card" data-status={slot.status}>
       <div className="tk-igen-slot-thumb">
-        {slot.localUrl
+        {slot.status === "succeeded" && slot.localUrl
           ? <img src={slot.localUrl} alt={`第 ${slot.slotNumber} 张`} />
           : <div className="tk-igen-slot-empty" aria-label="无图片" />}
       </div>
@@ -96,7 +96,7 @@ function SlotCard({
         {slot.error && <span className="tk-igen-slot-error">{slot.error}</span>}
       </div>
       <div className="tk-igen-slot-actions">
-        {slot.localUrl && (
+        {slot.status === "succeeded" && slot.localUrl && (
           <button type="button" className="tk-igen-btn tk-igen-btn--sm" onClick={() => window.open(slot.localUrl!, "_blank")} disabled={loading}>
             放大
           </button>

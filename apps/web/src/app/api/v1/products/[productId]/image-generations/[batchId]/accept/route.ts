@@ -50,7 +50,13 @@ export function createAcceptHandler(deps: { service: ImageGenerationService }) {
     } catch (err: unknown) {
       if (err && typeof err === "object" && "code" in err) {
         const code = (err as { code: string }).code;
-        if (["batch_not_found", "no_successful_slots"].includes(code)) {
+        if ([
+          "batch_not_found",
+          "no_successful_slots",
+          "duplicate_slot_ids",
+          "slot_not_found",
+          "slot_not_successful"
+        ].includes(code)) {
           return Response.json({ error: code }, { status: 409 });
         }
       }
