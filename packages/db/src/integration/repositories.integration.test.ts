@@ -2104,6 +2104,16 @@ describe("integration: image generation repository", () => {
     expect(second.batchId).toBe(first.batchId);
     expect(await countSlotRows(first.batchId)).toBe(3);
     expect(await countPlannerJobs(first.batchId)).toBe(1);
+    const context = await imageGen.loadPlanningContext(first.batchId);
+    expect(context?.references).toEqual(input.selectedAssetIds.map((assetId) => ({
+      assetId,
+      localPath: "/assets/asset.png",
+      extension: "png"
+    })));
+    expect((await handle.pool.query(
+      "SELECT role FROM image_generation_slots WHERE batch_id = $1 ORDER BY slot_number",
+      [first.batchId]
+    )).rows.map((row) => row.role)).toEqual(["primary", "detail", "lifestyle"]);
   });
 
   test("rejects a ready asset owned by another product revision inside batch creation", async () => {

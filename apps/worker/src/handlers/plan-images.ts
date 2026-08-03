@@ -1,4 +1,9 @@
-import type { ImagePromptPlannerPort } from "@tk/contracts";
+import {
+  idempotencyKey,
+  type FrozenImageGenerationRecipeV1,
+  type ImagePromptPlannerPort,
+  type ResolvedImageReferenceV1
+} from "@tk/contracts";
 import { RetryableJobError, NeedsInputError, type WorkerHandler } from "../runtime/worker-loop.js";
 
 export interface PlanImagesDeps {
@@ -10,8 +15,8 @@ export interface PlanImagesDeps {
       revisionId: string;
       templateId: string;
       templateVersionId: string;
-      recipe: { version: number; inputCount: number; outputCount: number; roles: string[] };
-      selectedAssetIds: string[];
+      recipe: FrozenImageGenerationRecipeV1;
+      references: ResolvedImageReferenceV1[];
       productFacts: Record<string, unknown>;
     } | null>;
     savePlanAndQueueSlots(
@@ -52,10 +57,10 @@ export function createPlanImagesHandler(input: PlanImagesDeps): WorkerHandler {
     try {
       plannerResult = await input.planner.plan({
         productFacts: context.productFacts,
-        localImagePaths: context.selectedAssetIds,
-        recipe: context.recipe as { version: number; inputCount: number; outputCount: number; roles: string[] },
+        references: context.references,
+        recipe: context.recipe,
         requestedOutputCount: context.recipe.outputCount,
-        idempotencyKey: `plan:${batchId}`
+        idempotencyKey: idempotencyKey(`plan:${batchId}`)
       });
     } catch (error) {
       if (error instanceof RetryableJobError) throw error;

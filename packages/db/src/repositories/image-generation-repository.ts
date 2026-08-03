@@ -4,7 +4,7 @@
 // transitions, and idempotent re-entry via unique constraints.
 
 import { strict as assert } from "node:assert";
-import type { ImageGenerationRecipeV1, PlannedImagePromptV1 } from "@tk/contracts";
+import type { ImageGenerationRecipeV1, PlannedImagePromptV1, ResolvedImageReferenceV1 } from "@tk/contracts";
 import { schema, type DbPool } from "../schema/index.js";
 
 function newId(prefix: string): string {
@@ -58,7 +58,7 @@ export interface LoadPlanningContextResult {
   templateId: string;
   templateVersionId: string;
   recipe: ImageGenerationRecipeV1;
-  selectedAssetIds: string[];
+  references: ResolvedImageReferenceV1[];
   productFacts: Record<string, unknown>;
 }
 
@@ -253,7 +253,7 @@ export class ImageGenerationRepository {
           `INSERT INTO ${schema.imageGenerationSlots}
            (id, batch_id, slot_number, role, state, attempt, created_at, updated_at)
            VALUES ($1, $2, $3, $4, 'waiting_for_plan', 0, $5, $5)`,
-          [slotId, batchId, i + 1, recipe.roles[i] ?? "default", now]
+          [slotId, batchId, i + 1, recipe.roles[i]?.key ?? "default", now]
         );
       }
 
@@ -297,6 +297,32 @@ export class ImageGenerationRepository {
     );
     if (!batch.rowCount || batch.rowCount === 0) return null;
     const row = batch.rows[0];
+    const selectedAssetIds: string[] = Array.isArray(row.selected_asset_ids)
+      ? row.selected_asset_ids.map(String)
+      : [];
+    const assets = await this.pool.query<{
+      id: string;
+      local_path: string | null;
+      extension: string | null;
+      state: string;
+    }>(
+      `SELECT id, local_path, extension, state
+       FROM ${schema.assets}
+       WHERE id = ANY($1::text[])
+         AND product_id = $2
+         AND revision_id = $3`,
+      [selectedAssetIds, row.product_id, row.revision_id]
+    );
+    const byId = new Map(assets.rows.map((asset) => [asset.id, asset]));
+    const references = selectedAssetIds.map((assetId): ResolvedImageReferenceV1 => {
+      const asset = byId.get(assetId);
+      const extension = asset?.extension?.toLowerCase();
+      if (!asset || asset.state !== "ready" || !asset.local_path ||
+          (extension !== "png" && extension !== "jpg" && extension !== "jpeg")) {
+        throw commandError("asset_not_ready");
+      }
+      return Object.freeze({ assetId, localPath: asset.local_path, extension });
+    });
     return {
       batchId: row.id,
       productId: row.product_id,
@@ -304,7 +330,7 @@ export class ImageGenerationRepository {
       templateId: row.template_id,
       templateVersionId: row.template_version_id,
       recipe: row.recipe_snapshot as ImageGenerationRecipeV1,
-      selectedAssetIds: row.selected_asset_ids as string[],
+      references,
       productFacts: row.product_facts_snapshot as Record<string, unknown>
     };
   }

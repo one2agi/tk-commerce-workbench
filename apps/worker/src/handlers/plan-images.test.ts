@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
-import type { ImagePromptPlannerPort, PlannedImagePromptV1 } from "@tk/contracts";
+import type { FrozenImageGenerationRecipeV1, ImagePromptPlannerPort, PlannedImagePromptV1 } from "@tk/contracts";
 import type { ClaimedWorkerJob, WorkerExecutionContext } from "../runtime/worker-loop.js";
-import { createPlanImagesHandler } from "./plan-images.js";
+import { createPlanImagesHandler, type PlanImagesDeps } from "./plan-images.js";
 
 const job = (batchId: string): ClaimedWorkerJob => ({
   jobId: `job-${batchId}`,
@@ -32,12 +32,27 @@ function validPlan(requestedOutputCount: number): { prompts: PlannedImagePromptV
   return { prompts };
 }
 
+function recipe(outputCount: number): FrozenImageGenerationRecipeV1 {
+  return {
+    version: 1,
+    inputCount: 3,
+    outputCount,
+    mustPreserve: ["product identity"],
+    visualDirection: "clean marketplace photography",
+    forbidden: ["brand logos"],
+    roles: [{ key: "default", instruction: "show the product clearly" }],
+    providerParameters: {}
+  };
+}
+
+const references = [
+  { assetId: "asset_2", localPath: "/assets/second.png", extension: "png" as const },
+  { assetId: "asset_1", localPath: "/assets/first.jpg", extension: "jpg" as const }
+];
+
 function deps(overrides: {
   planner?: ImagePromptPlannerPort;
-  repository?: {
-    loadPlanningContext: ReturnType<typeof vi.fn>;
-    savePlanAndQueueSlots: ReturnType<typeof vi.fn>;
-  };
+  repository?: PlanImagesDeps["repository"];
   audit?: { append: ReturnType<typeof vi.fn> };
 }) {
   const planner = overrides.planner ?? {
@@ -50,8 +65,8 @@ function deps(overrides: {
       revisionId: "rev_1",
       templateId: "tmpl_1",
       templateVersionId: "tmpl_v_1",
-      recipe: { version: 1, inputCount: 3, outputCount: 3, roles: ["default"] },
-      selectedAssetIds: ["asset_1", "asset_2", "asset_3"],
+      recipe: recipe(3),
+      references,
       productFacts: {}
     })),
     savePlanAndQueueSlots: vi.fn(async () => undefined)
@@ -69,8 +84,8 @@ describe("plan-images handler", () => {
         revisionId: "rev_1",
         templateId: "tmpl_1",
         templateVersionId: "tmpl_v_1",
-        recipe: { version: 1, inputCount: 3, outputCount: 5, roles: ["default"] },
-        selectedAssetIds: ["asset_1", "asset_2", "asset_3"],
+        recipe: recipe(5),
+        references,
         productFacts: {}
       })),
       savePlanAndQueueSlots: vi.fn(async () => undefined)
@@ -79,12 +94,12 @@ describe("plan-images handler", () => {
     const handler = createPlanImagesHandler(deps({ planner, repository }));
     const result = await handler(job("batch_1"), execution);
     // Verify savePlanAndQueueSlots was called with correct args via mock.calls
-    const calls = (repository.savePlanAndQueueSlots as ReturnType<typeof vi.fn>).mock.calls;
+    const calls = repository.savePlanAndQueueSlots.mock.calls;
     expect(calls).toHaveLength(1);
-    expect(calls[0][0]).toBe("batch_1");
-    expect(calls[0][1]).toMatchObject({ prompts: expect.any(Array) });
-    expect((calls[0][1] as { prompts: unknown[] }).prompts).toHaveLength(5);
-    expect(calls[0][2]).toEqual(execution.fence);
+    expect(calls[0]?.[0]).toBe("batch_1");
+    expect(calls[0]?.[1]).toMatchObject({ prompts: expect.any(Array) });
+    expect((calls[0]?.[1] as { prompts: unknown[] } | undefined)?.prompts).toHaveLength(5);
+    expect(calls[0]?.[2]).toEqual(execution.fence);
     expect(result.next).toHaveLength(0); // repository transaction owns slot enqueueing
   });
 
@@ -96,8 +111,8 @@ describe("plan-images handler", () => {
         revisionId: "rev_5",
         templateId: "tmpl_1",
         templateVersionId: "tmpl_v_1",
-        recipe: { version: 1, inputCount: 3, outputCount: 5, roles: ["default"] },
-        selectedAssetIds: ["asset_1", "asset_2", "asset_3"],
+        recipe: recipe(5),
+        references,
         productFacts: {}
       })),
       savePlanAndQueueSlots: vi.fn(async () => undefined)
@@ -116,8 +131,8 @@ describe("plan-images handler", () => {
         revisionId: "rev_ctx",
         templateId: "tmpl_ctx",
         templateVersionId: "tmpl_v_ctx",
-        recipe: { version: 1, inputCount: 3, outputCount: 3, roles: ["default"] },
-        selectedAssetIds: ["asset_1"],
+        recipe: recipe(3),
+        references,
         productFacts: { title: "Test Product" }
       })),
       savePlanAndQueueSlots: vi.fn(async () => undefined)
@@ -136,8 +151,8 @@ describe("plan-images handler", () => {
         revisionId: "rev_idem",
         templateId: "tmpl_idem",
         templateVersionId: "tmpl_v_idem",
-        recipe: { version: 1, inputCount: 3, outputCount: 3, roles: ["default"] },
-        selectedAssetIds: ["asset_1"],
+        recipe: recipe(3),
+        references,
         productFacts: {}
       })),
       savePlanAndQueueSlots: vi.fn(async () => undefined)
@@ -147,7 +162,13 @@ describe("plan-images handler", () => {
     const handler = createPlanImagesHandler(deps({ planner, repository }));
     await handler(job("batch_idem"), execution);
     expect(planSpy).toHaveBeenCalledWith(
-      expect.objectContaining({ idempotencyKey: "plan:batch_idem" })
+      expect.objectContaining({
+        idempotencyKey: "plan:batch_idem",
+        references: [
+          { assetId: "asset_2", localPath: "/assets/second.png", extension: "png" },
+          { assetId: "asset_1", localPath: "/assets/first.jpg", extension: "jpg" }
+        ]
+      })
     );
   });
 
@@ -159,8 +180,8 @@ describe("plan-images handler", () => {
         revisionId: "rev_retry",
         templateId: "tmpl_retry",
         templateVersionId: "tmpl_v_retry",
-        recipe: { version: 1, inputCount: 3, outputCount: 3, roles: ["default"] },
-        selectedAssetIds: ["asset_1"],
+        recipe: recipe(3),
+        references,
         productFacts: {}
       })),
       savePlanAndQueueSlots: vi.fn(async () => undefined)
@@ -178,8 +199,8 @@ describe("plan-images handler", () => {
         revisionId: "rev_empty",
         templateId: "tmpl_empty",
         templateVersionId: "tmpl_v_empty",
-        recipe: { version: 1, inputCount: 3, outputCount: 3, roles: ["default"] },
-        selectedAssetIds: ["asset_1"],
+        recipe: recipe(3),
+        references,
         productFacts: {}
       })),
       savePlanAndQueueSlots: vi.fn(async () => undefined)
