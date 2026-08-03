@@ -46,6 +46,12 @@ const defaultPrompt: PlannedImagePromptV1 = {
   forbidden: []
 };
 
+const defaultReferences = [{
+  assetId: "asset_source",
+  localPath: "/data/assets/source.png",
+  extension: "png" as const
+}];
+
 type SlotRepo = Parameters<typeof createGenerateImageSlotHandler>[0]["repository"];
 
 function buildHandler(
@@ -69,20 +75,19 @@ describe("createGenerateImageSlotHandler", () => {
       remoteUrl: url, finalUrl: url, sha256: `sha-${url.split("/").at(-1)}`,
       path: `/data/assets/${url.split("/").at(-1)}`, extension: "png", bytes: 1024, width: 1024, height: 1024
     }));
-    const markSucceeded = vi.fn(async () => true);
+    const archiveSlotOutput = vi.fn(async () => "asset_generated");
     const repository: SlotRepo = {
-      loadSlotExecution: vi.fn(async () => ({ slotId: "slot_1", batchId: "batch_1", slotNumber: 1, role: "default", prompt: defaultPrompt, state: "queued", attempt: 0, remoteTaskId: "remote_1", remoteOutputUrl: null, error: null })),
+      loadSlotExecution: vi.fn(async () => ({ slotId: "slot_1", batchId: "batch_1", slotNumber: 1, role: "default", prompt: defaultPrompt, state: "queued", attempt: 0, remoteTaskId: "remote_1", remoteOutputUrl: null, error: null, references: defaultReferences, parameters: {} })),
       saveRemoteTask: vi.fn(async () => true),
-      markSlotSucceeded: markSucceeded,
+      archiveSlotOutput,
       markSlotFailed: vi.fn(async () => true),
-      saveSlotQualityMetadata: vi.fn(async () => undefined)
     };
     const handler = buildHandler(provider, { archive: storeArchive }, repository, { append: vi.fn(async () => undefined) });
     await handler(slotJob("batch_1", "slot_1", 1, "remote_1"), execution());
     expect(provider.submit).not.toHaveBeenCalled();
     expect(fetchMock).toHaveBeenCalledWith({ remoteTaskId: "remote_1" });
     expect(storeArchive).toHaveBeenCalled();
-    expect(markSucceeded).toHaveBeenCalled();
+    expect(archiveSlotOutput).toHaveBeenCalled();
   });
 
   it("does not mark success when archive validation fails", async () => {
@@ -92,17 +97,16 @@ describe("createGenerateImageSlotHandler", () => {
       fetch: fetchMock
     } as unknown as ImageGenerationPort;
     const storeArchive = vi.fn(async () => { throw new Error("unsupported image"); });
-    const markSucceeded = vi.fn(async () => true);
+    const archiveSlotOutput = vi.fn(async () => "asset_generated");
     const repository: SlotRepo = {
-      loadSlotExecution: vi.fn(async () => ({ slotId: "slot_1", batchId: "batch_1", slotNumber: 1, role: "default", prompt: defaultPrompt, state: "queued", attempt: 0, remoteTaskId: "remote_1", remoteOutputUrl: null, error: null })),
+      loadSlotExecution: vi.fn(async () => ({ slotId: "slot_1", batchId: "batch_1", slotNumber: 1, role: "default", prompt: defaultPrompt, state: "queued", attempt: 0, remoteTaskId: "remote_1", remoteOutputUrl: null, error: null, references: defaultReferences, parameters: {} })),
       saveRemoteTask: vi.fn(async () => true),
-      markSlotSucceeded: markSucceeded,
+      archiveSlotOutput,
       markSlotFailed: vi.fn(async () => true),
-      saveSlotQualityMetadata: vi.fn(async () => undefined)
     };
     const handler = buildHandler(provider, { archive: storeArchive }, repository, { append: vi.fn(async () => undefined) });
     await expect(handler(slotJob("batch_1", "slot_1", 1, "remote_1"), execution())).rejects.toBeDefined();
-    expect(markSucceeded).not.toHaveBeenCalled();
+    expect(archiveSlotOutput).not.toHaveBeenCalled();
   });
 
   it("never resubmits after submit intent has an unknown outcome", async () => {
@@ -112,11 +116,10 @@ describe("createGenerateImageSlotHandler", () => {
       fetch: vi.fn(async () => ({ state: "pending" as const }))
     } as unknown as ImageGenerationPort;
     const repository: SlotRepo = {
-      loadSlotExecution: vi.fn(async () => ({ slotId: "slot_1", batchId: "batch_1", slotNumber: 1, role: "default", prompt: defaultPrompt, state: "queued", attempt: 0, remoteTaskId: null, remoteOutputUrl: null, error: null })),
+      loadSlotExecution: vi.fn(async () => ({ slotId: "slot_1", batchId: "batch_1", slotNumber: 1, role: "default", prompt: defaultPrompt, state: "queued", attempt: 0, remoteTaskId: null, remoteOutputUrl: null, error: null, references: defaultReferences, parameters: {} })),
       saveRemoteTask: vi.fn(async () => true),
-      markSlotSucceeded: vi.fn(async () => true),
+      archiveSlotOutput: vi.fn(async () => "asset_generated"),
       markSlotFailed: vi.fn(async () => true),
-      saveSlotQualityMetadata: vi.fn(async () => undefined)
     };
     const handler = buildHandler(provider, { archive: vi.fn(async () => ({ remoteUrl: "", finalUrl: "", sha256: "x", path: "/x", extension: "png", bytes: 1, width: 1, height: 1 })) }, repository, { append: vi.fn(async () => undefined) });
     await expect(
@@ -131,11 +134,10 @@ describe("createGenerateImageSlotHandler", () => {
       fetch: vi.fn(async () => ({ state: "pending" as const }))
     } as unknown as ImageGenerationPort;
     const repository: SlotRepo = {
-      loadSlotExecution: vi.fn(async () => ({ slotId: "slot_1", batchId: "batch_1", slotNumber: 1, role: "default", prompt: defaultPrompt, state: "queued", attempt: 0, remoteTaskId: null, remoteOutputUrl: null, error: null })),
+      loadSlotExecution: vi.fn(async () => ({ slotId: "slot_1", batchId: "batch_1", slotNumber: 1, role: "default", prompt: defaultPrompt, state: "queued", attempt: 0, remoteTaskId: null, remoteOutputUrl: null, error: null, references: defaultReferences, parameters: {} })),
       saveRemoteTask: vi.fn(async () => true),
-      markSlotSucceeded: vi.fn(async () => true),
+      archiveSlotOutput: vi.fn(async () => "asset_generated"),
       markSlotFailed: vi.fn(async () => true),
-      saveSlotQualityMetadata: vi.fn(async () => undefined)
     };
     const handler = buildHandler(provider, { archive: vi.fn(async () => ({ remoteUrl: "", finalUrl: "", sha256: "x", path: "/x", extension: "png", bytes: 1, width: 1, height: 1 })) }, repository, { append: vi.fn(async () => undefined) });
     await expect(handler(slotJob(), execution())).rejects.toBeInstanceOf(RetryableJobError);
@@ -151,11 +153,10 @@ describe("createGenerateImageSlotHandler", () => {
       fetch: vi.fn(async () => ({ state: "succeeded" as const, outputUrl: "https://provider.test/out.png" }))
     } as unknown as ImageGenerationPort;
     const repository: SlotRepo = {
-      loadSlotExecution: vi.fn(async () => ({ slotId: "slot_1", batchId: "batch_1", slotNumber: 1, role: "default", prompt: defaultPrompt, state: "queued", attempt: 0, remoteTaskId: null, remoteOutputUrl: null, error: null })),
+      loadSlotExecution: vi.fn(async () => ({ slotId: "slot_1", batchId: "batch_1", slotNumber: 1, role: "default", prompt: defaultPrompt, state: "queued", attempt: 0, remoteTaskId: null, remoteOutputUrl: null, error: null, references: defaultReferences, parameters: {} })),
       saveRemoteTask: vi.fn(async () => true),
-      markSlotSucceeded: vi.fn(async () => true),
+      archiveSlotOutput: vi.fn(async () => "asset_generated"),
       markSlotFailed: vi.fn(async () => true),
-      saveSlotQualityMetadata: vi.fn(async () => undefined)
     };
     const handler = buildHandler(provider, { archive: vi.fn(async () => ({ remoteUrl: "", finalUrl: "", sha256: "x", path: "/x", extension: "png", bytes: 1, width: 1, height: 1 })) }, repository, { append: vi.fn(async () => undefined) });
     await handler(slotJob(), execution({ persistRemoteTask }));
@@ -171,20 +172,26 @@ describe("createGenerateImageSlotHandler", () => {
     const storeArchive = vi.fn(async (url: string) => ({
       remoteUrl: url, finalUrl: url, sha256: "sha-out", path: "/data/assets/out.png", extension: "png", bytes: 1024, width: 1024, height: 1024
     }));
-    const markSucceeded = vi.fn(async () => true);
+    const archiveSlotOutput = vi.fn(async () => "asset_generated");
     const repository: SlotRepo = {
-      loadSlotExecution: vi.fn(async () => ({ slotId: "slot_1", batchId: "batch_1", slotNumber: 1, role: "default", prompt: defaultPrompt, state: "queued", attempt: 0, remoteTaskId: null, remoteOutputUrl: null, error: null })),
+      loadSlotExecution: vi.fn(async () => ({ slotId: "slot_1", batchId: "batch_1", slotNumber: 1, role: "default", prompt: defaultPrompt, state: "queued", attempt: 0, remoteTaskId: null, remoteOutputUrl: null, error: null, references: defaultReferences, parameters: { size: "1024x1024" } })),
       saveRemoteTask: vi.fn(async () => true),
-      markSlotSucceeded: markSucceeded,
       markSlotFailed: vi.fn(async () => true),
-      saveSlotQualityMetadata: vi.fn(async () => undefined)
+      archiveSlotOutput
     };
     const handler = buildHandler(provider, { archive: storeArchive }, repository, { append: vi.fn(async () => undefined) });
     await handler(slotJob(), execution());
-    expect(provider.submit).toHaveBeenCalled();
+    expect(provider.submit).toHaveBeenCalledWith(expect.objectContaining({
+      references: defaultReferences,
+      parameters: { size: "1024x1024" }
+    }));
     expect(fetchMock).not.toHaveBeenCalled();
     expect(storeArchive).toHaveBeenCalledWith("https://provider.test/out.png");
-    expect(markSucceeded).toHaveBeenCalled();
+    expect(archiveSlotOutput).toHaveBeenCalledWith(
+      "slot_1",
+      expect.objectContaining({ path: "/data/assets/out.png", sha256: "sha-out" }),
+      expect.any(Object)
+    );
   });
 
   it("requires non-zero dimensions after archival", async () => {
@@ -197,17 +204,16 @@ describe("createGenerateImageSlotHandler", () => {
       remoteUrl: "https://provider.test/out.png", finalUrl: "https://provider.test/out.png",
       sha256: "sha-test", path: "/data/assets/out.png", extension: "png", bytes: 1024, width: 0, height: 0
     }));
-    const markSucceeded = vi.fn(async () => true);
+    const archiveSlotOutput = vi.fn(async () => "asset_generated");
     const repository: SlotRepo = {
-      loadSlotExecution: vi.fn(async () => ({ slotId: "slot_1", batchId: "batch_1", slotNumber: 1, role: "default", prompt: defaultPrompt, state: "queued", attempt: 0, remoteTaskId: "remote_1", remoteOutputUrl: null, error: null })),
+      loadSlotExecution: vi.fn(async () => ({ slotId: "slot_1", batchId: "batch_1", slotNumber: 1, role: "default", prompt: defaultPrompt, state: "queued", attempt: 0, remoteTaskId: "remote_1", remoteOutputUrl: null, error: null, references: defaultReferences, parameters: {} })),
       saveRemoteTask: vi.fn(async () => true),
-      markSlotSucceeded: markSucceeded,
+      archiveSlotOutput,
       markSlotFailed: vi.fn(async () => true),
-      saveSlotQualityMetadata: vi.fn(async () => undefined)
     };
     const handler = buildHandler(provider, { archive: storeArchive }, repository, { append: vi.fn(async () => undefined) });
     await expect(handler(slotJob("batch_1", "slot_1", 1, "remote_1"), execution())).rejects.toMatchObject({ code: "image_invalid_dimensions" });
-    expect(markSucceeded).not.toHaveBeenCalled();
+    expect(archiveSlotOutput).not.toHaveBeenCalled();
   });
 
   it("rejects non-PNG and non-JPEG after archival", async () => {
@@ -220,20 +226,19 @@ describe("createGenerateImageSlotHandler", () => {
       remoteUrl: "https://provider.test/out.gif", finalUrl: "https://provider.test/out.gif",
       sha256: "sha-test", path: "/data/assets/out.gif", extension: "gif", bytes: 1024, width: 1024, height: 1024
     }));
-    const markSucceeded = vi.fn(async () => true);
+    const archiveSlotOutput = vi.fn(async () => "asset_generated");
     const repository: SlotRepo = {
-      loadSlotExecution: vi.fn(async () => ({ slotId: "slot_1", batchId: "batch_1", slotNumber: 1, role: "default", prompt: defaultPrompt, state: "queued", attempt: 0, remoteTaskId: "remote_1", remoteOutputUrl: null, error: null })),
+      loadSlotExecution: vi.fn(async () => ({ slotId: "slot_1", batchId: "batch_1", slotNumber: 1, role: "default", prompt: defaultPrompt, state: "queued", attempt: 0, remoteTaskId: "remote_1", remoteOutputUrl: null, error: null, references: defaultReferences, parameters: {} })),
       saveRemoteTask: vi.fn(async () => true),
-      markSlotSucceeded: markSucceeded,
+      archiveSlotOutput,
       markSlotFailed: vi.fn(async () => true),
-      saveSlotQualityMetadata: vi.fn(async () => undefined)
     };
     const handler = buildHandler(provider, { archive: storeArchive }, repository, { append: vi.fn(async () => undefined) });
     await expect(handler(slotJob("batch_1", "slot_1", 1, "remote_1"), execution())).rejects.toMatchObject({ code: "image_unsupported_format" });
-    expect(markSucceeded).not.toHaveBeenCalled();
+    expect(archiveSlotOutput).not.toHaveBeenCalled();
   });
 
-  it("saves SHA-256 quality metadata after successful archive", async () => {
+  it("passes SHA-256 and dimensions into atomic asset persistence", async () => {
     const fetchMock = vi.fn(async () => ({ state: "succeeded" as const, outputUrl: "https://provider.test/out.png" }));
     const provider: ImageGenerationPort = {
       submit: vi.fn(async () => { throw new Error("submit must not be called"); }),
@@ -243,24 +248,23 @@ describe("createGenerateImageSlotHandler", () => {
       remoteUrl: url, finalUrl: url, sha256: `sha-${url.split("/").at(-1)}`,
       path: `/data/assets/${url.split("/").at(-1)}`, extension: "png", bytes: 1024, width: 1024, height: 1024
     }));
-    const saveQualityMetadata = vi.fn(async () => undefined);
+    const archiveSlotOutput = vi.fn(async () => "asset_generated");
     const repository: SlotRepo = {
-      loadSlotExecution: vi.fn(async () => ({ slotId: "slot_1", batchId: "batch_1", slotNumber: 1, role: "default", prompt: defaultPrompt, state: "queued", attempt: 0, remoteTaskId: "remote_1", remoteOutputUrl: null, error: null })),
+      loadSlotExecution: vi.fn(async () => ({ slotId: "slot_1", batchId: "batch_1", slotNumber: 1, role: "default", prompt: defaultPrompt, state: "queued", attempt: 0, remoteTaskId: "remote_1", remoteOutputUrl: null, error: null, references: defaultReferences, parameters: {} })),
       saveRemoteTask: vi.fn(async () => true),
-      markSlotSucceeded: vi.fn(async () => true),
+      archiveSlotOutput,
       markSlotFailed: vi.fn(async () => true),
-      saveSlotQualityMetadata: saveQualityMetadata
     };
     const handler = buildHandler(provider, { archive: storeArchive }, repository, { append: vi.fn(async () => undefined) });
     await handler(slotJob("batch_1", "slot_1", 1, "remote_1"), execution());
-    expect(saveQualityMetadata).toHaveBeenCalledWith(
+    expect(archiveSlotOutput).toHaveBeenCalledWith(
       "slot_1",
-      expect.objectContaining({ sha256: expect.any(String) }),
+      expect.objectContaining({ sha256: "sha-out.png", width: 1024, height: 1024 }),
       expect.any(Object)
     );
   });
 
-  it("marks duplicate output as failed with image_output_duplicate code", async () => {
+  it("fails closed when atomic asset persistence loses the slot fence", async () => {
     const fetchMock = vi.fn(async () => ({ state: "succeeded" as const, outputUrl: "https://provider.test/out.png" }));
     const provider: ImageGenerationPort = {
       submit: vi.fn(async () => { throw new Error("submit must not be called"); }),
@@ -270,17 +274,14 @@ describe("createGenerateImageSlotHandler", () => {
       remoteUrl: url, finalUrl: url, sha256: `sha-${url.split("/").at(-1)}`,
       path: `/data/assets/${url.split("/").at(-1)}`, extension: "png", bytes: 1024, width: 1024, height: 1024
     }));
-    const markFailed = vi.fn(async () => true);
     const repository: SlotRepo = {
-      loadSlotExecution: vi.fn(async () => ({ slotId: "slot_1", batchId: "batch_1", slotNumber: 1, role: "default", prompt: defaultPrompt, state: "queued", attempt: 0, remoteTaskId: "remote_1", remoteOutputUrl: null, error: null })),
+      loadSlotExecution: vi.fn(async () => ({ slotId: "slot_1", batchId: "batch_1", slotNumber: 1, role: "default", prompt: defaultPrompt, state: "queued", attempt: 0, remoteTaskId: "remote_1", remoteOutputUrl: null, error: null, references: defaultReferences, parameters: {} })),
       saveRemoteTask: vi.fn(async () => true),
-      markSlotSucceeded: vi.fn(async () => true),
-      markSlotFailed: markFailed,
-      saveSlotQualityMetadata: vi.fn(async () => { throw new Error("duplicate sha256 detected"); })
+      archiveSlotOutput: vi.fn(async () => null),
+      markSlotFailed: vi.fn(async () => true),
     };
     const handler = buildHandler(provider, { archive: storeArchive }, repository, { append: vi.fn(async () => undefined) });
-    await expect(handler(slotJob("batch_1", "slot_1", 1, "remote_1"), execution())).rejects.toMatchObject({ code: "image_output_duplicate" });
-    expect(markFailed).toHaveBeenCalled();
+    await expect(handler(slotJob("batch_1", "slot_1", 1, "remote_1"), execution())).rejects.toMatchObject({ code: "slot_write_conflict" });
   });
 
   it("recovers after intent by polling without resubmitting", async () => {
@@ -289,11 +290,10 @@ describe("createGenerateImageSlotHandler", () => {
       fetch: vi.fn(async () => ({ state: "succeeded" as const, outputUrl: "https://provider.test/recovered.png" }))
     } as unknown as ImageGenerationPort;
     const repository: SlotRepo = {
-      loadSlotExecution: vi.fn(async () => ({ slotId: "slot_1", batchId: "batch_1", slotNumber: 1, role: "default", prompt: defaultPrompt, state: "queued", attempt: 0, remoteTaskId: null, remoteOutputUrl: null, error: null })),
+      loadSlotExecution: vi.fn(async () => ({ slotId: "slot_1", batchId: "batch_1", slotNumber: 1, role: "default", prompt: defaultPrompt, state: "queued", attempt: 0, remoteTaskId: null, remoteOutputUrl: null, error: null, references: defaultReferences, parameters: {} })),
       saveRemoteTask: vi.fn(async () => true),
-      markSlotSucceeded: vi.fn(async () => true),
+      archiveSlotOutput: vi.fn(async () => "asset_generated"),
       markSlotFailed: vi.fn(async () => true),
-      saveSlotQualityMetadata: vi.fn(async () => undefined)
     };
     const handler = buildHandler(provider, { archive: vi.fn(async () => ({ remoteUrl: "", finalUrl: "", sha256: "x", path: "/x", extension: "png", bytes: 1, width: 1, height: 1 })) }, repository, { append: vi.fn(async () => undefined) });
     await expect(handler(slotJob("batch_1", "slot_1", 1, null, true), execution())).rejects.toMatchObject({ code: "image_submission_result_unknown" });
@@ -310,11 +310,10 @@ describe("createGenerateImageSlotHandler", () => {
       remoteUrl: url, finalUrl: url, sha256: "sha-polled", path: "/data/assets/polled.png", extension: "png", bytes: 1024, width: 1024, height: 1024
     }));
     const repository: SlotRepo = {
-      loadSlotExecution: vi.fn(async () => ({ slotId: "slot_1", batchId: "batch_1", slotNumber: 1, role: "default", prompt: defaultPrompt, state: "queued", attempt: 0, remoteTaskId: "remote_persisted", remoteOutputUrl: null, error: null })),
+      loadSlotExecution: vi.fn(async () => ({ slotId: "slot_1", batchId: "batch_1", slotNumber: 1, role: "default", prompt: defaultPrompt, state: "queued", attempt: 0, remoteTaskId: "remote_persisted", remoteOutputUrl: null, error: null, references: defaultReferences, parameters: {} })),
       saveRemoteTask: vi.fn(async () => true),
-      markSlotSucceeded: vi.fn(async () => true),
+      archiveSlotOutput: vi.fn(async () => "asset_generated"),
       markSlotFailed: vi.fn(async () => true),
-      saveSlotQualityMetadata: vi.fn(async () => undefined)
     };
     const handler = buildHandler(provider, { archive: storeArchive }, repository, { append: vi.fn(async () => undefined) });
     await handler(slotJob("batch_1", "slot_1", 1, "remote_persisted"), execution());
@@ -333,11 +332,10 @@ describe("createGenerateImageSlotHandler", () => {
       fetch: vi.fn(async () => ({ state: "succeeded" as const, outputUrl: "https://provider.test/restart.png" }))
     } as unknown as ImageGenerationPort;
     const repository: SlotRepo = {
-      loadSlotExecution: vi.fn(async () => ({ slotId: "slot_1", batchId: "batch_1", slotNumber: 1, role: "default", prompt: defaultPrompt, state: "queued", attempt: 0, remoteTaskId: null, remoteOutputUrl: null, error: null })),
+      loadSlotExecution: vi.fn(async () => ({ slotId: "slot_1", batchId: "batch_1", slotNumber: 1, role: "default", prompt: defaultPrompt, state: "queued", attempt: 0, remoteTaskId: null, remoteOutputUrl: null, error: null, references: defaultReferences, parameters: {} })),
       saveRemoteTask: vi.fn(async () => true),
-      markSlotSucceeded: vi.fn(async () => true),
+      archiveSlotOutput: vi.fn(async () => "asset_generated"),
       markSlotFailed: vi.fn(async () => true),
-      saveSlotQualityMetadata: vi.fn(async () => undefined)
     };
     const handler = buildHandler(provider, { archive: vi.fn(async () => ({ remoteUrl: "", finalUrl: "", sha256: "x", path: "/x", extension: "png", bytes: 1, width: 1, height: 1 })) }, repository, { append: vi.fn(async () => undefined) });
     await handler(slotJob(), execution());

@@ -1,4 +1,4 @@
-import { idempotencyKey, type ImageGenerationPort, type PlannedImagePromptV1 } from "@tk/contracts";
+import { idempotencyKey, type ImageGenerationPort, type PlannedImagePromptV1, type ResolvedImageReferenceV1 } from "@tk/contracts";
 import { NeedsInputError, RetryableJobError, type WorkerHandler } from "../runtime/worker-loop.js";
 
 export interface SlotRepository {
@@ -16,16 +16,17 @@ export interface SlotRepository {
     remoteTaskId: string | null;
     remoteOutputUrl: string | null;
     error: unknown;
+    references: readonly ResolvedImageReferenceV1[];
+    parameters: Readonly<Record<string, unknown>>;
   } | null>;
 
   saveRemoteTask(slotId: string, fence: SlotFence, remoteTaskId: string): Promise<boolean>;
-  markSlotSucceeded(slotId: string, archivedAssetId: string, fence: SlotFence): Promise<boolean>;
   markSlotFailed(slotId: string, error: unknown, fence: SlotFence): Promise<boolean>;
-  saveSlotQualityMetadata(
+  archiveSlotOutput(
     slotId: string,
-    metadata: { sha256: string; perceptualHash?: string; duplicateWarning?: boolean },
+    archived: Awaited<ReturnType<ContentAddressedStore["archive"]>>,
     fence: SlotFence
-  ): Promise<void>;
+  ): Promise<string | null>;
 }
 
 export interface SlotFence {
@@ -63,6 +64,33 @@ function assertImageValid(archived: { width: number; height: number; extension: 
   if (!SUPPORTED_EXTENSIONS.has(archived.extension.toLowerCase())) {
     throw new NeedsInputError("image_unsupported_format", "Only PNG and JPEG formats are supported");
   }
+}
+
+async function archiveAndPersist(input: GenerateImageSlotDeps, options: {
+  slotId: string;
+  outputUrl: string;
+  fence: SlotFence;
+  execution: { assertLease(): void };
+}): Promise<void> {
+  options.execution.assertLease();
+  const archived = await input.store.archive(options.outputUrl);
+  assertImageValid(archived);
+  options.execution.assertLease();
+  const archivedAssetId = await input.repository.archiveSlotOutput(
+    options.slotId,
+    archived,
+    options.fence
+  );
+  if (!archivedAssetId) {
+    throw new NeedsInputError("slot_write_conflict", "Slot state changed during archive persistence; retry");
+  }
+  await input.audit.append({
+    action: "image_slot.succeeded",
+    targetKind: "image_generation_slot",
+    targetId: options.slotId,
+    payload: { archivedAssetId, width: archived.width, height: archived.height },
+    redacted: true
+  });
 }
 
 export function createGenerateImageSlotHandler(input: GenerateImageSlotDeps): WorkerHandler {
@@ -118,42 +146,7 @@ export function createGenerateImageSlotHandler(input: GenerateImageSlotDeps): Wo
         throw result.failure;
       }
 
-      // Succeeded — archive the output
-      const outputUrl = result.outputUrl;
-      execution.assertLease();
-      const archived = await input.store.archive(outputUrl);
-      assertImageValid(archived);
-
-      // Save quality metadata (SHA-256, perceptual hash, duplicate warnings)
-      try {
-        await input.repository.saveSlotQualityMetadata(
-          slotId,
-          { sha256: archived.sha256 },
-          fence
-        );
-      } catch (err) {
-        // Duplicate SHA-256 detected across sibling slots
-        const msg = err instanceof Error ? err.message : String(err);
-        if (/duplicate|sha.?256/i.test(msg)) {
-          await input.repository.markSlotFailed(slotId, { code: "image_output_duplicate", message: msg }, fence);
-          throw new NeedsInputError("image_output_duplicate", "Duplicate image output detected");
-        }
-        throw err;
-      }
-
-      execution.assertLease();
-      const succeeded = await input.repository.markSlotSucceeded(slotId, archived.path, fence);
-      if (!succeeded) {
-        throw new NeedsInputError("slot_write_conflict", "Slot state changed during write; retry");
-      }
-
-      await input.audit.append({
-        action: "image_slot.succeeded",
-        targetKind: "image_generation_slot",
-        targetId: slotId,
-        payload: { archivedAssetId: archived.path, width: archived.width, height: archived.height },
-        redacted: true
-      });
+      await archiveAndPersist(input, { slotId, outputUrl: result.outputUrl, fence, execution });
 
       return { next: [] };
     }
@@ -190,8 +183,8 @@ export function createGenerateImageSlotHandler(input: GenerateImageSlotDeps): Wo
       execution.assertLease();
       submitResult = await input.provider.submit({
         prompt: slot.prompt,
-        referenceImagePaths: [], // slots receive fully-resolved prompts; staging is handled upstream
-        parameters: {},
+        references: slot.references,
+        parameters: slot.parameters,
         idempotencyKey: slotIdempotencyKey
       });
     } catch {
@@ -225,30 +218,7 @@ export function createGenerateImageSlotHandler(input: GenerateImageSlotDeps): Wo
 
     if (submitResult.kind === "completed") {
       // Synchronous completion with URL — go straight to archival
-      const outputUrl = submitResult.outputUrl;
-      execution.assertLease();
-      const archived = await input.store.archive(outputUrl);
-      assertImageValid(archived);
-
-      await input.repository.saveSlotQualityMetadata(
-        slotId,
-        { sha256: archived.sha256 },
-        fence
-      );
-
-      execution.assertLease();
-      const succeeded = await input.repository.markSlotSucceeded(slotId, archived.path, fence);
-      if (!succeeded) {
-        throw new NeedsInputError("slot_write_conflict", "Slot state changed during write; retry");
-      }
-
-      await input.audit.append({
-        action: "image_slot.succeeded",
-        targetKind: "image_generation_slot",
-        targetId: slotId,
-        payload: { archivedAssetId: archived.path },
-        redacted: true
-      });
+      await archiveAndPersist(input, { slotId, outputUrl: submitResult.outputUrl, fence, execution });
 
       return { next: [] };
     }
@@ -286,30 +256,7 @@ export function createGenerateImageSlotHandler(input: GenerateImageSlotDeps): Wo
     }
 
     // Succeeded
-    const outputUrl = fetchResult.outputUrl;
-    execution.assertLease();
-    const archived = await input.store.archive(outputUrl);
-    assertImageValid(archived);
-
-    await input.repository.saveSlotQualityMetadata(
-      slotId,
-      { sha256: archived.sha256 },
-      fence
-    );
-
-    execution.assertLease();
-    const succeeded = await input.repository.markSlotSucceeded(slotId, archived.path, fence);
-    if (!succeeded) {
-      throw new NeedsInputError("slot_write_conflict", "Slot state changed during write; retry");
-    }
-
-    await input.audit.append({
-      action: "image_slot.succeeded",
-      targetKind: "image_generation_slot",
-      targetId: slotId,
-      payload: { archivedAssetId: archived.path, width: archived.width, height: archived.height },
-      redacted: true
-    });
+    await archiveAndPersist(input, { slotId, outputUrl: fetchResult.outputUrl, fence, execution });
 
     return { next: [] };
   };

@@ -1,5 +1,5 @@
 import { createHash, randomUUID } from "node:crypto";
-import { mkdir, open, rename, rm } from "node:fs/promises";
+import { mkdir, open, readFile, rename, rm } from "node:fs/promises";
 import { join } from "node:path";
 import { isIP } from "node:net";
 import { request as httpRequest } from "node:http";
@@ -85,6 +85,55 @@ function imageType(contentType: string | undefined): { extension: "jpg" | "png";
   throw new Error("asset Content-Type must be image/png or image/jpeg");
 }
 
+function pngDimensions(bytes: Buffer): { width: number; height: number } {
+  if (bytes.byteLength < 24 || bytes.subarray(12, 16).toString("ascii") !== "IHDR") {
+    throw new Error("PNG is missing a valid IHDR dimension header");
+  }
+  const width = bytes.readUInt32BE(16);
+  const height = bytes.readUInt32BE(20);
+  if (width === 0 || height === 0) throw new Error("PNG dimensions must be non-zero");
+  return { width, height };
+}
+
+const JPEG_SOF_MARKERS = new Set([
+  0xc0, 0xc1, 0xc2, 0xc3,
+  0xc5, 0xc6, 0xc7,
+  0xc9, 0xca, 0xcb,
+  0xcd, 0xce, 0xcf
+]);
+
+function jpegDimensions(bytes: Buffer): { width: number; height: number } {
+  let offset = 2;
+  while (offset < bytes.byteLength) {
+    while (offset < bytes.byteLength && bytes[offset] !== 0xff) offset += 1;
+    while (offset < bytes.byteLength && bytes[offset] === 0xff) offset += 1;
+    if (offset >= bytes.byteLength) break;
+    const marker = bytes[offset]!;
+    offset += 1;
+    if (marker === 0xd8 || marker === 0xd9 || marker === 0x01 || (marker >= 0xd0 && marker <= 0xd7)) {
+      continue;
+    }
+    if (offset + 2 > bytes.byteLength) break;
+    const segmentLength = bytes.readUInt16BE(offset);
+    if (segmentLength < 2 || offset + segmentLength > bytes.byteLength) {
+      throw new Error("JPEG contains an invalid segment length");
+    }
+    if (JPEG_SOF_MARKERS.has(marker)) {
+      if (segmentLength < 7) throw new Error("JPEG SOF segment is too short");
+      const height = bytes.readUInt16BE(offset + 3);
+      const width = bytes.readUInt16BE(offset + 5);
+      if (width === 0 || height === 0) throw new Error("JPEG dimensions must be non-zero");
+      return { width, height };
+    }
+    offset += segmentLength;
+  }
+  throw new Error("JPEG is missing a supported SOF dimension marker");
+}
+
+function imageDimensions(extension: "jpg" | "png", bytes: Buffer): { width: number; height: number } {
+  return extension === "png" ? pngDimensions(bytes) : jpegDimensions(bytes);
+}
+
 function header(response: AssetFetchResponse, name: string): string | undefined {
   const target = name.toLowerCase();
   const entry = Object.entries(response.headers).find(([key]) => key.toLowerCase() === target);
@@ -123,6 +172,8 @@ export class ContentAddressedStore {
     path: string;
     extension: string;
     bytes: number;
+    width: number;
+    height: number;
   }> {
     await mkdir(this.options.assetRoot, { recursive: true });
     let current = new URL(remoteUrl);
@@ -188,6 +239,8 @@ export class ContentAddressedStore {
       await file.sync();
       await file.close();
 
+      const dimensions = imageDimensions(extension, await readFile(temporaryPath));
+
       const sha256 = hash.digest("hex");
       const bucket = join(this.options.assetRoot, sha256.slice(0, 2));
       const path = join(bucket, `${sha256}.${extension}`);
@@ -199,7 +252,7 @@ export class ContentAddressedStore {
       } finally {
         await directory.close();
       }
-      return { remoteUrl, finalUrl: current.toString(), sha256, path, extension, bytes };
+      return { remoteUrl, finalUrl: current.toString(), sha256, path, extension, bytes, ...dimensions };
     } catch (error) {
       await file.close().catch(() => undefined);
       await rm(temporaryPath, { force: true }).catch(() => undefined);

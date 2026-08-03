@@ -78,6 +78,19 @@ export interface LoadSlotExecutionResult {
   remoteTaskId: string | null;
   remoteOutputUrl: string | null;
   error: unknown;
+  references: ResolvedImageReferenceV1[];
+  parameters: Readonly<Record<string, unknown>>;
+}
+
+export interface ArchivedImageOutput {
+  remoteUrl: string;
+  finalUrl: string;
+  sha256: string;
+  path: string;
+  extension: string;
+  bytes: number;
+  width: number;
+  height: number;
 }
 
 export interface ProductProjection {
@@ -396,8 +409,10 @@ export class ImageGenerationRepository {
   async loadSlotExecution(slotId: string, fence: SlotFence): Promise<LoadSlotExecutionResult | null> {
     const slot = await this.pool.query(
       `SELECT s.id, s.batch_id, s.slot_number, s.role, s.prompt, s.state,
-              s.attempt, s.remote_task_id, s.remote_output_url, s.error
+              s.attempt, s.remote_task_id, s.remote_output_url, s.error,
+              b.selected_asset_ids, b.recipe_snapshot
        FROM ${schema.imageGenerationSlots} s
+       JOIN ${schema.imageGenerationBatches} b ON b.id = s.batch_id
        JOIN ${schema.jobs} j ON j.batch_key = s.batch_id AND j.kind = 'image_generate_slot'
        WHERE s.id = $1 AND j.id = $2 AND j.owner = $3 AND j.lease_token = $4
        FOR UPDATE OF s`,
@@ -405,6 +420,30 @@ export class ImageGenerationRepository {
     );
     if (!slot.rowCount || slot.rowCount === 0) return null;
     const row = slot.rows[0];
+    const selectedAssetIds: string[] = Array.isArray(row.selected_asset_ids)
+      ? row.selected_asset_ids.map(String)
+      : [];
+    const referenceRows = selectedAssetIds.length === 0
+      ? { rows: [] as Array<{ id: string; local_path: string; extension: "png" | "jpg" | "jpeg" }> }
+      : await this.pool.query<{
+        id: string;
+        local_path: string;
+        extension: "png" | "jpg" | "jpeg";
+      }>(
+        `SELECT id, local_path, lower(extension) AS extension
+         FROM ${schema.assets}
+         WHERE id = ANY($1::text[]) AND state = 'ready'
+           AND local_path IS NOT NULL AND local_path <> ''
+           AND lower(extension) IN ('png', 'jpg', 'jpeg')`,
+        [selectedAssetIds]
+      );
+    const referenceById = new Map(referenceRows.rows.map((asset) => [asset.id, asset]));
+    const references = selectedAssetIds.map((assetId): ResolvedImageReferenceV1 => {
+      const asset = referenceById.get(assetId);
+      if (!asset) throw commandError("image_reference_unavailable");
+      return { assetId: asset.id, localPath: asset.local_path, extension: asset.extension };
+    });
+    const recipe = row.recipe_snapshot as ImageGenerationRecipeV1;
     return {
       slotId: row.id,
       batchId: row.batch_id,
@@ -415,7 +454,9 @@ export class ImageGenerationRepository {
       attempt: Number(row.attempt),
       remoteTaskId: row.remote_task_id,
       remoteOutputUrl: row.remote_output_url,
-      error: row.error
+      error: row.error,
+      references,
+      parameters: recipe.providerParameters
     };
   }
 
@@ -435,20 +476,110 @@ export class ImageGenerationRepository {
     return (result.rowCount ?? 0) > 0;
   }
 
-  /**
-   * Mark a slot as succeeded with the archived asset.
-   */
-  async markSlotSucceeded(slotId: string, archivedAssetId: string, fence: SlotFence): Promise<boolean> {
-    const result = await this.pool.query(
-      `UPDATE ${schema.imageGenerationSlots} s
-       SET state = 'succeeded', archived_asset_id = $1, updated_at = now()
-       FROM ${schema.jobs} j
-       WHERE s.id = $2 AND j.batch_key = s.batch_id
-         AND j.id = $3 AND j.owner = $4 AND j.lease_token = $5
-         AND s.state IN ('queued', 'polling', 'archiving')`,
-      [archivedAssetId, slotId, fence.jobId, fence.owner, fence.leaseToken]
-    );
-    return (result.rowCount ?? 0) > 0;
+  async archiveSlotOutput(
+    slotId: string,
+    archived: ArchivedImageOutput,
+    fence: SlotFence
+  ): Promise<string | null> {
+    const client = await this.pool.connect();
+    try {
+      await client.query("BEGIN");
+      const context = await client.query<{
+        state: string;
+        archived_asset_id: string | null;
+        product_id: string;
+        revision_id: string;
+      }>(
+        `SELECT s.state, s.archived_asset_id, b.product_id, b.revision_id
+         FROM ${schema.imageGenerationSlots} s
+         JOIN ${schema.imageGenerationBatches} b ON b.id = s.batch_id
+         JOIN ${schema.productRevisions} r ON r.id = b.revision_id
+         JOIN ${schema.jobs} j ON j.id = $2 AND j.batch_key = s.batch_id
+           AND j.kind = 'image_generate_slot'
+         WHERE s.id = $1 AND j.status = 'running'
+           AND j.owner = $3 AND j.lease_token = $4
+           AND j.lease_expires_at > now()
+         FOR UPDATE OF s, b, r`,
+        [slotId, fence.jobId, fence.owner, fence.leaseToken]
+      );
+      const row = context.rows[0];
+      if (!row) {
+        await client.query("ROLLBACK");
+        return null;
+      }
+      if (row.archived_asset_id && row.state === "succeeded") {
+        await client.query("COMMIT");
+        return row.archived_asset_id;
+      }
+      if (!["queued", "polling", "archiving"].includes(row.state)) {
+        await client.query("ROLLBACK");
+        return null;
+      }
+
+      const matching = await client.query<{ id: string }>(
+        `SELECT id FROM ${schema.assets}
+         WHERE revision_id = $1 AND kind = 'generated'
+           AND (remote_url = $2 OR sha256 = $3)
+         ORDER BY CASE WHEN remote_url = $2 THEN 0 ELSE 1 END, created_at, id
+         LIMIT 1
+         FOR UPDATE`,
+        [row.revision_id, archived.remoteUrl, archived.sha256]
+      );
+      let assetId = matching.rows[0]?.id;
+      if (assetId) {
+        await client.query(
+          `UPDATE ${schema.assets}
+           SET state = 'ready', sha256 = $2, local_path = $3, extension = $4,
+               width = $5, height = $6
+           WHERE id = $1`,
+          [assetId, archived.sha256, archived.path, archived.extension, archived.width, archived.height]
+        );
+      } else {
+        assetId = newId("asset");
+        const inserted = await client.query<{ id: string }>(
+          `INSERT INTO ${schema.assets}
+           (id, product_id, revision_id, remote_url, kind, state, width, height,
+            sha256, local_path, extension)
+           VALUES ($1, $2, $3, $4, 'generated', 'ready', $5, $6, $7, $8, $9)
+           ON CONFLICT (revision_id, remote_url) WHERE revision_id IS NOT NULL
+           DO UPDATE SET kind = 'generated', state = 'ready', width = EXCLUDED.width,
+             height = EXCLUDED.height, sha256 = EXCLUDED.sha256,
+             local_path = EXCLUDED.local_path, extension = EXCLUDED.extension
+           RETURNING id`,
+          [
+            assetId,
+            row.product_id,
+            row.revision_id,
+            archived.remoteUrl,
+            archived.width,
+            archived.height,
+            archived.sha256,
+            archived.path,
+            archived.extension
+          ]
+        );
+        assetId = inserted.rows[0]!.id;
+      }
+
+      const updated = await client.query(
+        `UPDATE ${schema.imageGenerationSlots}
+         SET state = 'succeeded', archived_asset_id = $2, remote_output_url = $3,
+             error = NULL, updated_at = now()
+         WHERE id = $1 AND state IN ('queued', 'polling', 'archiving')`,
+        [slotId, assetId, archived.remoteUrl]
+      );
+      if ((updated.rowCount ?? 0) !== 1) {
+        await client.query("ROLLBACK");
+        return null;
+      }
+      await client.query("COMMIT");
+      return assetId;
+    } catch (error) {
+      await client.query("ROLLBACK").catch(() => undefined);
+      throw error;
+    } finally {
+      client.release();
+    }
   }
 
   /**

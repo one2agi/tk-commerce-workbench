@@ -2116,6 +2116,71 @@ describe("integration: image generation repository", () => {
     )).rows.map((row) => row.role)).toEqual(["primary", "detail", "lifestyle"]);
   });
 
+  test("atomically creates a ready generated asset and stores its id on the fenced slot", async () => {
+    const input = await fixtureStart({ idempotencyKey: `start:archive:${newId("idem")}`, outputCount: 1 });
+    const { batchId } = await imageGen.createBatch(input);
+    const slot = (await handle.pool.query(
+      "SELECT id, slot_number, role FROM image_generation_slots WHERE batch_id = $1",
+      [batchId]
+    )).rows[0]!;
+    await imageGen.savePlanAndQueueSlots({
+      batchId,
+      prompts: [{
+        slot: Number(slot.slot_number),
+        role: String(slot.role),
+        prompt: "archive this generated image",
+        mustPreserve: [],
+        forbidden: []
+      }]
+    });
+    const job = (await handle.pool.query(
+      "SELECT id FROM jobs WHERE batch_key = $1 AND kind = 'image_generate_slot'",
+      [batchId]
+    )).rows[0]!;
+    const fence = { jobId: String(job.id), owner: "archive-worker", leaseToken: newId("lease") };
+    await handle.pool.query(
+      `UPDATE jobs SET status = 'running', owner = $2, lease_token = $3,
+         lease_expires_at = now() + interval '5 minutes' WHERE id = $1`,
+      [fence.jobId, fence.owner, fence.leaseToken]
+    );
+
+    const assetId = await imageGen.archiveSlotOutput(String(slot.id), {
+      remoteUrl: "https://provider.test/generated.png",
+      finalUrl: "https://cdn.provider.test/generated.png",
+      sha256: "a".repeat(64),
+      path: "/data/assets/aa/generated.png",
+      extension: "png",
+      bytes: 4096,
+      width: 1024,
+      height: 1024
+    }, fence);
+
+    expect(assetId).toMatch(/^asset_/);
+    const persisted = await handle.pool.query(
+      `SELECT s.state, s.archived_asset_id, a.product_id, a.revision_id,
+              a.state AS asset_state, a.remote_url, a.local_path, a.extension,
+              a.sha256, a.width, a.height
+       FROM image_generation_slots s
+       JOIN assets a ON a.id = s.archived_asset_id
+       WHERE s.id = $1`,
+      [slot.id]
+    );
+    expect(persisted.rows[0]).toMatchObject({
+      state: "succeeded",
+      archived_asset_id: assetId,
+      product_id: input.productId,
+      revision_id: input.revisionId,
+      asset_state: "ready",
+      remote_url: "https://provider.test/generated.png",
+      local_path: "/data/assets/aa/generated.png",
+      extension: "png",
+      sha256: "a".repeat(64),
+      width: 1024,
+      height: 1024
+    });
+    expect(persisted.rows[0]?.archived_asset_id).not.toBe("/data/assets/aa/generated.png");
+  });
+
   test("rejects a ready asset owned by another product revision inside batch creation", async () => {
     const input = await fixtureStart({ idempotencyKey: `start:foreign:${newId("idem")}` });
     const otherProductId = await catalog.insertProduct({
