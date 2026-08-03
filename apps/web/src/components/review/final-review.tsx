@@ -29,7 +29,7 @@ function ReviewNextStepPanel({ workspace }: { workspace: ReviewWorkspaceView }) 
       <dl>
         <div><dt>妙手目标</dt><dd>{target ? `妙手目标 ${target}` : "妙手目标未知"}</dd></div>
         <div><dt>当前版本</dt><dd>草稿 v{workspace.draftVersion}</dd></div>
-        <div><dt>处理链路</dt><dd>采集 → 标题清洗 → Canvas 生图 → 人工确认 → 妙手待发布</dd></div>
+        <div><dt>处理链路</dt><dd>采集 → 文案处理 → 洗图 → 人工确认 → 妙手待发布</dd></div>
       </dl>
     </section>
   );
@@ -57,7 +57,7 @@ function ReviewGeneratedInfoPanel({ workspace }: { workspace: ReviewWorkspaceVie
       <dl className="tk-review__info-list">
         <div><dt>目标语言</dt><dd>{workspace.target?.locale ?? "未设置"}</dd></div>
         <div><dt>标题风格</dt><dd>{workspace.target?.style ?? "未设置"}</dd></div>
-        <div><dt>Canvas模板</dt><dd>{workspace.template?.matchedReason ?? "TK工作流"}</dd></div>
+        <div><dt>洗图模板</dt><dd>{workspace.template?.matchedReason ?? "TK工作流"}</dd></div>
         <div><dt>模板版本</dt><dd>{workspace.template ? `v${workspace.template.version}` : "未匹配"}</dd></div>
       </dl>
     </section>
@@ -131,6 +131,8 @@ export function FinalReview({ workspace, approvalPreview, actions }: {
             listingRunId={approvalPreview?.listingRunId ?? ""}
             templateVersion={approvalPreview?.templateVersion ?? workspace.template?.version ?? 1}
             orderedFinalAssetIds={(approvalPreview?.orderedFinalAssetIds ?? workspace.finalAssetOrder).map(String)}
+            canonicalMiaoshouTarget={workspace.reviewFacts.canonicalMiaoshouTarget}
+            firstFinalImageUrl={workspace.reviewFacts.orderedFinalImages[0]?.thumbnailUrl ?? workspace.reviewFacts.orderedFinalImages[0]?.previewUrl ?? null}
             targetLocale={workspace.target?.locale ?? approvalPreview?.locale ?? "th-TH"}
             translationStyle={workspace.target?.style ?? "marketplace"}
             miaoshouWriteback={approvalPreview?.miaoshouWriteback}

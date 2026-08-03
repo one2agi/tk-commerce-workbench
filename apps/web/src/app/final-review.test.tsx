@@ -102,8 +102,8 @@ describe("final review flow", () => {
     expect(html).toContain("<h2>洗图后的图</h2><span>5</span>");
     expect(html).toContain("最终图 1");
     expect(html).toContain("https://images.test/final-2.jpg");
-    expect(html.match(/alt=\"待确认 Canvas 产出/g)).toHaveLength(5);
-    expect(html).toContain("确认写回妙手");
+    expect(html.match(/alt=\"待确认图片/g)).toHaveLength(5);
+    expect(html).toContain("确认并写回妙手");
     expect(html).not.toContain("发布 TikTok");
     expect(html).toContain('class="tk-review__image-workbench"');
     expect(html).toContain('class="tk-review__lower"');
