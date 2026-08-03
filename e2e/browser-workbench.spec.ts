@@ -121,7 +121,7 @@ test("真实桌面页面保留高密度工作台布局、筛选勾选与批量�
   expect(startedRevisionIds.sort()).toEqual(["revision_browser_a", "revision_browser_b"]);
 });
 
-test("商品列表直接按商品分开展示全部采集原图与洗图结果", async ({ page }) => {
+test("商品列表保持简洁，详情页直接分开展示全部采集原图与洗图结果", async ({ page }) => {
   const imageBody = Buffer.from(
     "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=",
     "base64"
@@ -134,29 +134,18 @@ test("商品列表直接按商品分开展示全部采集原图与洗图结果",
   );
 
   await page.goto("/products/");
+  await expect(page.getByRole("group", { name: "商品 product_browser_a 图片" })).toHaveCount(0);
+  await page.goto("/products/product_browser_a");
 
-  const productGallery = page.getByRole("group", {
-    name: "商品 product_browser_a 图片"
-  });
-  const originalRegion = productGallery.getByRole("region", {
+  const originalRegion = page.getByRole("region", {
     name: "商品 product_browser_a 原产品图"
   });
-  const processedRegion = productGallery.getByRole("region", {
+  const processedRegion = page.getByRole("region", {
     name: "商品 product_browser_a 洗图后的图"
   });
 
   await expect(originalRegion.getByRole("button", { name: /放大原产品图/ })).toHaveCount(3);
   await expect(processedRegion.getByRole("button", { name: /放大洗图后的图/ })).toHaveCount(2);
-  await expect(page.getByRole("group", {
-    name: "商品 product_browser_b 图片"
-  }).getByRole("button", { name: /放大原产品图/ })).toHaveCount(1);
-
-  const sectionHeights = await productGallery
-    .locator(".tk-product-image-gallery__section")
-    .evaluateAll((sections) => sections.map((section) => section.getBoundingClientRect().height));
-  expect(sectionHeights).toHaveLength(2);
-  expect(Math.max(...sectionHeights)).toBeLessThanOrEqual(140);
-
   const firstOriginal = originalRegion.getByRole("button", { name: "放大原产品图 1/3" });
   await firstOriginal.click();
   const dialog = page.getByRole("dialog", { name: "原产品图预览" });

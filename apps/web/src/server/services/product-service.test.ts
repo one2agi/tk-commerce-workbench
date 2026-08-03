@@ -304,6 +304,9 @@ describe("ProductService.get imageGeneration projection", () => {
     });
 
     const result = await new ProductService({ query }).get("prod_1");
+    const sql = String(query.mock.calls[0]?.[0]);
+    expect(sql).toContain("b.category_key AS batch_confirmed_category");
+    expect(sql).not.toContain("b.confirmed_category");
 
     expect(result?.imageGeneration).toMatchObject({
       batchId: null,

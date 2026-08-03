@@ -1477,6 +1477,53 @@ button:disabled {
 }
 
 @media (max-width: 760px) {
+  .tk-app {
+    display: block;
+  }
+
+  .tk-sidebar {
+    position: static;
+    height: auto;
+    padding: 10px;
+    overflow-x: auto;
+  }
+
+  .tk-sidebar::before {
+    margin: 0 8px 8px;
+    font-size: 14px;
+  }
+
+  .tk-sidebar ul {
+    display: flex;
+    width: max-content;
+  }
+
+  .tk-sidebar a {
+    padding: 8px 10px;
+    white-space: nowrap;
+  }
+
+  .tk-app__main {
+    padding: 12px;
+  }
+
+  .tk-review__heading,
+  .tk-review__image-header,
+  .tk-igen-panel__header,
+  .tk-igen-final-order > header {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .tk-igen-slot-card {
+    flex-wrap: wrap;
+  }
+
+  .tk-igen-slot-actions {
+    width: 100%;
+    padding-left: 58px;
+  }
+
   .tk-review__next-step,
   .tk-review__generated-grid,
   .tk-review__info-list,

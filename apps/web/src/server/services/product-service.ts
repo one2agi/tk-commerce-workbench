@@ -594,7 +594,7 @@ export class ProductService {
                 b.requested_output_count AS batch_requested_output_count,
                 b.selected_asset_ids AS batch_selected_asset_ids,
                 b.accepted_asset_ids AS batch_accepted_asset_ids,
-                b.confirmed_category AS batch_confirmed_category
+                b.category_key AS batch_confirmed_category
          FROM image_generation_batches b
          WHERE b.revision_id = revision.id
          ORDER BY b.created_at DESC
