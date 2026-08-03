@@ -9,10 +9,24 @@ type RecordedCall = {
   body: Record<string, unknown>;
 };
 
+export interface PublishedEditCall {
+  readonly path: string;
+  readonly canonicalSuccessDetailId: string;
+  readonly sourceItemId: string;
+  readonly orderedRemoteAssetUrls: readonly string[];
+  readonly idempotencyKey: string;
+  readonly receivedAt: number;
+}
+
 export interface MockMiaoshouServer {
   readonly baseUrl: string;
   readonly calls: readonly RecordedCall[];
+  /** Edit calls recorded via the new published-URL-only contract. */
+  readonly publishedEditCalls: readonly PublishedEditCall[];
+  /** Accept published URLs only (reject any Canvas URL). Defaults to true. */
+  setPublishedUrlsOnly(strict: boolean): void;
   count(pathSuffix: string): number;
+  countPublishedEdits(): number;
   close(): Promise<void>;
 }
 
@@ -71,9 +85,23 @@ function detailEnvelope() {
     }
   };
 }
+
+/**
+ * Best-effort Canvas URL detector. The brief explicitly forbids Canvas URLs
+ * in the new S3 AssetPublishingPort path; if any of the image urls look like
+ * the legacy Canvas CDN we surface a structured failure so tests can assert
+ * the published-URL-only contract.
+ */
+function looksLikeCanvasUrl(url: string): boolean {
+  return /canvas|edge\.runware|edgeone|tencent\.canvas|canvas-internal/i.test(url);
+}
+
 export async function startMockMiaoshouServer(): Promise<MockMiaoshouServer> {
   const calls: RecordedCall[] = [];
+  const publishedEditCalls: PublishedEditCall[] = [];
   let fetchCount = 0;
+  let strictPublishedOnly = true;
+
   const server = createServer(async (request, response) => {
     try {
       if (request.method !== "POST" || !request.url) {
@@ -136,6 +164,75 @@ export async function startMockMiaoshouServer(): Promise<MockMiaoshouServer> {
         });
         return;
       }
+      // -----------------------------------------------------------------
+      // New: headless image-generation writeback via S3 published URLs.
+      //
+      // The new miaoshou_edit writeback path uses the AssetPublishingPort
+      // (S3 / CDN) to publish approved local assets first, then passes the
+      // *remote URLs* (NOT Canvas URLs) to this endpoint. This route is
+      // additive — the legacy edit_common_collect_box_detail route is kept
+      // for the legacy Canvas-era flow.
+      //
+      // Body shape:
+      //   {
+      //     canonicalSuccessDetailId: string,
+      //     sourceItemId: string,
+      //     orderedRemoteAssetUrls: string[],   // S3 / CDN URLs only
+      //     idempotencyKey: string
+      //   }
+      // -----------------------------------------------------------------
+      if (request.url.endsWith("/edit_published_assets")) {
+        const canonicalSuccessDetailId = String(body.canonicalSuccessDetailId ?? "");
+        const sourceItemId = String(body.sourceItemId ?? "");
+        const orderedRemoteAssetUrls = Array.isArray(body.orderedRemoteAssetUrls)
+          ? (body.orderedRemoteAssetUrls as unknown[]).map(String)
+          : [];
+        const idempotencyKey = String(body.idempotencyKey ?? "");
+
+        if (canonicalSuccessDetailId !== CANONICAL_DETAIL_ID) {
+          json(response, {
+            result: "fail",
+            code: "detailNotFound",
+            message: `expected ${CANONICAL_DETAIL_ID}, got ${canonicalSuccessDetailId}`
+          }, 404);
+          return;
+        }
+        if (orderedRemoteAssetUrls.length === 0) {
+          json(response, {
+            result: "fail",
+            code: "emptyImageList",
+            message: "orderedRemoteAssetUrls must contain at least one URL"
+          }, 400);
+          return;
+        }
+        if (strictPublishedOnly && orderedRemoteAssetUrls.some(looksLikeCanvasUrl)) {
+          json(response, {
+            result: "fail",
+            code: "canvasUrlRejected",
+            message: "published-URL-only contract: Canvas URLs are not accepted"
+          }, 422);
+          return;
+        }
+
+        publishedEditCalls.push({
+          path: request.url,
+          canonicalSuccessDetailId,
+          sourceItemId,
+          orderedRemoteAssetUrls,
+          idempotencyKey,
+          receivedAt: Date.now()
+        });
+
+        json(response, {
+          result: "success",
+          code: "0",
+          data: {
+            commonCollectBoxDetailId: canonicalSuccessDetailId,
+            appliedImageCount: orderedRemoteAssetUrls.length
+          }
+        });
+        return;
+      }
       json(response, { error: "not_found" }, 404);
     } catch {
       json(response, { error: "invalid_request" }, 400);
@@ -152,7 +249,12 @@ export async function startMockMiaoshouServer(): Promise<MockMiaoshouServer> {
   return {
     baseUrl: `http://127.0.0.1:${address.port}`,
     calls,
+    publishedEditCalls,
+    setPublishedUrlsOnly(strict: boolean) {
+      strictPublishedOnly = Boolean(strict);
+    },
     count: (pathSuffix) => calls.filter((call) => call.path.endsWith(pathSuffix)).length,
+    countPublishedEdits: () => publishedEditCalls.length,
     close: () => new Promise<void>((resolve, reject) => {
       server.close((error) => error ? reject(error) : resolve());
     })
