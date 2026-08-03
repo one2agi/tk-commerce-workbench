@@ -1,9 +1,9 @@
 import { HeadObjectCommand, PutObjectCommand, S3Client } from "@aws-sdk/client-s3";
 import { createHash } from "node:crypto";
 import { readFile } from "node:fs/promises";
-import { extname, resolve, sep } from "node:path";
+import { resolve, sep } from "node:path";
 
-import { externalFailure, type AssetPublishingPort, type PublishingPurpose } from "@tk/contracts";
+import { externalFailure, type AssetPublishingPort } from "@tk/contracts";
 
 const SUPPORTED_EXTENSIONS = new Set([".png", ".jpg", ".jpeg"]);
 const MAX_FILE_SIZE_BYTES = 12 * 1024 * 1024; // 12 MB
@@ -32,7 +32,20 @@ function validatePublicBaseUrl(baseUrl: string): void {
 }
 
 function computeSha256(bytes: Uint8Array): string {
-  return createHash("sha256").digest("hex");
+  return createHash("sha256").update(bytes).digest("hex");
+}
+
+function isNotFound(error: unknown): boolean {
+  const value = error as {
+    statusCode?: number;
+    name?: string;
+    $metadata?: { httpStatusCode?: number };
+  };
+  return value.statusCode === 404 ||
+    value.$metadata?.httpStatusCode === 404 ||
+    value.name === "NotFound" ||
+    value.name === "NoSuchKey" ||
+    value.name === "NoSuchObject";
 }
 
 export function createAssetPublishingAdapter(config: AssetPublishingAdapterConfig): AssetPublishingPort {
@@ -94,7 +107,7 @@ export function createAssetPublishingAdapter(config: AssetPublishingAdapterConfi
 
         const sha256 = computeSha256(fileBytes);
 
-        const objectKey = `images/${sha256}.${extension}`;
+        const objectKey = `images/${sha256}${extension.toLowerCase()}`;
         const remoteUrl = `${config.publicBaseUrl.replace(/\/+$/, "")}/${objectKey}`;
 
         // HeadObject first - skip upload if already exists
@@ -106,8 +119,7 @@ export function createAssetPublishingAdapter(config: AssetPublishingAdapterConfi
           }));
           alreadyExists = true;
         } catch (err: unknown) {
-          const status = (err as { statusCode?: number }).statusCode;
-          if (status !== 404) {
+          if (!isNotFound(err)) {
             throw externalFailure("retryable", "publishing.s3_head_failed", "Asset publishing: S3 HeadObject check failed");
           }
           // 404 means it does not exist - we will upload

@@ -1,8 +1,34 @@
-import { describe, expect, it, vi, beforeEach } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import { HeadObjectCommand, PutObjectCommand } from "@aws-sdk/client-s3";
+import { createHash } from "node:crypto";
+import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { createAssetPublishingAdapter, type AssetPublishingAdapterConfig } from "./asset-publishing-adapter.js";
 
-const VALID_SHA256 = "a".repeat(64);
-const PNG_BYTES = new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
+const sendMock = vi.hoisted(() => vi.fn());
+
+vi.mock("@aws-sdk/client-s3", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@aws-sdk/client-s3")>();
+  return {
+    ...actual,
+    S3Client: class {
+      send = sendMock;
+    }
+  };
+});
+
+const roots: string[] = [];
+afterEach(async () => {
+  sendMock.mockReset();
+  await Promise.all(roots.splice(0).map((root) => rm(root, { recursive: true, force: true })));
+});
+
+async function assetRoot(): Promise<string> {
+  const root = await mkdtemp(join(tmpdir(), "tk-publishing-"));
+  roots.push(root);
+  return root;
+}
 
 const BASE_CONFIG: AssetPublishingAdapterConfig = {
   s3Endpoint: "https://s3.example.com",
@@ -108,5 +134,56 @@ describe("createAssetPublishingAdapter", () => {
       ],
       purpose: "miaoshou_edit"
     })).rejects.toMatchObject({ code: "publishing.asset_not_found" });
+  });
+
+  it("publishes different bytes to ordered single-extension SHA keys on AWS v3 404", async () => {
+    const root = await assetRoot();
+    const first = Buffer.from("first-image-bytes");
+    const second = Buffer.from("second-image-bytes");
+    await writeFile(join(root, "first.png"), first);
+    await writeFile(join(root, "second.jpg"), second);
+    sendMock.mockImplementation(async (command) => {
+      if (command instanceof HeadObjectCommand) {
+        throw { name: "NotFound", $metadata: { httpStatusCode: 404 } };
+      }
+      return {};
+    });
+    const adapter = createAssetPublishingAdapter({ ...BASE_CONFIG, assetRoot: root });
+
+    const published = await adapter.publish({
+      assets: [
+        { assetId: "asset-first", localPath: "first.png", extension: ".png" },
+        { assetId: "asset-second", localPath: "second.jpg", extension: "jpg" }
+      ],
+      purpose: "miaoshou_edit"
+    });
+
+    const firstHash = createHash("sha256").update(first).digest("hex");
+    const secondHash = createHash("sha256").update(second).digest("hex");
+    expect(firstHash).not.toBe(secondHash);
+    expect(published).toEqual([
+      { remoteUrl: `https://cdn.example.com/images/${firstHash}.png` },
+      { remoteUrl: `https://cdn.example.com/images/${secondHash}.jpg` }
+    ]);
+    const puts = sendMock.mock.calls
+      .map(([command]) => command)
+      .filter((command) => command instanceof PutObjectCommand);
+    expect(puts.map((command) => command.input.Key)).toEqual([
+      `images/${firstHash}.png`,
+      `images/${secondHash}.jpg`
+    ]);
+  });
+
+  it("reuses an existing object without uploading it again", async () => {
+    const root = await assetRoot();
+    await writeFile(join(root, "existing.png"), Buffer.from("existing-image"));
+    sendMock.mockResolvedValue({ $metadata: { httpStatusCode: 200 } });
+    const adapter = createAssetPublishingAdapter({ ...BASE_CONFIG, assetRoot: root });
+
+    await expect(adapter.publish({
+      assets: [{ assetId: "asset-existing", localPath: "existing.png", extension: "png" }],
+      purpose: "miaoshou_edit"
+    })).resolves.toHaveLength(1);
+    expect(sendMock.mock.calls.some(([command]) => command instanceof PutObjectCommand)).toBe(false);
   });
 });
