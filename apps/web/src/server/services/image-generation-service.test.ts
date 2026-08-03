@@ -1,11 +1,15 @@
 import { describe, expect, it, vi } from "vitest";
 import { ImageGenerationService, type ImageGenerationServiceContext } from "./image-generation-service";
 
-type MockRepository = ReturnType<typeof mockRepository>;
-type MockTemplateStore = ReturnType<typeof mockTemplateStore>;
-
 function mockRepository() {
   return {
+    loadStartContext: vi.fn<any>().mockResolvedValue({
+      productFacts: {
+        title: "蕾丝蝴蝶结大帽檐遮阳草帽",
+        category: "women.hat",
+        attributes: [{ name: "颜色", value: "米白色" }]
+      }
+    }),
     createBatch: vi.fn<any>(),
     getProductProjection: vi.fn<any>(),
     retrySlot: vi.fn<any>(),
@@ -37,8 +41,8 @@ const activeTemplateVersion = {
     inputCounts: { default: 2, min: 1, max: 6 },
     outputCounts: { default: 4, min: 1, max: 8 },
     mustPreserve: [] as string[],
-    visualDirection: "",
-    forbidden: [] as string[],
+    visualDirection: "海边度假场景，商品为主体",
+    forbidden: ["改变帽檐结构"],
     roles: [{ key: "hero", instruction: "Hero shot" }]
   },
   activatedAt: new Date(),
@@ -78,16 +82,51 @@ describe("ImageGenerationService", () => {
       expect(store.resolveActiveByCategory).toHaveBeenCalledWith("women.hat");
       expect(repo.createBatch).toHaveBeenCalledWith(
         expect.objectContaining({
-          selectedAssetIds: ["asset_1", "asset_2"], // sorted
+          selectedAssetIds: ["asset_2", "asset_1"],
           requestedOutputCount: 5,
           templateVersion: 2,
           templateId: "tmpl_1",
           templateVersionId: "ver_active_1",
           categoryKey: "women.hat",
           revisionId: "rev_1",
-          productId: "prod_1"
+          productId: "prod_1",
+          productFacts: {
+            title: "蕾丝蝴蝶结大帽檐遮阳草帽",
+            category: "women.hat",
+            attributes: [{ name: "颜色", value: "米白色" }]
+          },
+          recipe: {
+            version: 1,
+            inputCount: 2,
+            outputCount: 5,
+            mustPreserve: [],
+            visualDirection: "海边度假场景，商品为主体",
+            forbidden: ["改变帽檐结构"],
+            roles: [{ key: "hero", instruction: "Hero shot" }],
+            providerParameters: {}
+          }
         })
       );
+    });
+
+    it("rejects an asset that is not owned by the requested product revision", async () => {
+      const repo = mockRepository();
+      const store = mockTemplateStore();
+      repo.loadStartContext.mockRejectedValue(Object.assign(new Error("asset_not_in_revision"), {
+        code: "asset_not_in_revision"
+      }));
+      store.resolveActiveByCategory.mockResolvedValue({ template: activeTemplate, version: activeTemplateVersion });
+
+      const service = new ImageGenerationService(makeContext(repo, store));
+
+      await expect(service.start({
+        productId: "prod_1",
+        revisionId: "rev_1",
+        categoryKey: "women.hat",
+        selectedAssetIds: ["asset_from_other_revision"],
+        outputCount: 1
+      })).rejects.toMatchObject({ code: "asset_not_in_revision" });
+      expect(repo.createBatch).not.toHaveBeenCalled();
     });
 
     it("rejects duplicate asset IDs", async () => {

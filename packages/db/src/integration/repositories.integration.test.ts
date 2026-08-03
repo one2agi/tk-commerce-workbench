@@ -1998,7 +1998,20 @@ describe("integration: image generation repository", () => {
       `INSERT INTO image_generation_template_versions
        (id, template_id, version, lifecycle_state, recipe, created_at)
        VALUES ($1, $2, 1, 'active', $3::jsonb, now())`,
-      [versionId, templateId, JSON.stringify({ version: 1, inputCount: 3, outputCount: 3, roles: ["primary", "detail", "lifestyle"] })]
+      [versionId, templateId, JSON.stringify({
+        version: 1,
+        inputCount: 3,
+        outputCount: 3,
+        mustPreserve: ["product identity"],
+        visualDirection: "marketplace product photography",
+        forbidden: ["brand logos"],
+        roles: [
+          { key: "primary", instruction: "front-facing hero image" },
+          { key: "detail", instruction: "material detail image" },
+          { key: "lifestyle", instruction: "realistic usage scene" }
+        ],
+        providerParameters: {}
+      })]
     );
     await handle.pool.query(
       `UPDATE image_generation_templates SET active_version_id = $1 WHERE id = $2`,
@@ -2064,7 +2077,20 @@ describe("integration: image generation repository", () => {
       templateId: overrides.templateId ?? templateId,
       templateVersionId: overrides.versionId ?? versionId,
       templateVersion: 1,
-      recipe: { version: 1 as const, inputCount: 3, outputCount: 3, roles: ["primary", "detail", "lifestyle"] },
+      recipe: {
+        version: 1 as const,
+        inputCount: 3,
+        outputCount: 3,
+        mustPreserve: ["product identity"],
+        visualDirection: "marketplace product photography",
+        forbidden: ["brand logos"],
+        roles: [
+          { key: "primary", instruction: "front-facing hero image" },
+          { key: "detail", instruction: "material detail image" },
+          { key: "lifestyle", instruction: "realistic usage scene" }
+        ],
+        providerParameters: {}
+      },
       productFacts: { title: "Test Product", category: "dress" },
       productFactsDigest: "abc123"
     };
@@ -2078,6 +2104,38 @@ describe("integration: image generation repository", () => {
     expect(second.batchId).toBe(first.batchId);
     expect(await countSlotRows(first.batchId)).toBe(3);
     expect(await countPlannerJobs(first.batchId)).toBe(1);
+  });
+
+  test("rejects a ready asset owned by another product revision inside batch creation", async () => {
+    const input = await fixtureStart({ idempotencyKey: `start:foreign:${newId("idem")}` });
+    const otherProductId = await catalog.insertProduct({
+      operatorId: await catalog.upsertLocalOperator({ handle: "img-other-op", displayName: "Other Image Op" }),
+      sourceUrl: "https://detail.1688.com/offer/other-img.html",
+      locale: "th-TH",
+      currency: "THB"
+    });
+    const otherRevisionId = await catalog.insertRevision({
+      productId: otherProductId,
+      draftVersion: 1,
+      sourceTitle: "Other Product",
+      workingDraft: {}
+    });
+    const foreignAssetId = newId("foreign_asset");
+    await handle.pool.query(
+      `INSERT INTO assets (id, product_id, revision_id, remote_url, kind, state, local_path, extension)
+       VALUES ($1, $2, $3, 'https://cdn.test/foreign.png', 'main', 'ready', '/assets/foreign.png', 'png')`,
+      [foreignAssetId, otherProductId, otherRevisionId]
+    );
+
+    await expect(imageGen.createBatch({
+      ...input,
+      selectedAssetIds: [foreignAssetId]
+    })).rejects.toMatchObject({ code: "asset_not_in_revision" });
+
+    expect((await handle.pool.query(
+      "SELECT count(*)::integer AS count FROM image_generation_batches WHERE idempotency_key = $1",
+      [input.idempotencyKey]
+    )).rows[0]?.count).toBe(0);
   });
 
   test("keeps successful siblings unchanged when one slot fails", async () => {

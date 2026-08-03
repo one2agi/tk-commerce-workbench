@@ -31,6 +31,20 @@ export interface CreateBatchResult {
   plannerJobId: string;
 }
 
+export interface LoadGenerationStartContextInput {
+  productId: string;
+  revisionId: string;
+  selectedAssetIds: string[];
+}
+
+export interface LoadGenerationStartContextResult {
+  productFacts: Record<string, unknown>;
+}
+
+function commandError(code: string): Error & { code: string } {
+  return Object.assign(new Error(code), { code });
+}
+
 export interface SlotFence {
   jobId: string;
   owner: string;
@@ -88,6 +102,59 @@ export class ImageGenerationRepository {
     private readonly _schema: typeof schema = schema
   ) {}
 
+  async loadStartContext(input: LoadGenerationStartContextInput): Promise<LoadGenerationStartContextResult> {
+    const product = await this.pool.query<{ id: string }>(
+      `SELECT id FROM ${schema.products} WHERE id = $1`,
+      [input.productId]
+    );
+    if (!product.rows[0]) throw commandError("product_not_found");
+
+    const revision = await this.pool.query<{
+      source_title: string | null;
+      source_payload: Record<string, unknown>;
+    }>(
+      `SELECT source_title, source_payload
+       FROM ${schema.productRevisions}
+       WHERE id = $1 AND product_id = $2`,
+      [input.revisionId, input.productId]
+    );
+    const revisionRow = revision.rows[0];
+    if (!revisionRow) throw commandError("revision_not_found");
+
+    const assets = await this.pool.query<{
+      id: string;
+      product_id: string;
+      revision_id: string | null;
+      state: string;
+    }>(
+      `SELECT id, product_id, revision_id, state
+       FROM ${schema.assets}
+       WHERE id = ANY($1::text[])`,
+      [input.selectedAssetIds]
+    );
+    const byId = new Map(assets.rows.map((row) => [row.id, row]));
+    for (const assetId of input.selectedAssetIds) {
+      const asset = byId.get(assetId);
+      if (!asset || asset.product_id !== input.productId || asset.revision_id !== input.revisionId) {
+        throw commandError("asset_not_in_revision");
+      }
+      if (asset.state !== "ready") throw commandError("asset_not_ready");
+    }
+
+    const source = revisionRow.source_payload ?? {};
+    const title = revisionRow.source_title ?? (typeof source.title === "string" ? source.title : "");
+    const category = typeof source.category === "string" ? source.category : null;
+    const attributes = Array.isArray(source.attributes)
+      ? source.attributes
+      : Array.isArray(source.sourceAttributes)
+        ? source.sourceAttributes
+        : [];
+
+    return {
+      productFacts: Object.freeze({ title, category, attributes })
+    };
+  }
+
   /**
    * Create a batch atomically with one image_prompt_plan job and requested slots.
    * Idempotent via unique idempotency_key on image_generation_batches.
@@ -124,16 +191,33 @@ export class ImageGenerationRepository {
       assert(templateVersion.rowCount && templateVersion.rowCount > 0, "template version must exist");
       const recipe = templateVersion.rows[0].recipe as ImageGenerationRecipeV1;
 
-      // Verify all selected assets are ready
-      const assetCheck = await client.query(
-        `SELECT id FROM ${schema.assets}
-         WHERE id = ANY($1) AND state = 'ready'`,
+      const revisionCheck = await client.query(
+        `SELECT id FROM ${schema.productRevisions}
+         WHERE id = $1 AND product_id = $2`,
+        [input.revisionId, input.productId]
+      );
+      if (!revisionCheck.rows[0]) throw commandError("revision_not_found");
+
+      // Re-check source ownership inside the batch transaction so a Web preflight
+      // cannot be invalidated between validation and persistence.
+      const assetCheck = await client.query<{
+        id: string;
+        product_id: string;
+        revision_id: string | null;
+        state: string;
+      }>(
+        `SELECT id, product_id, revision_id, state FROM ${schema.assets}
+         WHERE id = ANY($1::text[])`,
         [input.selectedAssetIds]
       );
-      assert(
-        assetCheck.rowCount === input.selectedAssetIds.length,
-        "all selected assets must be ready"
-      );
+      const selectedById = new Map(assetCheck.rows.map((row) => [row.id, row]));
+      for (const assetId of input.selectedAssetIds) {
+        const asset = selectedById.get(assetId);
+        if (!asset || asset.product_id !== input.productId || asset.revision_id !== input.revisionId) {
+          throw commandError("asset_not_in_revision");
+        }
+        if (asset.state !== "ready") throw commandError("asset_not_ready");
+      }
 
       // Insert batch
       const batchId = newId("batch");
@@ -418,9 +502,6 @@ export class ImageGenerationRepository {
       );
 
       // Insert a new job for this retry (idempotent via business_key conflict)
-      const promptHash = row.prompt
-        ? Buffer.from(JSON.stringify(row.prompt)).toString("base64")
-        : "";
       const newAttempt = row.attempt + 1;
       const jobId = newId("job");
       await client.query(

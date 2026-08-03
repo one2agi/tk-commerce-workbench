@@ -12,7 +12,7 @@
 //   - Accept-partial only allowed when at least one slot is succeeded and not excluded.
 
 import { createHash } from "node:crypto";
-import type { ImageGenerationRecipeV1, PlannedImagePromptV1 } from "@tk/contracts";
+import type { FrozenImageGenerationRecipeV1 } from "@tk/contracts";
 import type { ImageGenerationRepository, CreateBatchInput } from "../../../../../packages/db/src/repositories/image-generation-repository";
 import type { ImageGenerationTemplateStore } from "./image-generation-template-service";
 
@@ -98,6 +98,12 @@ export class ImageGenerationService {
       throw Object.assign(new Error("duplicate_assets"), { code: "duplicate_assets" });
     }
 
+    const startContext = await this.ctx.imageGenerationRepository.loadStartContext({
+      productId,
+      revisionId,
+      selectedAssetIds
+    });
+
     // --- Resolve active template for category ---
     const resolved = await this.ctx.imageGenerationTemplates.resolveActiveByCategory(categoryKey);
     if (!resolved) {
@@ -109,15 +115,21 @@ export class ImageGenerationService {
       });
     }
 
-    const recipe: ImageGenerationRecipeV1 = {
+    const recipe: FrozenImageGenerationRecipeV1 = {
       version: 1,
       inputCount: selectedAssetIds.length,
       outputCount,
-      roles: resolved.version.recipe.roles.map((r) => r.key)
+      mustPreserve: [...resolved.version.recipe.mustPreserve],
+      visualDirection: resolved.version.recipe.visualDirection,
+      forbidden: [...resolved.version.recipe.forbidden],
+      roles: resolved.version.recipe.roles.map((role) => ({
+        key: role.key,
+        instruction: role.instruction
+      })),
+      providerParameters: {}
     };
 
-    // Derive product facts from revision (empty for now; worker enriches)
-    const productFacts: Record<string, unknown> = {};
+    const productFacts = startContext.productFacts;
     const productFactsDigest = createHash("sha256")
       .update(JSON.stringify(productFacts))
       .digest("hex");
@@ -134,7 +146,7 @@ export class ImageGenerationService {
       idempotencyKey,
       productId,
       revisionId,
-      selectedAssetIds: sorted(selectedAssetIds),
+      selectedAssetIds: [...selectedAssetIds],
       requestedOutputCount: outputCount,
       categoryKey,
       templateId: resolved.template.id,
