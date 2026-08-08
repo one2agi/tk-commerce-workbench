@@ -3,6 +3,8 @@ import { spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import test from "node:test";
 
+import { parseDockerCliArguments } from "../docker/cli.mjs";
+
 const cli = fileURLToPath(new URL("../docker-local.mjs", import.meta.url));
 
 function runCli(args) {
@@ -43,4 +45,15 @@ test("image export requires an explicit archive path", () => {
   const result = runCli(["image:export"]);
   assert.equal(result.status, 1);
   assert.match(result.stderr, /image archive path is required/);
+});
+
+test("image actions accept pnpm's forwarded argument separator", () => {
+  assert.deepEqual(
+    parseDockerCliArguments(["image:export", "--", "/tmp/images.tar"]),
+    { action: "image:export", argument: "/tmp/images.tar" }
+  );
+  assert.deepEqual(
+    parseDockerCliArguments(["image:import", "/tmp/images.tar"]),
+    { action: "image:import", argument: "/tmp/images.tar" }
+  );
 });

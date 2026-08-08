@@ -81,6 +81,7 @@ test("production Compose uses immutable images without source or database ports"
   assert.equal(config.services.worker.image, "tk-commerce-workbench-worker:test-image-tag");
   assert.equal(config.services.web.environment.ALLOW_LAN, "true");
   assert.equal(config.services.web.environment.TK_RUNTIME_LAUNCH_ID, "docker-test-image-tag");
+  assert.match(config.services.migrate.command.join(" "), /runInitialMigration/);
   assert.deepEqual(config.services.postgres.ports ?? [], []);
 
   for (const service of [config.services.web, config.services.worker]) {

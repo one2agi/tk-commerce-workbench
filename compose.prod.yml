@@ -16,7 +16,16 @@ services:
 
   migrate:
     image: ${TK_WORKER_IMAGE:-tk-commerce-workbench-worker}:${TK_IMAGE_TAG:?TK_IMAGE_TAG is required}
-    command: ["node", "--import", "tsx", "node_modules/@tk/db/src/migrations/run.ts"]
+    command:
+      - node
+      - --import
+      - tsx
+      - --input-type=module
+      - -e
+      - |
+        import { runInitialMigration } from "@tk/db/src/migrations/run.ts";
+        await runInitialMigration(process.env.DATABASE_URL);
+        process.stdout.write("Initial database migration applied successfully.\n");
     env_file: *app-env-file
     environment: *app-environment
     depends_on:

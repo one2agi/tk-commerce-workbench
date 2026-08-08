@@ -126,8 +126,14 @@ async function buildProductionImages(tag, env) {
   ], { env });
 }
 
+export function parseDockerCliArguments(argv) {
+  const [action = "help", ...rawArguments] = argv;
+  const arguments_ = rawArguments[0] === "--" ? rawArguments.slice(1) : rawArguments;
+  return { action, argument: arguments_[0] };
+}
+
 export async function runDockerCli(argv, { baseEnv = process.env } = {}) {
-  const [action = "help", argument] = argv;
+  const { action, argument } = parseDockerCliArguments(argv);
   if (action === "help" || action === "--help" || action === "-h") {
     process.stdout.write(HELP_TEXT);
     return;
