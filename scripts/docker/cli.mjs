@@ -15,6 +15,7 @@ import {
 } from "./config.mjs";
 
 const REPO_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "../..");
+const HOST_WORKER_MARKER = "pnpm --filter @tk/worker start";
 const HELP_TEXT = `Usage: node scripts/docker-local.mjs <action> [argument]
 
 Actions:
@@ -95,6 +96,26 @@ export async function assertNoHostRuntimeMetadata(storageDir) {
   }
 }
 
+export function findHostWorkerPids(processList) {
+  return processList.split(/\r?\n/).flatMap((line) => {
+    const matched = line.match(/^\s*(\d+)\s+(.+)$/);
+    if (!matched || !matched[2].includes(HOST_WORKER_MARKER)) return [];
+    const pid = Number(matched[1]);
+    return Number.isSafeInteger(pid) && pid > 1 ? [pid] : [];
+  });
+}
+
+async function assertNoHostWorkerProcess() {
+  const result = await runCommand("ps", ["-eo", "pid=,args="], { capture: true });
+  const workerPids = findHostWorkerPids(result.stdout);
+  if (workerPids.length > 0) {
+    throw new Error(
+      `host Worker must be stopped before Docker migration (PID: ${workerPids.join(", ")}); ` +
+      "stop pnpm start:local or run: node scripts/local-production-runtime.mjs stop"
+    );
+  }
+}
+
 async function composeServiceId(mode, service, env) {
   const result = await runCommand(
     "docker",
@@ -170,6 +191,7 @@ export async function runDockerCli(argv, { baseEnv = process.env } = {}) {
     const markerExists = await access(paths.migrationMarker).then(() => true, () => false);
     if (!markerExists) {
       await assertNoHostRuntimeMetadata(paths.storageDir);
+      await assertNoHostWorkerProcess();
       const { createLocalDockerBackup } = await import("./backup.mjs");
       migrationBackup = await createLocalDockerBackup({
         paths,

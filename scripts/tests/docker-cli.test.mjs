@@ -6,7 +6,11 @@ import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import test from "node:test";
 
-import { assertNoHostRuntimeMetadata, parseDockerCliArguments } from "../docker/cli.mjs";
+import {
+  assertNoHostRuntimeMetadata,
+  findHostWorkerPids,
+  parseDockerCliArguments
+} from "../docker/cli.mjs";
 
 const cli = fileURLToPath(new URL("../docker-local.mjs", import.meta.url));
 
@@ -78,4 +82,13 @@ test("first Docker migration accepts storage without host runtime metadata", asy
   const storageDir = await mkdtemp(join(tmpdir(), "tk-docker-no-host-runtime-"));
   await assert.doesNotReject(() => assertNoHostRuntimeMetadata(storageDir));
   await rm(storageDir, { recursive: true, force: true });
+});
+
+test("first Docker migration can identify an orphaned host Worker command", () => {
+  const processes = [
+    "  101 node unrelated.mjs",
+    "  202 pnpm --filter @tk/worker start",
+    "  303 pnpm --filter @tk/worker dev"
+  ].join("\n");
+  assert.deepEqual(findHostWorkerPids(processes), [202]);
 });

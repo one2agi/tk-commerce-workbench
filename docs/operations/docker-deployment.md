@@ -13,7 +13,7 @@
 | PostgreSQL | Docker volume `tk-commerce-workbench_postgres_data` | 同名 Docker volume |
 | 素材 | 宿主机 storage 下的 `data/assets` | 宿主机明确指定的持久化目录 |
 | 配置与密钥 | 宿主机 storage 下的 `.env`，只注入容器 | 目标机器上的 `.env`，不打进镜像 |
-| 对外端口 | 默认仅 `127.0.0.1:3000` | 默认仅 loopback；由反向代理提供 HTTPS |
+| 对外端口 | 默认仅 `127.0.0.1:3000` | 默认仅 loopback；通过 SSH 本地隧道访问 |
 
 镜像、源码、数据库和素材相互独立。升级镜像不会删除数据库或素材；`down` 命令也禁止携带 `--volumes`。
 
@@ -40,7 +40,7 @@ pnpm docker:dev:up
 
 首次执行会按以下顺序工作：
 
-1. 检查 Docker、运行时 `.env`、素材目录和既有 PostgreSQL volume；若检测到宿主机版 Web / Worker 的运行记录则拒绝继续，并提示先使用原停止入口关闭它们。
+1. 检查 Docker、运行时 `.env`、素材目录和既有 PostgreSQL volume；若检测到宿主机版 Web / Worker 的运行记录或 Worker 进程则拒绝继续，并提示先使用原停止入口关闭它们。
 2. 停止仍在运行的旧 Web / Worker，阻断新写入；在任何数据库迁移之前，把 PostgreSQL 与素材打包成同一批次备份。
 3. 构建开发镜像，启动 PostgreSQL，执行迁移，再启动 Web 和 Worker。
 4. Web 健康检查成功后，才记录迁移已完成标记。
