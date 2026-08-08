@@ -1,6 +1,8 @@
 x-app-environment: &app-environment
   DATABASE_URL: postgresql://postgres:postgres@postgres:5432/tk_workbench
   TEST_DATABASE_URL: postgresql://postgres:postgres@postgres:5432/tk_workbench_test
+  # ALLOW_LAN controls dependency hosts, not the Web bind address. The host port remains loopback-only.
+  ALLOW_LAN: "true"
   ASSET_ROOT: /app/data/assets
   NO_PROXY: 127.0.0.1,localhost,postgres
   no_proxy: 127.0.0.1,localhost,postgres
@@ -26,6 +28,7 @@ services:
     environment:
       <<: *app-environment
       TK_WEB_BIND_HOST: 0.0.0.0
+      TK_RUNTIME_LAUNCH_ID: docker-dev
       WATCHPACK_POLLING: "true"
       CHOKIDAR_USEPOLLING: "true"
     ports:

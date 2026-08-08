@@ -65,6 +65,8 @@ test("development Compose renders hot reload and protected local persistence", a
   assert.equal(web.ports[0].host_ip, "127.0.0.1");
   assert.equal(web.ports[0].published, "3000");
   assert.equal(web.environment.TK_WEB_BIND_HOST, "0.0.0.0");
+  assert.equal(web.environment.ALLOW_LAN, "true");
+  assert.equal(web.environment.TK_RUNTIME_LAUNCH_ID, "docker-dev");
   assert.equal(web.environment.WATCHPACK_POLLING, "true");
   assert.equal(worker.environment.CHOKIDAR_USEPOLLING, "true");
   assert.equal(config.volumes.postgres_data.external, true);
@@ -77,6 +79,8 @@ test("production Compose uses immutable images without source or database ports"
   const config = await renderCompose("prod");
   assert.equal(config.services.web.image, "tk-commerce-workbench-web:test-image-tag");
   assert.equal(config.services.worker.image, "tk-commerce-workbench-worker:test-image-tag");
+  assert.equal(config.services.web.environment.ALLOW_LAN, "true");
+  assert.equal(config.services.web.environment.TK_RUNTIME_LAUNCH_ID, "docker-test-image-tag");
   assert.deepEqual(config.services.postgres.ports ?? [], []);
 
   for (const service of [config.services.web, config.services.worker]) {

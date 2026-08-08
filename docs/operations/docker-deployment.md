@@ -153,6 +153,8 @@ chmod 700 /srv/tk-workbench /srv/tk-workbench/data /srv/tk-workbench/data/assets
 
 生产环境中 Compose 会把数据库地址和素材容器路径固定为 Docker 内部地址；其余业务配置继续从目标机器的 `.env` 注入。
 
+Compose 会在应用容器内把 `ALLOW_LAN` 覆盖为 `true`，仅用于允许访问 Docker 私有网络里的 `postgres` 服务名。它不决定 Web 的监听范围；宿主机是否对外开放仍只由 `TK_WEB_BIND_IP` 控制，默认值是 `127.0.0.1`。
+
 ### 方式一：使用镜像仓库
 
 构建机给镜像增加仓库标签并推送：

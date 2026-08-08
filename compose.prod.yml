@@ -1,6 +1,8 @@
 x-app-environment: &app-environment
   DATABASE_URL: postgresql://postgres:postgres@postgres:5432/tk_workbench
   TEST_DATABASE_URL: postgresql://postgres:postgres@postgres:5432/tk_workbench_test
+  # Required for the private Compose service name; published Web access is controlled separately.
+  ALLOW_LAN: "true"
   ASSET_ROOT: /app/data/assets
   NO_PROXY: 127.0.0.1,localhost,postgres
   no_proxy: 127.0.0.1,localhost,postgres
@@ -25,7 +27,9 @@ services:
   web:
     image: ${TK_WEB_IMAGE:-tk-commerce-workbench-web}:${TK_IMAGE_TAG:?TK_IMAGE_TAG is required}
     env_file: *app-env-file
-    environment: *app-environment
+    environment:
+      <<: *app-environment
+      TK_RUNTIME_LAUNCH_ID: docker-${TK_IMAGE_TAG:?TK_IMAGE_TAG is required}
     ports:
       - "${TK_WEB_BIND_IP:-127.0.0.1}:${TK_WEB_PORT:-3000}:3000"
     volumes:
