@@ -2,6 +2,7 @@ import type { NextConfig } from "next";
 import { fileURLToPath } from "node:url";
 
 const config: NextConfig = {
+  output: "standalone",
   // 严格本地单用户：仅允许 loopback 主机头。
   experimental: {
     serverActions: {
