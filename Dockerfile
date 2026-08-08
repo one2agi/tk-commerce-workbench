@@ -18,6 +18,7 @@ COPY packages ./packages
 RUN pnpm install --frozen-lockfile
 
 FROM deps AS dev
+RUN mkdir -p /app/out && chown node:node /app/out
 COPY --chown=node:node . .
 USER node
 ENV NODE_ENV=development
