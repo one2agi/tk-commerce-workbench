@@ -23,9 +23,10 @@ function baselineFixture(): WorkspaceSettingsView {
       targetProfitRate: "0.20",
       ending: "9"
     },
-    providerOptions: { listingProvider: "miaoshou", listingModel: "v3", canvasWorkflow: "wf-1" },
+    providerOptions: { listingProvider: "miaoshou", listingModel: "v3", canvasWorkflow: "wf-1", imageGenerationPath: "canvas", imagePlannerModel: "", imageProviderModel: "" },
     retryPolicy: { maxAttempts: 5, initialDelaySeconds: 30 },
     secretStatus: { miaoshouConfigured: true, canvasConfigured: true, llmConfigured: true, exchangeRateConfigured: true },
+    runtimeStatus: { active: { externalAdapterMode: "mock", workerConcurrency: 4, maxCanvasRunsPerDay: 50, assetRoot: "/tmp/assets", imageGenerationPath: "canvas", imagePlannerModel: "", imageProviderModel: "", canvasWorkflow: "wf-1", imageGenerationConfigured: false }, restartRequiredFields: [] },
     applicationNote: ""
   };
 }
@@ -94,13 +95,15 @@ describe("useSaveSettings", () => {
     const { result } = renderHook(() => useSaveSettings({ fetcher }));
     expect(result.current.state).toBe("idle");
 
-    let promise: Promise<void>;
+    let promise: Promise<WorkspaceSettingsView | null>;
     act(() => {
       promise = result.current.save(baselineFixture(), { ...baselineFixture(), defaultLocale: "th-TH" }, new Set(["defaultLocale"]));
     });
     await waitFor(() => expect(result.current.state).toBe("saving"));
-    await act(async () => { await promise!; });
+    let saved: WorkspaceSettingsView | null = null;
+    await act(async () => { saved = await promise!; });
     expect(result.current.state).toBe("idle");
+    expect(saved).toMatchObject({ version: 2 });
     expect(fetcher).toHaveBeenCalledTimes(1);
   });
 

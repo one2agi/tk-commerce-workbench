@@ -188,6 +188,30 @@ describe("Canvas handler", () => {
     ]);
   });
 
+  it("treats a zero daily limit as unlimited and skips quota reservation", async () => {
+    const ports = createFakePorts();
+    const repository = {
+      loadPlan: vi.fn(async () => ({ workflowId: "TKWorkflow", templateVersion: 1, productImages: [{ assetId: "a", url: "local:a", role: "primary" as const, score: 1, perceptualHash: "a" }], referenceAssetIds: [], promptFragment: "", localAssetIds: ["a"], sourceLocale: "zh-CN", targetLocale: "th-TH", style: "clean", expectedOutputCount: 5 })),
+      saveOutputs: vi.fn(async () => true)
+    };
+    const quota = { reserve: vi.fn(async () => { throw new Error("zero must not reach the positive quota repository"); }) };
+    const result = await invoke(createCanvasHandler({
+      canvas: ports.canvas,
+      staging: ports.assetStaging,
+      store: store(),
+      repository,
+      quota,
+      audit: { append: vi.fn(async () => undefined) },
+      now: () => new Date("2026-07-16T00:00:00Z"),
+      cleanupCodec,
+      maxRunsPerDay: 0
+    }), job("canvas_generate", { revisionId: "rev-unlimited" }));
+
+    expect(quota.reserve).not.toHaveBeenCalled();
+    expect(ports.canvas.calls.some((call) => call.method === "submit")).toBe(true);
+    expect(result.next[0]).toMatchObject({ kind: "final_preview" });
+  });
+
   it("records a safe capacity failure result after the call audit", async () => {
     const ports = createFakePorts();
     ports.canvas.readWorkflowCapacity = vi.fn(async () => { throw new Error("authorization header leaked by provider"); });

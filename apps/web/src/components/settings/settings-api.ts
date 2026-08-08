@@ -39,7 +39,10 @@ export async function saveSettings(
       providerOptions: {
         listingProvider: data.get("listingProvider"),
         listingModel: data.get("listingModel"),
-        canvasWorkflow: data.get("canvasWorkflow")
+        canvasWorkflow: data.get("canvasWorkflow"),
+        imageGenerationPath: data.get("imageGenerationPath"),
+        imagePlannerModel: data.get("imagePlannerModel"),
+        imageProviderModel: data.get("imageProviderModel")
       },
       retryPolicy: {
         maxAttempts: Number(data.get("maxAttempts")),
@@ -99,7 +102,7 @@ export interface UseSaveSettingsResult {
   state: SaveState;
   error: string | null;
   lastSaved: WorkspaceSettingsView | null;
-  save: (baseline: WorkspaceSettingsView, draft: WorkspaceSettingsView, dirtyFields: ReadonlySet<string>) => Promise<void>;
+  save: (baseline: WorkspaceSettingsView, draft: WorkspaceSettingsView, dirtyFields: ReadonlySet<string>) => Promise<WorkspaceSettingsView | null>;
   reset: () => void;
 }
 
@@ -117,15 +120,18 @@ export function useSaveSettings(options: UseSaveSettingsOptions = {}): UseSaveSe
       if (result.ok) {
         setLastSaved(result.value);
         setState("idle");
-        return;
+        return result.value;
       }
       if (result.status === 409) {
         setState("conflict");
-        setError(result.actualVersion !== undefined ? `设置已被更新到版本 v${result.actualVersion}` : "设置已被其他页面更新");
-        return;
+        setError(result.actualVersion !== undefined
+          ? `另一页面已保存版本 v${result.actualVersion}。请重新加载页面，再应用本次更改。`
+          : "另一页面已更新设置。请重新加载页面，再应用本次更改。");
+        return null;
       }
       setState("error");
-      setError("保存失败，请稍后重试");
+      setError("设置未保存。请检查网络连接后再次保存。");
+      return null;
     },
     [fetcher]
   );

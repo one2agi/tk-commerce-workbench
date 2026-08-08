@@ -11,7 +11,7 @@ const SettingsUpdateBody = z.strictObject({
   defaultCurrency: z.string().regex(/^[A-Z]{3}$/).optional(),
   externalAdapterMode: z.enum(["mock", "live"]).optional(),
   workerConcurrency: z.number().int().min(1).max(32).optional(),
-  maxCanvasRunsPerDay: z.number().int().min(1).max(10_000).optional(),
+  maxCanvasRunsPerDay: z.number().int().min(0).max(10_000).optional(),
   assetRoot: z.string().trim().min(1).max(500).optional(),
   pricingDefaults: z.strictObject({
     domesticShippingCny: decimal,
@@ -25,7 +25,18 @@ const SettingsUpdateBody = z.strictObject({
   providerOptions: z.strictObject({
     listingProvider: z.string().trim().min(1).max(80),
     listingModel: z.string().trim().min(1).max(120),
-    canvasWorkflow: z.string().trim().min(1).max(120)
+    canvasWorkflow: z.string().trim().min(1).max(120),
+    imageGenerationPath: z.enum(["headless", "canvas"]),
+    imagePlannerModel: z.string().trim().max(160),
+    imageProviderModel: z.string().trim().max(160)
+  }).superRefine((value, context) => {
+    if (value.imageGenerationPath !== "headless") return;
+    if (!value.imagePlannerModel) {
+      context.addIssue({ code: "custom", path: ["imagePlannerModel"], message: "Planner 模型不能为空" });
+    }
+    if (!value.imageProviderModel) {
+      context.addIssue({ code: "custom", path: ["imageProviderModel"], message: "图片模型不能为空" });
+    }
   }).optional(),
   retryPolicy: z.strictObject({
     maxAttempts: z.number().int().min(1).max(20),

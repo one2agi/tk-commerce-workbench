@@ -45,6 +45,28 @@ describe("settings mutation route", () => {
     expect(conflict.status).toBe(409);
     expect(await conflict.json()).toEqual({ error: "settings_version_conflict", actualVersion: 3 });
   });
+
+  it("accepts zero as unlimited and the complete non-secret image settings contract", async () => {
+    let command: unknown;
+    const handler = createSettingsPatch({
+      service: { update: async (value: unknown) => { command = value; return { version: 2 }; } } as never
+    });
+    const response = await handler(mutation("http://127.0.0.1/api/v1/settings", {
+      expectedVersion: 1,
+      maxCanvasRunsPerDay: 0,
+      providerOptions: {
+        listingProvider: "rules",
+        listingModel: "rules-v1",
+        canvasWorkflow: "TK工作流",
+        imageGenerationPath: "headless",
+        imagePlannerModel: "planner-v4",
+        imageProviderModel: "image-v2"
+      }
+    }));
+
+    expect(response.status).toBe(200);
+    expect(command).toMatchObject({ maxCanvasRunsPerDay: 0, providerOptions: { imageGenerationPath: "headless" } });
+  });
 });
 
 describe("template mutation routes", () => {

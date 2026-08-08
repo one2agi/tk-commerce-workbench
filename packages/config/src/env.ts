@@ -9,7 +9,10 @@ export interface SecretStatus {
   readonly canvasConfigured: boolean;
   readonly llmConfigured: boolean;
   readonly exchangeRateConfigured: boolean;
+  readonly imageGenerationConfigured: boolean;
 }
+
+export type ImageGenerationPath = "headless" | "canvas";
 
 export interface AppConfig {
   readonly databaseUrl: string;
@@ -35,6 +38,14 @@ export interface AppConfig {
   readonly llmApiKey: string;
   readonly llmModel: string;
   readonly exchangeRateBaseUrl: string;
+  readonly imageGenerationPath: ImageGenerationPath;
+  readonly imageGenerationConfigured: boolean;
+  readonly imagePlannerBaseUrl: string;
+  readonly imagePlannerApiKey: string;
+  readonly imagePlannerModel: string;
+  readonly imageProviderBaseUrl: string;
+  readonly imageProviderApiKey: string;
+  readonly imageProviderModel: string;
 }
 
 const LOOPBACK_HOST_PATTERN = /^(127\.0\.0\.1|localhost|\[::1\]|::1)$/i;
@@ -104,6 +115,14 @@ function parseNodeEnv(env: NodeJS.ProcessEnv): AppConfig["nodeEnv"] {
   return "development";
 }
 
+function parseImageGenerationPath(env: NodeJS.ProcessEnv): ImageGenerationPath {
+  const raw = (read(env, "IMAGE_GENERATION_PATH") ?? "canvas").toLowerCase();
+  if (raw !== "headless" && raw !== "canvas") {
+    throw new Error("config: IMAGE_GENERATION_PATH must be 'headless' or 'canvas'");
+  }
+  return raw;
+}
+
 export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
   const nodeEnv = parseNodeEnv(env);
 
@@ -117,6 +136,13 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
 
   const allowLan = (read(env, "ALLOW_LAN") ?? "false").toLowerCase() === "true";
   const externalAdapterMode = parseExternalAdapterMode(env, nodeEnv);
+  const imageGenerationPath = parseImageGenerationPath(env);
+  const imagePlannerBaseUrl = read(env, "IMAGE_PLANNER_BASE_URL") ?? "";
+  const imagePlannerApiKey = read(env, "IMAGE_PLANNER_API_KEY") ?? "";
+  const imagePlannerModel = read(env, "IMAGE_PLANNER_MODEL") ?? "";
+  const imageProviderBaseUrl = read(env, "IMAGE_PROVIDER_BASE_URL") ?? "";
+  const imageProviderApiKey = read(env, "IMAGE_PROVIDER_API_KEY") ?? "";
+  const imageProviderModel = read(env, "IMAGE_PROVIDER_MODEL") ?? "";
 
   return {
     databaseUrl,
@@ -141,7 +167,18 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
     llmBaseUrl: read(env, "LLM_BASE_URL") ?? "",
     llmApiKey: read(env, "LLM_API_KEY") ?? "",
     llmModel: read(env, "LLM_MODEL") ?? "",
-    exchangeRateBaseUrl: read(env, "EXCHANGE_RATE_BASE_URL") ?? ""
+    exchangeRateBaseUrl: read(env, "EXCHANGE_RATE_BASE_URL") ?? "",
+    imageGenerationPath,
+    imageGenerationConfigured: Boolean(
+      imagePlannerBaseUrl && imagePlannerApiKey && imagePlannerModel &&
+      imageProviderBaseUrl && imageProviderApiKey && imageProviderModel
+    ),
+    imagePlannerBaseUrl,
+    imagePlannerApiKey,
+    imagePlannerModel,
+    imageProviderBaseUrl,
+    imageProviderApiKey,
+    imageProviderModel
   };
 }
 
@@ -150,6 +187,7 @@ export function getSecretStatus(cfg: AppConfig): SecretStatus {
     miaoshouConfigured: cfg.miaoshouConfigured,
     canvasConfigured: cfg.canvasConfigured,
     llmConfigured: cfg.llmConfigured,
-    exchangeRateConfigured: cfg.exchangeRateConfigured
+    exchangeRateConfigured: cfg.exchangeRateConfigured,
+    imageGenerationConfigured: cfg.imageGenerationConfigured
   });
 }

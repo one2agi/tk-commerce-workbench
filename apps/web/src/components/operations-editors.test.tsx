@@ -52,7 +52,8 @@ function settingsForm(locale: string) {
     workerConcurrency: "2", maxCanvasRunsPerDay: "50", domesticShippingCny: "2.00",
     crossBorderCostCny: "6.00", fixedTargetCostThb: "10.00", platformFeeRate: "0.05",
     paymentFeeRate: "0.03", targetProfitRate: "0.30", ending: "9", listingProvider: "rules",
-    listingModel: "rules-v1", canvasWorkflow: "TK工作流", maxAttempts: "3", initialDelaySeconds: "30"
+    listingModel: "rules-v1", canvasWorkflow: "TK工作流", imageGenerationPath: "canvas",
+    imagePlannerModel: "", imageProviderModel: "", maxAttempts: "3", initialDelaySeconds: "30"
   }).forEach(([key, value]) => form.set(key, value));
   return form;
 }
@@ -61,9 +62,10 @@ const settings = {
   version: 1, defaultLocale: "th-TH", defaultCurrency: "THB", externalAdapterMode: "mock" as const,
   workerConcurrency: 2, maxCanvasRunsPerDay: 50, assetRoot: "./assets",
   pricingDefaults: { domesticShippingCny: "2.00", crossBorderCostCny: "6.00", fixedTargetCostThb: "10.00", platformFeeRate: "0.05", paymentFeeRate: "0.03", targetProfitRate: "0.30", ending: "9" },
-  providerOptions: { listingProvider: "rules", listingModel: "rules-v1", canvasWorkflow: "TK工作流" },
+  providerOptions: { listingProvider: "rules", listingModel: "rules-v1", canvasWorkflow: "TK工作流", imageGenerationPath: "canvas" as const, imagePlannerModel: "", imageProviderModel: "" },
   retryPolicy: { maxAttempts: 3, initialDelaySeconds: 30 },
   secretStatus: { miaoshouConfigured: false, canvasConfigured: false, llmConfigured: false, exchangeRateConfigured: false },
+  runtimeStatus: { active: { externalAdapterMode: "mock" as const, workerConcurrency: 2, maxCanvasRunsPerDay: 50, assetRoot: "./assets", imageGenerationPath: "canvas" as const, imagePlannerModel: "", imageProviderModel: "", canvasWorkflow: "TK工作流", imageGenerationConfigured: false }, restartRequiredFields: [] },
   applicationNote: "workspace defaults"
 };
 

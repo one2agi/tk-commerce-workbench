@@ -225,23 +225,23 @@ describe("operational pages", () => {
         fixedTargetCostThb: "10.00", platformFeeRate: "0.05",
         paymentFeeRate: "0.03", targetProfitRate: "0.30", ending: "9"
       },
-      providerOptions: { listingProvider: "rules", listingModel: "rules-v1", canvasWorkflow: "TK工作流" },
+      providerOptions: { listingProvider: "rules", listingModel: "rules-v1", canvasWorkflow: "TK工作流", imageGenerationPath: "canvas", imagePlannerModel: "", imageProviderModel: "" },
       retryPolicy: { maxAttempts: 3, initialDelaySeconds: 30 },
+      runtimeStatus: { active: { externalAdapterMode: "mock", workerConcurrency: 2, maxCanvasRunsPerDay: 50, assetRoot: "./data/assets", imageGenerationPath: "canvas", imagePlannerModel: "", imageProviderModel: "", canvasWorkflow: "TK工作流", imageGenerationConfigured: false }, restartRequiredFields: [] },
       applicationNote: "保存为工作区默认值"
     }));
     // SettingsWorkspace renders only real settings plus diagnostics
     expect(settingsHtml).toContain("基础设置");
     expect(settingsHtml).not.toContain("定价公式");
-    expect(settingsHtml).toContain("处理运行边界");
-    expect(settingsHtml).toContain("重试策略");
-    expect(settingsHtml).toContain("密钥配置状态");
-    expect(settingsHtml).toContain("系统诊断");
+    expect(settingsHtml).toContain("生图与模型");
+    expect(settingsHtml).toContain("稳定性");
+    expect(settingsHtml).toContain("服务状态");
     expect(settingsHtml).toContain("打开任务日志");
-    expect(settingsHtml).toContain("Worker 实际运行依赖启动配置");
+    expect(settingsHtml).toContain("保存不会重启 Worker");
     expect(settingsHtml).not.toContain("生图风格");
     expect(settingsHtml).not.toContain("参考图");
-    // InfoBanner is always rendered
-    expect(settingsHtml).toContain("修改这些值只更新工作区默认值");
+    expect(settingsHtml).toContain("保存不会重启 Worker");
+    expect(settingsHtml).toContain("页面只显示是否就绪，不会读取、返回或保存密钥与服务地址");
     // StatusPill shows env-var name in .tk-pill__env
     expect(settingsHtml).toContain("MIAOSHOU_APP_KEY / MIAOSHOU_APP_SECRET");
     // Configured/unconfigured state via CSS class (BEM class, not text "已配置"/"未配置")

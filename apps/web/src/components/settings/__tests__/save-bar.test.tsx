@@ -25,15 +25,15 @@ describe("SaveBar", () => {
     expect(screen.getByText(/已修改/)).toBeInTheDocument();
     expect(screen.getByText(/3/)).toBeInTheDocument();
     expect(screen.getByText(/v12/)).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "放弃修改" })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "保存设置" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "放弃更改" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "保存更改" })).toBeInTheDocument();
   });
 
   it("disables save button while saving", () => {
     render(
       <SaveBar state="saving" error={null} dirtyCount={3} version={12} onDiscard={() => {}} onSave={() => {}} />
     );
-    expect(screen.getByRole("button", { name: "保存中…" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "正在保存更改…" })).toBeDisabled();
   });
 
   it("shows error state with red background and copy", () => {
@@ -58,8 +58,8 @@ describe("SaveBar", () => {
     render(
       <SaveBar state="idle" error={null} dirtyCount={1} version={12} onDiscard={onDiscard} onSave={onSave} />
     );
-    await user.click(screen.getByRole("button", { name: "放弃修改" }));
-    await user.click(screen.getByRole("button", { name: "保存设置" }));
+    await user.click(screen.getByRole("button", { name: "放弃更改" }));
+    await user.click(screen.getByRole("button", { name: "保存更改" }));
     expect(onDiscard).toHaveBeenCalledTimes(1);
     expect(onSave).toHaveBeenCalledTimes(1);
   });

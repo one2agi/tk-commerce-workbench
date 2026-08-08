@@ -25,10 +25,35 @@ function baseline(): WorkspaceSettingsView {
       targetProfitRate: "0.20",
       ending: "9"
     },
-    providerOptions: { listingProvider: "miaoshou", listingModel: "v3", canvasWorkflow: "wf-1" },
+    providerOptions: {
+      listingProvider: "miaoshou",
+      listingModel: "v3",
+      canvasWorkflow: "wf-1",
+      imageGenerationPath: "headless",
+      imagePlannerModel: "planner-v4",
+      imageProviderModel: "image-v2"
+    },
     retryPolicy: { maxAttempts: 5, initialDelaySeconds: 30 },
     secretStatus: { miaoshouConfigured: true, canvasConfigured: true, llmConfigured: true, exchangeRateConfigured: false },
-    applicationNote: ""
+    runtimeStatus: {
+      active: {
+        externalAdapterMode: "mock",
+        workerConcurrency: 4,
+        maxCanvasRunsPerDay: 50,
+        assetRoot: "/tmp/assets",
+        imageGenerationPath: "canvas",
+        imagePlannerModel: "planner-v1",
+        imageProviderModel: "image-v1",
+        canvasWorkflow: "wf-1",
+        imageGenerationConfigured: true
+      },
+      restartRequiredFields: [
+        "providerOptions.imageGenerationPath",
+        "providerOptions.imagePlannerModel",
+        "providerOptions.imageProviderModel"
+      ]
+    },
+    applicationNote: "启动型配置需同步到运行环境并重启 Worker 后才会应用。"
   };
 }
 
@@ -47,23 +72,52 @@ describe("SettingsWorkspace", () => {
     removeEventListenerSpy.mockRestore();
   });
 
-  it("renders the approved settings cards with diagnostics and no save bar", () => {
+  it("renders the production settings navigation, runtime status and no save bar", () => {
     const { container } = render(<SettingsWorkspace initial={baseline()} />);
     const ctx = within(container);
-    expect(ctx.getByText("基础设置")).toBeInTheDocument();
+    expect(ctx.getAllByText("基础设置")).not.toHaveLength(0);
     expect(ctx.queryByText("定价公式")).not.toBeInTheDocument();
-    expect(ctx.getByText("处理运行边界")).toBeInTheDocument();
-    expect(ctx.getByText("重试策略")).toBeInTheDocument();
-    expect(ctx.getByText("密钥配置状态")).toBeInTheDocument();
-    expect(ctx.getByRole("region", { name: "系统诊断" })).toBeInTheDocument();
+    expect(ctx.getByRole("navigation", { name: "设置分区" })).toBeInTheDocument();
+    expect(ctx.getAllByText("生图与模型")).not.toHaveLength(0);
+    expect(ctx.getAllByText("稳定性")).not.toHaveLength(0);
+    expect(ctx.getAllByText("服务状态")).not.toHaveLength(0);
+    expect(ctx.getByText("当前启动值")).toBeInTheDocument();
+    expect(ctx.getByText("重启 Worker 后生效")).toBeInTheDocument();
     expect(ctx.queryByRole("region", { name: "保存栏" })).toBeNull();
   });
 
-  it("exposes task logs through system diagnostics instead of template-style controls", () => {
+  it("shows headless model controls and switches to Canvas compatibility controls", async () => {
+    const user = userEvent.setup();
     const { container } = render(<SettingsWorkspace initial={baseline()} />);
     const ctx = within(container);
-    expect(ctx.getByRole("region", { name: "系统诊断" })).toBeInTheDocument();
+
+    expect(ctx.getByLabelText("Planner 模型")).toHaveValue("planner-v4");
+    expect(ctx.getByLabelText("图片模型")).toHaveValue("image-v2");
+    await user.click(ctx.getByRole("radio", { name: /Canvas 兼容/ }));
+    expect(ctx.queryByLabelText("Planner 模型")).not.toBeInTheDocument();
+    expect(ctx.getByLabelText("Canvas 工作流")).toHaveValue("wf-1");
+    expect(ctx.getByLabelText("Canvas 每日上限")).toHaveAttribute("min", "0");
+  });
+
+  it("validates required headless models and focuses the first invalid field", async () => {
+    const user = userEvent.setup();
+    const fetcher = vi.fn() as unknown as typeof fetch;
+    const { container } = render(<SettingsWorkspace initial={baseline()} fetcher={fetcher} />);
+    const ctx = within(container);
+    const planner = ctx.getByLabelText("Planner 模型");
+    await user.clear(planner);
+    await user.click(ctx.getByRole("button", { name: "保存更改" }));
+
+    expect(planner).toHaveFocus();
+    expect(ctx.getByText("请输入 Planner 模型 ID")).toBeInTheDocument();
+    expect(fetcher).not.toHaveBeenCalled();
+  });
+
+  it("exposes task logs through safe Worker status instead of template-style controls", () => {
+    const { container } = render(<SettingsWorkspace initial={baseline()} />);
+    const ctx = within(container);
     expect(ctx.getByRole("link", { name: "打开任务日志" })).toHaveAttribute("href", "/tasks");
+    expect(ctx.getByText("页面只显示是否就绪，不会读取、返回或保存密钥与服务地址。请在服务器运行环境中维护敏感配置。")).toBeInTheDocument();
     expect(ctx.queryByText("参考图")).not.toBeInTheDocument();
     expect(ctx.queryByText("生图风格")).not.toBeInTheDocument();
   });
@@ -96,21 +150,21 @@ describe("SettingsWorkspace", () => {
     const saveBar = ctx.getByRole("region", { name: "保存栏" });
     expect(saveBar).toHaveTextContent(/2/);
 
-    await user.click(ctx.getByRole("button", { name: "放弃修改" }));
+    await user.click(ctx.getByRole("button", { name: "放弃更改" }));
 
     expect(ctx.getByDisplayValue("zh-CN")).toBeInTheDocument();
     expect(maxAttemptsInput).toHaveValue(5);
     expect(ctx.queryByRole("region", { name: "保存栏" })).toBeNull();
   });
 
-  it("PATCH on save returns 200 → bar hides, version updates, toast appears", async () => {
+  it("applies an immediately resolved PATCH result without observing a rendered saving state", async () => {
     const user = userEvent.setup();
-    const fetcher = vi.fn(async () => Response.json({ ...baseline(), defaultLocale: "th-TH", version: 13 })) as unknown as typeof fetch;
+    const fetcher = vi.fn(() => Promise.resolve(Response.json({ ...baseline(), defaultLocale: "th-TH", version: 13 }))) as unknown as typeof fetch;
     const { container } = render(<SettingsWorkspace initial={baseline()} fetcher={fetcher} />);
     const ctx = within(container);
     const localeSelect = ctx.getAllByRole("combobox")[0];
     await user.selectOptions(localeSelect, "th-TH");
-    await user.click(ctx.getByRole("button", { name: "保存设置" }));
+    await user.click(ctx.getByRole("button", { name: "保存更改" }));
 
     await waitFor(() => {
       expect(ctx.queryByRole("region", { name: "保存栏" })).toBeNull();
@@ -127,7 +181,7 @@ describe("SettingsWorkspace", () => {
     const ctx = within(container);
     const localeSelect = ctx.getAllByRole("combobox")[0];
     await user.selectOptions(localeSelect, "th-TH");
-    await user.click(ctx.getByRole("button", { name: "保存设置" }));
+    await user.click(ctx.getByRole("button", { name: "保存更改" }));
 
     await waitFor(() => {
       expect(ctx.getByRole("region", { name: "保存栏" })).toHaveTextContent(/v7/);
@@ -141,7 +195,7 @@ describe("SettingsWorkspace", () => {
     const ctx = within(container);
     const localeSelect = ctx.getAllByRole("combobox")[0];
     await user.selectOptions(localeSelect, "th-TH");
-    await user.click(ctx.getByRole("button", { name: "保存设置" }));
+    await user.click(ctx.getByRole("button", { name: "保存更改" }));
 
     await waitFor(() => {
       expect(ctx.getByRole("region", { name: "保存栏" })).toHaveTextContent(/保存失败/);

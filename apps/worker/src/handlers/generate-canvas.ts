@@ -153,7 +153,8 @@ export function createCanvasHandler(input: {
     const effectiveCapacity = Math.min(requestedCapacity, LIVE_IMAGE_MODEL_INPUT_LIMIT);
     const selected = selectCanvasInputs({ candidates: productImages, referenceUrls: plan.referenceImageUrls ?? referenceIds, capacity: effectiveCapacity });
     const day = input.now().toISOString().slice(0, 10);
-    const reserved = await input.quota.reserve({ runKey: job.businessKey ?? job.jobId, day, limit: input.maxRunsPerDay });
+    const reserved = input.maxRunsPerDay === 0 ||
+      await input.quota.reserve({ runKey: job.businessKey ?? job.jobId, day, limit: input.maxRunsPerDay });
     if (!reserved) {
       await input.audit.append({ action: "canvas.quota.denied", targetKind: "product_revision", targetId: revisionId, payload: { day, limit: input.maxRunsPerDay }, redacted: true });
       throw new NeedsInputError("canvas_daily_limit", "Canvas daily run limit reached");

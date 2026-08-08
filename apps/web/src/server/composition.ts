@@ -44,6 +44,11 @@ interface RuntimeConfig {
   canvasConfigured: boolean;
   llmConfigured: boolean;
   exchangeRateConfigured: boolean;
+  imageGenerationPath?: "headless" | "canvas";
+  imagePlannerModel?: string;
+  imageProviderModel?: string;
+  imageGenerationConfigured?: boolean;
+  canvasWorkflow?: string;
 }
 
 export function loadRuntimeConfig(env: NodeJS.ProcessEnv = process.env): RuntimeConfig & { databaseUrl: string } {
@@ -58,7 +63,12 @@ export function loadRuntimeConfig(env: NodeJS.ProcessEnv = process.env): Runtime
     miaoshouConfigured: config.miaoshouConfigured,
     canvasConfigured: config.canvasConfigured,
     llmConfigured: config.llmConfigured,
-    exchangeRateConfigured: config.exchangeRateConfigured
+    exchangeRateConfigured: config.exchangeRateConfigured,
+    imageGenerationPath: config.imageGenerationPath,
+    imagePlannerModel: config.imagePlannerModel,
+    imageProviderModel: config.imageProviderModel,
+    imageGenerationConfigured: config.imageGenerationConfigured,
+    canvasWorkflow: config.canvasWorkflowName
   };
 }
 
@@ -164,6 +174,10 @@ export function createServerServices(input: {
   pool: DbPool;
   config: RuntimeConfig;
 }): ServerServices {
+  const imageGenerationPath = input.config.imageGenerationPath ?? "canvas";
+  const imagePlannerModel = input.config.imagePlannerModel ?? "";
+  const imageProviderModel = input.config.imageProviderModel ?? "";
+  const canvasWorkflow = input.config.canvasWorkflow ?? "TK工作流";
   const database = queryPort(input.pool);
   const jobs = new JobRepository(input.pool);
   const automationRuns = new AutomationRunRepository(input.pool);
@@ -205,11 +219,25 @@ export function createServerServices(input: {
         providerOptions: {
           listingProvider: "rules",
           listingModel: "rules-v1",
-          canvasWorkflow: "TK工作流"
+          canvasWorkflow,
+          imageGenerationPath,
+          imagePlannerModel,
+          imageProviderModel
         },
         retryPolicy: { maxAttempts: 3, initialDelaySeconds: 30 }
       },
-      secretStatus
+      secretStatus,
+      activeRuntime: {
+        externalAdapterMode: input.config.externalAdapterMode,
+        workerConcurrency: input.config.workerConcurrency,
+        maxCanvasRunsPerDay: input.config.maxCanvasRunsPerDay,
+        assetRoot: input.config.assetRoot,
+        imageGenerationPath,
+        imagePlannerModel,
+        imageProviderModel,
+        canvasWorkflow,
+        imageGenerationConfigured: input.config.imageGenerationConfigured ?? false
+      }
     }),
     approvals: new ApprovalRepository(input.pool),
     syncs: new MiaoshouSyncService(database),

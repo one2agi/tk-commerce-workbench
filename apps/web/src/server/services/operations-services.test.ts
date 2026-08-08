@@ -71,7 +71,10 @@ const runtime = {
     providerOptions: {
       listingProvider: "rules",
       listingModel: "rules-v1",
-      canvasWorkflow: "TK工作流"
+      canvasWorkflow: "TK工作流",
+      imageGenerationPath: "canvas" as const,
+      imagePlannerModel: "planner-v1",
+      imageProviderModel: "image-v1"
     },
     retryPolicy: { maxAttempts: 3, initialDelaySeconds: 30 }
   },
@@ -80,6 +83,17 @@ const runtime = {
     canvasConfigured: false,
     llmConfigured: false,
     exchangeRateConfigured: true
+  },
+  activeRuntime: {
+    externalAdapterMode: "mock" as const,
+    workerConcurrency: 2,
+    maxCanvasRunsPerDay: 50,
+    assetRoot: "./data/assets",
+    imageGenerationPath: "canvas" as const,
+    imagePlannerModel: "planner-v1",
+    imageProviderModel: "image-v1",
+    canvasWorkflow: "TK工作流",
+    imageGenerationConfigured: false
   }
 };
 
@@ -112,6 +126,39 @@ describe("workspace settings", () => {
     await service.update({ expectedVersion: 1, assetRoot: "./assets/new" });
     await expect(service.update({ expectedVersion: 1, assetRoot: "./assets/stale" }))
       .rejects.toBeInstanceOf(SettingsConflictError);
+  });
+
+  it("persists image defaults while reporting the unchanged active Worker runtime", async () => {
+    const store = new MemorySettingsStore();
+    const service = new SettingsService(store, runtime);
+    await service.get();
+
+    const updated = await service.update({
+      expectedVersion: 1,
+      providerOptions: {
+        ...runtime.defaults.providerOptions,
+        imageGenerationPath: "headless",
+        imagePlannerModel: "planner-v4",
+        imageProviderModel: "image-v2"
+      }
+    });
+
+    expect(updated.providerOptions).toMatchObject({
+      imageGenerationPath: "headless",
+      imagePlannerModel: "planner-v4",
+      imageProviderModel: "image-v2"
+    });
+    expect(updated.runtimeStatus.active).toMatchObject({
+      imageGenerationPath: "canvas",
+      imagePlannerModel: "planner-v1",
+      imageProviderModel: "image-v1"
+    });
+    expect(updated.runtimeStatus.restartRequiredFields).toEqual(expect.arrayContaining([
+      "providerOptions.imageGenerationPath",
+      "providerOptions.imagePlannerModel",
+      "providerOptions.imageProviderModel"
+    ]));
+    expect(JSON.stringify(updated.runtimeStatus)).not.toMatch(/apiKey|baseUrl|secret/i);
   });
 });
 

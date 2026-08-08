@@ -8,9 +8,10 @@ export interface SaveBarProps {
   version: number;
   onDiscard: () => void;
   onSave: () => void;
+  restartRequired?: boolean;
 }
 
-export function SaveBar({ state, error, dirtyCount, version, onDiscard, onSave }: SaveBarProps): React.JSX.Element | null {
+export function SaveBar({ state, error, dirtyCount, version, onDiscard, onSave, restartRequired = false }: SaveBarProps): React.JSX.Element | null {
   const visible = dirtyCount > 0 || state !== "idle";
   if (!visible) return null;
   const isError = state === "error" || state === "conflict";
@@ -27,18 +28,19 @@ export function SaveBar({ state, error, dirtyCount, version, onDiscard, onSave }
         ) : state === "error" ? (
           <span>{error ?? "保存失败"}</span>
         ) : (
-          <>
-            已修改 <strong style={{ color: "var(--primary)", margin: "0 4px" }}>{dirtyCount}</strong> 项
+          <span>
+            已修改 <strong>{dirtyCount}</strong> 项
             <span className="tk-save-bar__meta">当前版本 v{version}</span>
-          </>
+            {restartRequired ? <small>启动型配置需重启 Worker</small> : null}
+          </span>
         )}
       </div>
       <div className="tk-save-bar__actions">
         <button type="button" className="tk-save-bar__btn--ghost" onClick={onDiscard} disabled={state === "saving"}>
-          放弃修改
+          放弃更改
         </button>
         <button type="button" className="tk-save-bar__btn--primary" onClick={onSave} disabled={state === "saving"}>
-          {state === "saving" ? "保存中…" : "保存设置"}
+          {state === "saving" ? "正在保存更改…" : "保存更改"}
         </button>
       </div>
     </div>

@@ -8,8 +8,8 @@ import { Field } from "../field";
 describe("Field", () => {
   it("renders label, control children, and help text", () => {
     render(
-      <Field label="默认语言" help="新建商品时使用">
-        <input data-testid="control" />
+      <Field id="locale" label="默认语言" help="新建商品时使用">
+        <input id="locale" data-testid="control" />
       </Field>
     );
     expect(screen.getByText("默认语言")).toBeInTheDocument();
@@ -19,14 +19,14 @@ describe("Field", () => {
 
   it("renders the dirty marker only when isDirty is true", () => {
     const { rerender, container } = render(
-      <Field label="A">
+      <Field id="a" label="A">
         <input />
       </Field>
     );
     expect(container.querySelector(".tk-field__dirty-dot")).toBeNull();
 
     rerender(
-      <Field label="A" isDirty>
+      <Field id="a" label="A" isDirty>
         <input />
       </Field>
     );
@@ -35,7 +35,7 @@ describe("Field", () => {
 
   it("renders error text below the control when error is set", () => {
     render(
-      <Field label="并发" error="必须在 1-32 之间">
+      <Field id="concurrency" label="并发" error="必须在 1-32 之间">
         <input />
       </Field>
     );
@@ -44,7 +44,7 @@ describe("Field", () => {
 
   it("omits help when not provided", () => {
     const { container } = render(
-      <Field label="A">
+      <Field id="a" label="A">
         <input />
       </Field>
     );

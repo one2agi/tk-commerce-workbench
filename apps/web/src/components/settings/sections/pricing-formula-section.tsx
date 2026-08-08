@@ -16,8 +16,10 @@ function PctField(props: {
   onChange: (path: string, v: unknown) => void;
 }): React.JSX.Element {
   return (
-    <Field label={props.label} help={props.help} isDirty={props.dirty}>
+    <Field id={props.path.replace("pricingDefaults.", "")} label={props.label} help={props.help} isDirty={props.dirty}>
       <input
+        id={props.path.replace("pricingDefaults.", "")}
+        name={props.path.replace("pricingDefaults.", "")}
         type="number"
         step="0.001"
         value={props.value}
@@ -31,21 +33,23 @@ export function PricingFormulaSection({ draft, dirtyFields, onFieldChange }: Pri
   const p = draft.pricingDefaults;
   return (
     <div className="tk-field-grid cols-3">
-      <Field label="国内运费 CNY" help="每件商品分摊的国内发货成本" isDirty={dirtyFields.has("pricingDefaults.domesticShippingCny")}>
-        <input type="number" step="0.01" value={p.domesticShippingCny} onChange={(e) => onFieldChange("pricingDefaults.domesticShippingCny", e.target.value)} />
+      <Field id="domesticShippingCny" label="国内运费 CNY" help="每件商品分摊的国内发货成本" isDirty={dirtyFields.has("pricingDefaults.domesticShippingCny")}>
+        <input id="domesticShippingCny" name="domesticShippingCny" type="number" step="0.01" value={p.domesticShippingCny} onChange={(e) => onFieldChange("pricingDefaults.domesticShippingCny", e.target.value)} />
       </Field>
-      <Field label="跨境成本 CNY" help="头程 + 尾程物流综合" isDirty={dirtyFields.has("pricingDefaults.crossBorderCostCny")}>
-        <input type="number" step="0.01" value={p.crossBorderCostCny} onChange={(e) => onFieldChange("pricingDefaults.crossBorderCostCny", e.target.value)} />
+      <Field id="crossBorderCostCny" label="跨境成本 CNY" help="头程 + 尾程物流综合" isDirty={dirtyFields.has("pricingDefaults.crossBorderCostCny")}>
+        <input id="crossBorderCostCny" name="crossBorderCostCny" type="number" step="0.01" value={p.crossBorderCostCny} onChange={(e) => onFieldChange("pricingDefaults.crossBorderCostCny", e.target.value)} />
       </Field>
-      <Field label="固定成本 THB" help="包装/标签等" isDirty={dirtyFields.has("pricingDefaults.fixedTargetCostThb")}>
-        <input type="number" step="0.01" value={p.fixedTargetCostThb} onChange={(e) => onFieldChange("pricingDefaults.fixedTargetCostThb", e.target.value)} />
+      <Field id="fixedTargetCostThb" label="固定成本 THB" help="包装/标签等" isDirty={dirtyFields.has("pricingDefaults.fixedTargetCostThb")}>
+        <input id="fixedTargetCostThb" name="fixedTargetCostThb" type="number" step="0.01" value={p.fixedTargetCostThb} onChange={(e) => onFieldChange("pricingDefaults.fixedTargetCostThb", e.target.value)} />
       </Field>
       <PctField label="平台费率" help="0.05 = 5%" path="pricingDefaults.platformFeeRate" value={p.platformFeeRate} dirty={dirtyFields.has("pricingDefaults.platformFeeRate")} onChange={onFieldChange} />
       <PctField label="支付费率" help="支付通道手续费" path="pricingDefaults.paymentFeeRate" value={p.paymentFeeRate} dirty={dirtyFields.has("pricingDefaults.paymentFeeRate")} onChange={onFieldChange} />
       <PctField label="目标利润率" help="售价中利润占比" path="pricingDefaults.targetProfitRate" value={p.targetProfitRate} dirty={dirtyFields.has("pricingDefaults.targetProfitRate")} onChange={onFieldChange} />
       <div className="tk-field tk-field--wide">
-        <Field label="价格尾数" help="售价尾数；9 表示以 .9 结尾" isDirty={dirtyFields.has("pricingDefaults.ending")}>
+        <Field id="ending" label="价格尾数" help="售价尾数；9 表示以 .9 结尾" isDirty={dirtyFields.has("pricingDefaults.ending")}>
           <input
+            id="ending"
+            name="ending"
             type="number"
             min={0}
             max={9}

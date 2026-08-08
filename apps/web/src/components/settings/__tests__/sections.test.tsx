@@ -35,9 +35,10 @@ function viewFixture(overrides: Partial<WorkspaceSettingsView> = {}): WorkspaceS
       targetProfitRate: "0.20",
       ending: "9"
     },
-    providerOptions: { listingProvider: "miaoshou", listingModel: "v3", canvasWorkflow: "wf-1" },
+    providerOptions: { listingProvider: "miaoshou", listingModel: "v3", canvasWorkflow: "wf-1", imageGenerationPath: "canvas", imagePlannerModel: "", imageProviderModel: "" },
     retryPolicy: { maxAttempts: 5, initialDelaySeconds: 30 },
     secretStatus: { miaoshouConfigured: true, canvasConfigured: true, llmConfigured: true, exchangeRateConfigured: false },
+    runtimeStatus: { active: { externalAdapterMode: "mock", workerConcurrency: 4, maxCanvasRunsPerDay: 50, assetRoot: "/tmp/assets", imageGenerationPath: "canvas", imagePlannerModel: "", imageProviderModel: "", canvasWorkflow: "wf-1", imageGenerationConfigured: false }, restartRequiredFields: [] },
     applicationNote: "",
     ...overrides
   };
@@ -48,7 +49,7 @@ afterEach(() => {
 });
 
 describe("BasicSettingsSection", () => {
-  it("renders all six controls with values from draft", () => {
+  it("renders the four primary workspace controls with values from draft", () => {
     const { container } = render(
       <BasicSettingsSection
         draft={viewFixture()}
@@ -61,8 +62,8 @@ describe("BasicSettingsSection", () => {
     expect(ctx.getAllByDisplayValue("CNY")[0]).toBeInTheDocument();
     expect(ctx.getAllByDisplayValue("mock")[0]).toBeInTheDocument();
     expect(ctx.getAllByDisplayValue("4")[0]).toBeInTheDocument();
-    expect(ctx.getAllByDisplayValue("50")[0]).toBeInTheDocument();
-    expect(ctx.getAllByDisplayValue("/tmp/assets")[0]).toBeInTheDocument();
+    expect(ctx.queryByDisplayValue("50")).not.toBeInTheDocument();
+    expect(ctx.queryByDisplayValue("/tmp/assets")).not.toBeInTheDocument();
   });
 
   it("calls onFieldChange with dotted key when defaultLocale changes", async () => {
@@ -121,7 +122,7 @@ describe("PricingFormulaSection", () => {
 });
 
 describe("ProviderOptionsSection", () => {
-  it("renders provider fields and explains the Canvas runtime boundary", () => {
+  it("renders Canvas compatibility controls without headless-only model inputs", () => {
     const { container } = render(
       <ProviderOptionsSection
         draft={viewFixture()}
@@ -130,11 +131,10 @@ describe("ProviderOptionsSection", () => {
       />
     );
     const ctx = within(container);
-    expect(ctx.getByDisplayValue("miaoshou")).toBeInTheDocument();
-    expect(ctx.getByDisplayValue("v3")).toBeInTheDocument();
-    expect(ctx.getByText(/Canvas 当前运行工作流为/)).toBeInTheDocument();
-    expect(ctx.getByText(/Worker 实际运行依赖启动配置/)).toBeInTheDocument();
-    expect(ctx.queryByDisplayValue("wf-1")).not.toBeInTheDocument();
+    expect(ctx.getByRole("radio", { name: /Canvas 兼容/ })).toBeChecked();
+    expect(ctx.getByLabelText("Canvas 工作流")).toHaveValue("wf-1");
+    expect(ctx.getByLabelText("Canvas 每日上限")).toHaveAttribute("min", "0");
+    expect(ctx.queryByLabelText("Planner 模型")).not.toBeInTheDocument();
     expect(ctx.queryByText("参考图")).not.toBeInTheDocument();
     expect(ctx.queryByText("生图风格")).not.toBeInTheDocument();
   });
@@ -145,10 +145,10 @@ describe("SystemDiagnosticsSection", () => {
     const { container } = render(<SystemDiagnosticsSection draft={viewFixture()} />);
     const ctx = within(container);
     expect(ctx.getByRole("link", { name: "打开任务日志" })).toHaveAttribute("href", "/tasks");
-    expect(ctx.getByText("Canvas")).toBeInTheDocument();
-    expect(ctx.getByText("妙手")).toBeInTheDocument();
-    expect(ctx.getByText("LLM")).toBeInTheDocument();
-    expect(ctx.getByText(/TK工作流/)).toBeInTheDocument();
+    expect(ctx.getByText("生图路径")).toBeInTheDocument();
+    expect(ctx.getByText("Planner 模型")).toBeInTheDocument();
+    expect(ctx.getByText("图片模型")).toBeInTheDocument();
+    expect(ctx.getByText("当前启动值")).toBeInTheDocument();
   });
 });
 
@@ -172,12 +172,12 @@ describe("SecretStatusSection", () => {
     const { container } = render(
       <SecretStatusSection draft={viewFixture()} />
     );
-    expect(container.querySelectorAll(".tk-pill.is-ok")).toHaveLength(3);
-    expect(container.querySelectorAll(".tk-pill.is-warn")).toHaveLength(1);
+    expect(container.querySelectorAll(".tk-pill.is-ok")).toHaveLength(2);
+    expect(container.querySelectorAll(".tk-pill.is-warn")).toHaveLength(2);
     const ctx = within(container);
     expect(ctx.getByText("妙手")).toBeInTheDocument();
     expect(ctx.getByText("Canvas")).toBeInTheDocument();
-    expect(ctx.getByText("LLM")).toBeInTheDocument();
+    expect(ctx.getByText("Headless 生图")).toBeInTheDocument();
     expect(ctx.getByText("汇率")).toBeInTheDocument();
   });
 });

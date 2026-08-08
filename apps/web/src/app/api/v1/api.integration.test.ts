@@ -377,7 +377,7 @@ describe("v1 API integration", () => {
       defaultLocale: "th-TH", defaultCurrency: "THB", externalAdapterMode: "mock" as const,
       workerConcurrency: 2, maxCanvasRunsPerDay: 50, assetRoot: "./data/assets",
       pricingDefaults: { domesticShippingCny: "2.00", crossBorderCostCny: "6.00", fixedTargetCostThb: "10.00", platformFeeRate: "0.05", paymentFeeRate: "0.03", targetProfitRate: "0.30", ending: "9" },
-      providerOptions: { listingProvider: "rules", listingModel: "rules-v1", canvasWorkflow: "TK工作流" },
+      providerOptions: { listingProvider: "rules", listingModel: "rules-v1", canvasWorkflow: "TK工作流", imageGenerationPath: "canvas" as const, imagePlannerModel: "", imageProviderModel: "" },
       retryPolicy: { maxAttempts: 3, initialDelaySeconds: 30 }
     };
     const service = new SettingsService({

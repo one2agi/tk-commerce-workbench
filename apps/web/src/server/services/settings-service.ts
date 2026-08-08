@@ -15,6 +15,9 @@ export type ProviderOptions = Readonly<{
   listingProvider: string;
   listingModel: string;
   canvasWorkflow: string;
+  imageGenerationPath: "headless" | "canvas";
+  imagePlannerModel: string;
+  imageProviderModel: string;
 }>;
 
 export type RetryPolicy = Readonly<{ maxAttempts: number; initialDelaySeconds: number }>;
@@ -32,8 +35,24 @@ export type WorkspaceSettingsRecord = Readonly<{
   retryPolicy: RetryPolicy;
 }>;
 
+export type ActiveWorkerRuntime = Readonly<{
+  externalAdapterMode: "mock" | "live";
+  workerConcurrency: number;
+  maxCanvasRunsPerDay: number;
+  assetRoot: string;
+  imageGenerationPath: "headless" | "canvas";
+  imagePlannerModel: string;
+  imageProviderModel: string;
+  canvasWorkflow: string;
+  imageGenerationConfigured: boolean;
+}>;
+
 export type WorkspaceSettingsView = WorkspaceSettingsRecord & Pick<WorkspaceSettingsViewV1, "secretStatus"> & Readonly<{
   applicationNote: string;
+  runtimeStatus: {
+    active: ActiveWorkerRuntime;
+    restartRequiredFields: string[];
+  };
 }>;
 
 export type SettingsUpdate = Readonly<Partial<Omit<WorkspaceSettingsRecord, "version">> & {
@@ -58,6 +77,7 @@ export class SettingsConflictError extends Error {
 type RuntimeSettings = Readonly<{
   defaults: Omit<WorkspaceSettingsRecord, "version">;
   secretStatus: WorkspaceSettingsViewV1["secretStatus"];
+  activeRuntime?: ActiveWorkerRuntime;
 }>;
 
 export class SettingsService {
@@ -92,15 +112,66 @@ export class SettingsService {
   }
 
   private toView(record: WorkspaceSettingsRecord): WorkspaceSettingsView {
+    const providerOptions = normalizeProviderOptions(record.providerOptions, this.runtime.defaults.providerOptions);
+    const activeRuntime = this.runtime.activeRuntime ?? activeRuntimeFromDefaults(this.runtime.defaults);
+    const restartRequiredFields = restartRequired(record, providerOptions, activeRuntime);
     return {
       ...record,
       pricingDefaults: { ...record.pricingDefaults },
-      providerOptions: { ...record.providerOptions },
+      providerOptions,
       retryPolicy: { ...record.retryPolicy },
       secretStatus: { ...this.runtime.secretStatus },
-      applicationNote: "这些值保存为工作区默认值；已启动的 Worker 进程不会被浏览器动态重配。"
+      runtimeStatus: {
+        active: { ...activeRuntime },
+        restartRequiredFields
+      },
+      applicationNote: "这些值保存为工作区期望配置；浏览器不会动态重启 Worker。启动型配置需同步到运行环境并重启 Worker 后才会应用。"
     };
   }
+}
+
+function activeRuntimeFromDefaults(defaults: Omit<WorkspaceSettingsRecord, "version">): ActiveWorkerRuntime {
+  return {
+    externalAdapterMode: defaults.externalAdapterMode,
+    workerConcurrency: defaults.workerConcurrency,
+    maxCanvasRunsPerDay: defaults.maxCanvasRunsPerDay,
+    assetRoot: defaults.assetRoot,
+    imageGenerationPath: defaults.providerOptions.imageGenerationPath,
+    imagePlannerModel: defaults.providerOptions.imagePlannerModel,
+    imageProviderModel: defaults.providerOptions.imageProviderModel,
+    canvasWorkflow: defaults.providerOptions.canvasWorkflow,
+    imageGenerationConfigured: false
+  };
+}
+
+function normalizeProviderOptions(value: ProviderOptions, defaults: ProviderOptions): ProviderOptions {
+  const legacy = value as Partial<ProviderOptions>;
+  return {
+    listingProvider: legacy.listingProvider ?? defaults.listingProvider,
+    listingModel: legacy.listingModel ?? defaults.listingModel,
+    canvasWorkflow: legacy.canvasWorkflow ?? defaults.canvasWorkflow,
+    imageGenerationPath: legacy.imageGenerationPath === "headless" ? "headless" :
+      legacy.imageGenerationPath === "canvas" ? "canvas" : defaults.imageGenerationPath,
+    imagePlannerModel: legacy.imagePlannerModel ?? defaults.imagePlannerModel,
+    imageProviderModel: legacy.imageProviderModel ?? defaults.imageProviderModel
+  };
+}
+
+function restartRequired(
+  record: WorkspaceSettingsRecord,
+  providerOptions: ProviderOptions,
+  active: ActiveWorkerRuntime
+): string[] {
+  const fields: string[] = [];
+  if (record.externalAdapterMode !== active.externalAdapterMode) fields.push("externalAdapterMode");
+  if (record.workerConcurrency !== active.workerConcurrency) fields.push("workerConcurrency");
+  if (record.maxCanvasRunsPerDay !== active.maxCanvasRunsPerDay) fields.push("maxCanvasRunsPerDay");
+  if (record.assetRoot !== active.assetRoot) fields.push("assetRoot");
+  if (providerOptions.imageGenerationPath !== active.imageGenerationPath) fields.push("providerOptions.imageGenerationPath");
+  if (providerOptions.imagePlannerModel !== active.imagePlannerModel) fields.push("providerOptions.imagePlannerModel");
+  if (providerOptions.imageProviderModel !== active.imageProviderModel) fields.push("providerOptions.imageProviderModel");
+  if (providerOptions.canvasWorkflow !== active.canvasWorkflow) fields.push("providerOptions.canvasWorkflow");
+  return fields;
 }
 
 export class PgSettingsStore implements SettingsStore {

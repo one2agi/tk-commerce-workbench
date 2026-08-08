@@ -63,7 +63,13 @@ describe("config env", () => {
     expect(cfg.canvasApiKey).toBe("TEST_CANVAS_SECRET_DO_NOT_LOG");
     const safe = JSON.stringify(getSecretStatus(cfg));
     expect(safe).not.toMatch(/TEST_(?:CANVAS|LLM)_SECRET_DO_NOT_LOG/);
-    expect(JSON.parse(safe)).toEqual({ miaoshouConfigured: false, canvasConfigured: true, llmConfigured: true, exchangeRateConfigured: true });
+    expect(JSON.parse(safe)).toEqual({
+      miaoshouConfigured: false,
+      canvasConfigured: true,
+      llmConfigured: true,
+      exchangeRateConfigured: true,
+      imageGenerationConfigured: false
+    });
   });
 
   it("treats Canvas base URL as configured when the Canvas deployment does not require an API key", () => {
@@ -75,5 +81,30 @@ describe("config env", () => {
     expect(cfg.canvasWorkflowName).toBe("TK工作流");
     expect(cfg.canvasApiKey).toBe("");
     expect(getSecretStatus(cfg).canvasConfigured).toBe(true);
+  });
+
+  it("loads non-secret image runtime choices and reports headless readiness without exposing credentials", () => {
+    const cfg = loadConfig({
+      ...BASE_ENV,
+      IMAGE_GENERATION_PATH: "headless",
+      IMAGE_PLANNER_BASE_URL: "https://planner.test/v1",
+      IMAGE_PLANNER_API_KEY: "TEST_PLANNER_SECRET_DO_NOT_LOG",
+      IMAGE_PLANNER_MODEL: "planner-v4",
+      IMAGE_PROVIDER_BASE_URL: "https://images.test/v1",
+      IMAGE_PROVIDER_API_KEY: "TEST_IMAGE_SECRET_DO_NOT_LOG",
+      IMAGE_PROVIDER_MODEL: "image-v2"
+    });
+
+    expect(cfg.imageGenerationPath).toBe("headless");
+    expect(cfg.imagePlannerModel).toBe("planner-v4");
+    expect(cfg.imageProviderModel).toBe("image-v2");
+    expect(cfg.imageGenerationConfigured).toBe(true);
+    const safe = JSON.stringify(getSecretStatus(cfg));
+    expect(safe).not.toMatch(/TEST_(?:PLANNER|IMAGE)_SECRET_DO_NOT_LOG/);
+    expect(JSON.parse(safe)).toMatchObject({ imageGenerationConfigured: true });
+  });
+
+  it("accepts zero Canvas runs as the documented unlimited value", () => {
+    expect(loadConfig({ ...BASE_ENV, MAX_CANVAS_RUNS_PER_DAY: "0" }).maxCanvasRunsPerDay).toBe(0);
   });
 });

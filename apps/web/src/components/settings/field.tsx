@@ -1,6 +1,7 @@
 import type { ReactNode } from "react";
 
 export interface FieldProps {
+  id: string;
   label: string;
   help?: string;
   error?: string;
@@ -8,19 +9,20 @@ export interface FieldProps {
   children: ReactNode;
 }
 
-export function Field({ label, help, error, isDirty, children }: FieldProps): React.JSX.Element {
+export function Field({ id, label, help, error, isDirty, children }: FieldProps): React.JSX.Element {
+  const descriptionId = `${id}-${error ? "error" : "help"}`;
   return (
-    <label className="tk-field">
-      <span className="tk-field__label">{label}</span>
+    <div className="tk-field">
+      <label className="tk-field__label" htmlFor={id}>{label}</label>
       <span className={`tk-field__control${isDirty ? " is-dirty" : ""}`}>
         {children}
         {isDirty ? <span className="tk-field__dirty-dot" aria-hidden /> : null}
       </span>
       {error ? (
-        <span className="tk-field__error" role="alert">{error}</span>
+        <span id={descriptionId} className="tk-field__error" role="alert">{error}</span>
       ) : help ? (
-        <span className="tk-field__help">{help}</span>
+        <span id={descriptionId} className="tk-field__help">{help}</span>
       ) : null}
-    </label>
+    </div>
   );
 }

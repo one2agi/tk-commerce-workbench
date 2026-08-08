@@ -9,6 +9,7 @@
     "paths": {
       "@tk/contracts": ["../../packages/contracts/src/index.ts"],
       "@tk/contracts/*": ["../../packages/contracts/src/*"],
+      "@tk/config": ["../../packages/config/src/index.ts"],
       "@tk/config/*": ["../../packages/config/src/*"],
       "@tk/domain": ["../../packages/domain/src/index.ts"],
       "@tk/domain/*": ["../../packages/domain/src/*"],
