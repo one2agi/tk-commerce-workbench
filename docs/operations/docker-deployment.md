@@ -1,0 +1,245 @@
+# Docker 开发与部署手册
+
+本文适用于两种场景：
+
+- 本机开发：Web、Worker、PostgreSQL 全部在 Docker 中运行；修改当前源码后自动热重载。
+- VPS / 其他电脑：只运行已经构建好的固定版本镜像，不挂载源码，便于升级和回滚。
+
+## 运行结构与数据边界
+
+| 内容 | 本机开发 | 线上 / 其他电脑 |
+|---|---|---|
+| Web、Worker | `tk-commerce-workbench:dev`，挂载源码并热重载 | 两个带版本号的不可变镜像 |
+| PostgreSQL | Docker volume `tk-commerce-workbench_postgres_data` | 同名 Docker volume |
+| 素材 | 宿主机 storage 下的 `data/assets` | 宿主机明确指定的持久化目录 |
+| 配置与密钥 | 宿主机 storage 下的 `.env`，只注入容器 | 目标机器上的 `.env`，不打进镜像 |
+| 对外端口 | 默认仅 `127.0.0.1:3000` | 默认仅 loopback；由反向代理提供 HTTPS |
+
+镜像、源码、数据库和素材相互独立。升级镜像不会删除数据库或素材；`down` 命令也禁止携带 `--volumes`。
+
+## 本机开发
+
+### 前置条件
+
+- Docker Desktop / Docker Engine 已启动，并支持 `docker compose`。
+- 当前机器已存在运行时配置：`~/.local/share/tk-commerce-workbench/.env`。
+- 当前机器已存在素材目录：`~/.local/share/tk-commerce-workbench/data/assets`。
+- 当前 PostgreSQL 数据卷名为 `tk-commerce-workbench_postgres_data`。
+
+如果需要使用不同的 storage 根目录，只为当前命令设置 `TK_WORKBENCH_STORAGE_DIR`。目录内仍须包含 `.env` 和 `data/assets`：
+
+```bash
+TK_WORKBENCH_STORAGE_DIR=/srv/tk-workbench pnpm docker:dev:up
+```
+
+### 首次切换到全 Docker
+
+```bash
+pnpm docker:dev:up
+```
+
+首次执行会按以下顺序工作：
+
+1. 检查 Docker、运行时 `.env`、素材目录和既有 PostgreSQL volume。
+2. 在任何数据库迁移之前，把 PostgreSQL 与素材打包成同一批次备份。
+3. 构建开发镜像，启动 PostgreSQL，执行迁移，再启动 Web 和 Worker。
+4. Web 健康检查成功后，才记录迁移已完成标记。
+
+成功后访问 `http://127.0.0.1:3000`。
+
+### 热重载范围
+
+修改以下目录会由容器内开发进程自动加载，无需重建镜像：
+
+- `apps/web/src`
+- `apps/worker/src`
+- `packages/adapters/src`
+- `packages/config/src`
+- `packages/contracts/src`
+- `packages/db/src`
+- `packages/domain/src`
+
+以下内容改变后需要重新执行 `pnpm docker:dev:up`，让开发镜像重建：
+
+- `package.json`、`pnpm-lock.yaml`、workspace 配置
+- Dockerfile 或 Compose 文件
+- Next.js / TypeScript 等构建配置
+- 新增不在上述挂载范围内的源目录
+
+### 日常命令
+
+```bash
+# 状态和 Web 健康信息
+pnpm docker:status
+
+# 查看全部日志；指定服务时直接调用底层入口
+pnpm docker:logs
+node scripts/docker-local.mjs dev:logs web
+node scripts/docker-local.mjs dev:logs worker
+
+# 安全停止；保留 PostgreSQL volume 和素材
+pnpm docker:dev:down
+
+# 手工创建数据库 + 素材成对备份
+pnpm docker:backup
+```
+
+## 备份与恢复
+
+默认备份目录为：
+
+```text
+~/.local/share/tk-commerce-workbench/data/backups/<UTC时间>/
+├── postgres.dump
+├── assets.tar.gz
+└── manifest.json
+```
+
+`manifest.json` 保存版本、数据卷名、文件大小和 SHA-256，用于确认数据库和素材确实来自同一批次；它不保存密钥值。
+
+恢复是高影响操作，先停止 Web 和 Worker，并把当前数据再备份一份。确认目标批次后执行：
+
+```bash
+# 只启动 PostgreSQL
+docker compose -p tk-commerce-workbench -f docker-compose.yml up -d --wait postgres
+
+# 恢复数据库（会覆盖同名对象，请先确认目标数据库）
+docker compose -p tk-commerce-workbench -f docker-compose.yml exec -T postgres \
+  pg_restore -U postgres -d tk_workbench --clean --if-exists \
+  < /绝对路径/备份批次/postgres.dump
+
+# 恢复素材到当前 storage；先把现有素材目录移到安全位置，再解包
+tar -xzf /绝对路径/备份批次/assets.tar.gz \
+  -C ~/.local/share/tk-commerce-workbench/data/assets
+```
+
+恢复后重新启动对应环境，并抽查商品数、任务状态和素材可访问性。
+
+## 构建生产镜像
+
+默认镜像版本取当前 Git 短提交号：
+
+```bash
+pnpm docker:prod:build
+```
+
+也可以显式指定发布版本：
+
+```bash
+TK_IMAGE_TAG=2026.08.08-1 pnpm docker:prod:build
+```
+
+产出：
+
+- `tk-commerce-workbench-web:<版本>`
+- `tk-commerce-workbench-worker:<版本>`
+
+生产镜像不包含项目 `.env`、本地数据、素材或 Git 历史。
+
+## 部署到 VPS 或其他电脑
+
+### 目标机器准备
+
+1. 安装 Docker Engine 和 Compose 插件。
+2. 放置本仓库的 `docker-compose.yml`、`compose.prod.yml` 和 `scripts/postgres-init.sql`；不需要挂载源码运行，也不要求目标机安装 Node.js / pnpm。
+3. 创建持久化目录，例如 `/srv/tk-workbench`：
+
+```bash
+mkdir -p /srv/tk-workbench/data/assets
+chmod 700 /srv/tk-workbench /srv/tk-workbench/data /srv/tk-workbench/data/assets
+```
+
+4. 把运行时 `.env` 放到 `/srv/tk-workbench/.env`，权限设为 `0600`。不要把它提交到 Git、复制进镜像或打印到日志。
+
+生产环境中 Compose 会把数据库地址和素材容器路径固定为 Docker 内部地址；其余业务配置继续从目标机器的 `.env` 注入。
+
+### 方式一：使用镜像仓库
+
+构建机给镜像增加仓库标签并推送：
+
+```bash
+docker tag tk-commerce-workbench-web:2026.08.08-1 registry.example.com/tk/workbench-web:2026.08.08-1
+docker tag tk-commerce-workbench-worker:2026.08.08-1 registry.example.com/tk/workbench-worker:2026.08.08-1
+docker push registry.example.com/tk/workbench-web:2026.08.08-1
+docker push registry.example.com/tk/workbench-worker:2026.08.08-1
+```
+
+目标机器拉取镜像后，使用环境变量告诉 Compose 仓库地址和版本：
+
+```bash
+export TK_IMAGE_TAG=2026.08.08-1
+export TK_WEB_IMAGE=registry.example.com/tk/workbench-web
+export TK_WORKER_IMAGE=registry.example.com/tk/workbench-worker
+export TK_WORKBENCH_ENV_FILE=/srv/tk-workbench/.env
+export TK_WORKBENCH_ASSET_DIR=/srv/tk-workbench/data/assets
+docker compose -p tk-commerce-workbench \
+  -f docker-compose.yml -f compose.prod.yml up -d --wait
+```
+
+### 方式二：离线镜像包
+
+构建机导出两个生产镜像：
+
+```bash
+TK_IMAGE_TAG=2026.08.08-1 pnpm docker:image:export -- /绝对路径/tk-workbench-2026.08.08-1.tar
+```
+
+将 tar 文件和部署文件复制到目标机器，然后导入并启动。离线包使用默认镜像名，因此无需设置仓库地址：
+
+```bash
+docker load -i /绝对路径/tk-workbench-2026.08.08-1.tar
+export TK_IMAGE_TAG=2026.08.08-1
+export TK_WORKBENCH_ENV_FILE=/srv/tk-workbench/.env
+export TK_WORKBENCH_ASSET_DIR=/srv/tk-workbench/data/assets
+docker compose -p tk-commerce-workbench \
+  -f docker-compose.yml -f compose.prod.yml up -d --wait
+```
+
+### 线上入口
+
+默认仍绑定 `127.0.0.1:3000`，推荐由 Caddy / Nginx / Cloudflare Tunnel 提供域名和 HTTPS。若反向代理运行在另一容器网络或确实需要宿主机外部访问，可显式设置：
+
+```bash
+TK_WEB_BIND_IP=0.0.0.0 TK_WEB_PORT=3000 \
+TK_WORKBENCH_ENV_FILE=/srv/tk-workbench/.env \
+TK_WORKBENCH_ASSET_DIR=/srv/tk-workbench/data/assets \
+TK_IMAGE_TAG=2026.08.08-1 \
+docker compose -p tk-commerce-workbench \
+  -f docker-compose.yml -f compose.prod.yml up -d --wait
+```
+
+开放 `0.0.0.0` 前必须同时配置防火墙、HTTPS 反向代理和访问控制。
+
+## 升级与回滚
+
+升级前先在装有本仓库工具的管理机执行 `pnpm docker:backup`，或在服务器上分别执行 `pg_dump -Fc` 与素材归档并保存同一批次。记录当前版本和备份批次后，导入 / 拉取新镜像，并以新 tag 再次执行 `up`：
+
+```bash
+TK_WORKBENCH_STORAGE_DIR=/srv/tk-workbench pnpm docker:backup
+export TK_IMAGE_TAG=2026.08.08-2
+export TK_WORKBENCH_ENV_FILE=/srv/tk-workbench/.env
+export TK_WORKBENCH_ASSET_DIR=/srv/tk-workbench/data/assets
+docker compose -p tk-commerce-workbench \
+  -f docker-compose.yml -f compose.prod.yml up -d --wait
+```
+
+回滚应用版本时使用上一版 `TK_IMAGE_TAG` 再次启动。若新版本已经执行不可逆数据库迁移，仅回滚镜像不够，必须使用升级前的数据库与素材成对备份恢复。
+
+## 排障
+
+| 现象 | 处理 |
+|---|---|
+| `Docker daemon is unavailable` | 启动 Docker Desktop / Docker Engine 后重试 |
+| `.env` 或素材目录 missing | 检查 `TK_WORKBENCH_STORAGE_DIR` 是否指向正确的持久化根目录 |
+| PostgreSQL volume missing（开发模式） | 本机开发要求沿用现有卷；先用 `docker volume ls` 确认卷名，避免误建空库 |
+| `127.0.0.1:3000` 被占用 | 停止旧宿主机 Web；或设置 `TK_WEB_PORT=3001` 后启动 |
+| Web 健康检查失败 | `node scripts/docker-local.mjs dev:logs web` 查看 Web 日志，同时检查迁移服务日志 |
+| Worker 未工作 | `node scripts/docker-local.mjs dev:logs worker`，确认 `.env` 中业务配置完整 |
+| 生产启动提示 `TK_IMAGE_TAG is required` | 显式指定已经存在于目标机器上的镜像版本 |
+
+## 安全约束
+
+- 不使用 `docker compose down -v`，也不要手工删除 `tk-commerce-workbench_postgres_data`。
+- 不把 `.env`、数据库 dump、素材备份和镜像离线包提交到 Git。
+- 对外部署默认只监听 loopback，通过 HTTPS 反向代理暴露服务。
+- 每次迁移或升级都把 PostgreSQL 和素材作为同一恢复单元。

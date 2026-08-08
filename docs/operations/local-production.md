@@ -1,5 +1,7 @@
 # 本地生产（单人单机）
 
+> 如果希望 Web、Worker 和 PostgreSQL 全部运行在 Docker 中，开发时自动热重载，并能把同一套镜像部署到 VPS 或其他电脑，请使用 [Docker 开发与部署手册](./docker-deployment.md)。本文保留的是宿主机直接运行 Node.js 的旧流程。
+
 本目录文档描述在**同一台机器**上把工作台跑成“生产模式”的最小流程：浏览器扩展采集 → 本机 Web/Worker → 商品处理台。默认模式仍是 mock，不消耗外部额度；需要真实 MVP 验收时，可以显式切到 full-live 模式，调用真实 Canvas / LLM / 汇率 / 妙手。
 
 ## 谁应该用

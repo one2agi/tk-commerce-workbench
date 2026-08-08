@@ -5,7 +5,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 
-async function renderCompose(mode) {
+async function renderCompose(mode, environment = {}) {
   const root = await mkdtemp(join(tmpdir(), "tk-compose-test-"));
   const envFile = join(root, ".env");
   const assetDir = join(root, "assets");
@@ -42,7 +42,8 @@ async function renderCompose(mode) {
         TK_WORKBENCH_ENV_FILE: envFile,
         TK_WORKBENCH_ASSET_DIR: assetDir,
         TK_IMAGE_TAG: "test-image-tag",
-        TK_WEB_PORT: "3000"
+        TK_WEB_PORT: "3000",
+        ...environment
       }
     }
   );
@@ -84,4 +85,24 @@ test("production Compose uses immutable images without source or database ports"
       false
     );
   }
+});
+
+test("production Compose accepts registry-qualified image repositories", async () => {
+  const config = await renderCompose("prod", {
+    TK_WEB_IMAGE: "registry.example.com/tk/workbench-web",
+    TK_WORKER_IMAGE: "registry.example.com/tk/workbench-worker"
+  });
+
+  assert.equal(
+    config.services.web.image,
+    "registry.example.com/tk/workbench-web:test-image-tag"
+  );
+  assert.equal(
+    config.services.worker.image,
+    "registry.example.com/tk/workbench-worker:test-image-tag"
+  );
+  assert.equal(
+    config.services.migrate.image,
+    "registry.example.com/tk/workbench-worker:test-image-tag"
+  );
 });

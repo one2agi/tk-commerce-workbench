@@ -16,7 +16,18 @@
     "test:integration": "pnpm --filter @tk/db test:integration && pnpm --filter @tk/worker test:integration",
     "test:e2e": "playwright test",
     "db:generate": "pnpm --filter @tk/db db:generate",
-    "db:migrate": "pnpm --filter @tk/db db:migrate"
+    "db:migrate": "pnpm --filter @tk/db db:migrate",
+    "docker:dev:up": "node scripts/docker-local.mjs dev:up",
+    "docker:dev:down": "node scripts/docker-local.mjs dev:down",
+    "docker:status": "node scripts/docker-local.mjs dev:status",
+    "docker:logs": "node scripts/docker-local.mjs dev:logs",
+    "docker:backup": "node scripts/docker-local.mjs backup",
+    "docker:prod:build": "node scripts/docker-local.mjs prod:build",
+    "docker:prod:up": "node scripts/docker-local.mjs prod:up",
+    "docker:prod:down": "node scripts/docker-local.mjs prod:down",
+    "docker:image:export": "node scripts/docker-local.mjs image:export",
+    "docker:image:import": "node scripts/docker-local.mjs image:import",
+    "test:docker": "node --test scripts/tests/docker-*.test.mjs scripts/tests/run-next-container.test.mjs"
   },
   "devDependencies": {
     "@playwright/test": "1.61.1",
