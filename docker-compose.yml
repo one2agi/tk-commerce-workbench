@@ -1,7 +1,6 @@
 services:
   postgres:
     image: postgres:16-alpine
-    container_name: tk-workbench-postgres
     restart: unless-stopped
     # 仅 loopback，避免数据库被局域网或公网意外暴露。
     ports:
@@ -22,3 +21,4 @@ services:
 
 volumes:
   postgres_data:
+    name: ${TK_POSTGRES_VOLUME_NAME:-tk-commerce-workbench_postgres_data}
