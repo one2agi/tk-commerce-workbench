@@ -1,5 +1,7 @@
 // @vitest-environment node
 import { describe, expect, it } from "vitest";
+// @ts-expect-error The workspace provides jsdom at runtime without package-local typings.
+import { JSDOM } from "jsdom";
 
 import { requestPageContext } from "./detail-parser.js";
 import {
@@ -9,8 +11,6 @@ import {
 
 describe("read1688PageContext", () => {
   it("transfers the allowlisted snapshot across the shared DOM event mailbox", async () => {
-    // @ts-expect-error The workspace provides jsdom at runtime without package-local typings.
-    const { JSDOM } = await import("jsdom");
     const dom = new JSDOM("<!doctype html><html><body></body></html>", {
       url: "https://detail.1688.com/offer/1051175706079.html"
     });
