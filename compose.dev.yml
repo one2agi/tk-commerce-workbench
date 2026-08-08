@@ -63,7 +63,7 @@ services:
 
   worker:
     image: tk-commerce-workbench:dev
-    command: ["pnpm", "--filter", "@tk/worker", "dev"]
+    command: ["sh", "-c", "rm -f /tmp/tk-worker-ready.json && exec pnpm --filter @tk/worker dev"]
     env_file: *app-env-file
     environment:
       <<: *app-environment

@@ -13,6 +13,7 @@ import {
   writeFile
 } from "node:fs/promises";
 import { basename, dirname, join } from "node:path";
+import { pipeline } from "node:stream/promises";
 
 import { DOCKER_PROJECT_NAME, POSTGRES_VOLUME_NAME } from "./config.mjs";
 
@@ -119,33 +120,62 @@ function capture(command, args, { cwd, env }) {
   });
 }
 
-function runToFile(command, args, target, { cwd, env }) {
-  return new Promise((resolveResult, reject) => {
-    const output = createWriteStream(target, { flags: "wx", mode: 0o600 });
-    let stderr = "";
-    const child = spawn(command, args, {
-      cwd,
-      env,
-      shell: false,
-      stdio: ["ignore", "pipe", "pipe"]
-    });
-    child.stdout.pipe(output);
-    child.stderr.on("data", (chunk) => { stderr += chunk; });
-    child.once("error", async (error) => {
-      output.destroy();
-      await unlink(target).catch(() => undefined);
-      reject(error);
-    });
-    child.once("exit", async (code) => {
-      if (code !== 0) {
-        output.destroy();
-        await unlink(target).catch(() => undefined);
-        reject(new Error((stderr || `${command} exited with ${code}`).trim()));
-        return;
-      }
-      output.end(resolveResult);
+async function runToFile(command, args, target, { cwd, env }) {
+  const output = createWriteStream(target, { flags: "wx", mode: 0o600 });
+  let stderr = "";
+  const child = spawn(command, args, {
+    cwd,
+    env,
+    shell: false,
+    stdio: ["ignore", "pipe", "pipe"]
+  });
+  child.stderr.on("data", (chunk) => { stderr += chunk; });
+  const exited = new Promise((resolveResult, reject) => {
+    child.once("error", reject);
+    child.once("close", (code, signal) => {
+      if (signal) reject(new Error(`${command} stopped by ${signal}`));
+      else if (code === 0) resolveResult();
+      else reject(new Error((stderr || `${command} exited with ${code}`).trim()));
     });
   });
+  const streamed = pipeline(child.stdout, output).catch((error) => {
+    child.kill("SIGTERM");
+    throw error;
+  });
+  const results = await Promise.allSettled([streamed, exited]);
+  const failure = results.find((result) => result.status === "rejected");
+  if (failure) {
+    await unlink(target).catch(() => undefined);
+    throw failure.reason;
+  }
+}
+
+async function runFromFile(command, args, source, { cwd, env }) {
+  const input = createReadStream(source);
+  let stderr = "";
+  const child = spawn(command, args, {
+    cwd,
+    env,
+    shell: false,
+    stdio: ["pipe", "ignore", "pipe"]
+  });
+  child.stderr.on("data", (chunk) => { stderr += chunk; });
+  const exited = new Promise((resolveResult, reject) => {
+    child.once("error", reject);
+    child.once("close", (code, signal) => {
+      if (signal) reject(new Error(`${command} stopped by ${signal}`));
+      else if (code === 0) resolveResult();
+      else reject(new Error((stderr || `${command} exited with ${code}`).trim()));
+    });
+  });
+  const streamed = pipeline(input, child.stdin).catch((error) => {
+    child.kill("SIGTERM");
+    throw error;
+  });
+  const results = await Promise.allSettled([streamed, exited]);
+  const failure = results[1].status === "rejected" ? results[1] :
+    results.find((result) => result.status === "rejected");
+  if (failure) throw failure.reason;
 }
 
 function run(command, args, { cwd, env }) {
@@ -212,29 +242,92 @@ export function assertExpectedPostgresVolume(mounts) {
   if (!matched) throw new Error(`PostgreSQL container is not using required volume: ${POSTGRES_VOLUME_NAME}`);
 }
 
-export async function createLocalDockerBackup({ paths, env, repoRoot }) {
-  const timestamp = compactUtcTimestamp();
-  const backupPaths = createBackupPaths({ backupRoot: paths.backupDir, timestamp });
-  const [containerId, repoCommit] = await Promise.all([
-    postgresContainerId({ repoRoot, env }),
-    capture("git", ["rev-parse", "HEAD"], { cwd: repoRoot, env })
-  ]);
+export async function runWithApplicationPause({
+  containerIds,
+  stopApplications,
+  startApplications,
+  restartApplications = true,
+  task
+}) {
+  let result;
+  let failure;
+  try {
+    if (containerIds.length > 0) await stopApplications(containerIds);
+    result = await task();
+  } catch (error) {
+    failure = error;
+  }
+  if (restartApplications && containerIds.length > 0) {
+    try {
+      await startApplications(containerIds);
+    } catch (error) {
+      failure = failure ?
+        new AggregateError([failure, error], "backup failed and applications could not be resumed") :
+        error;
+    }
+  }
+  if (failure) throw failure;
+  return result;
+}
 
-  return createPairedBackup({
-    paths: backupPaths,
-    assetDir: paths.assetDir,
-    repoCommit,
-    volumeName: POSTGRES_VOLUME_NAME,
-    writeDatabaseDump: (target) => runToFile(
-      "docker",
-      ["exec", containerId, "pg_dump", "-U", "postgres", "-d", "tk_workbench", "-Fc"],
-      target,
-      { cwd: repoRoot, env }
-    ),
-    createAssetArchive: (target, assetDir) => run(
-      "tar",
-      ["-czf", target, "-C", assetDir, "."],
-      { cwd: repoRoot, env }
-    )
+async function runningApplicationContainerIds({ repoRoot, env }) {
+  const ids = [];
+  for (const service of ["web", "worker"]) {
+    const output = await capture("docker", [
+      "ps", "-q",
+      "--filter", `label=com.docker.compose.project=${DOCKER_PROJECT_NAME}`,
+      "--filter", `label=com.docker.compose.service=${service}`
+    ], { cwd: repoRoot, env });
+    if (output) ids.push(...output.split(/\s+/).filter(Boolean));
+  }
+  return [...new Set(ids)];
+}
+
+export async function createLocalDockerBackup({
+  paths,
+  env,
+  repoRoot,
+  restartApplications = true
+}) {
+  const applicationIds = await runningApplicationContainerIds({ repoRoot, env });
+  return runWithApplicationPause({
+    containerIds: applicationIds,
+    restartApplications,
+    stopApplications: (ids) => run("docker", ["stop", ...ids], { cwd: repoRoot, env }),
+    startApplications: (ids) => run("docker", ["start", ...ids], { cwd: repoRoot, env }),
+    task: async () => {
+      const timestamp = compactUtcTimestamp();
+      const backupPaths = createBackupPaths({ backupRoot: paths.backupDir, timestamp });
+      const [containerId, repoCommit] = await Promise.all([
+        postgresContainerId({ repoRoot, env }),
+        capture("git", ["rev-parse", "HEAD"], { cwd: repoRoot, env })
+      ]);
+
+      return createPairedBackup({
+        paths: backupPaths,
+        assetDir: paths.assetDir,
+        repoCommit,
+        volumeName: POSTGRES_VOLUME_NAME,
+        writeDatabaseDump: async (target) => {
+          await runToFile(
+            "docker",
+            ["exec", containerId, "pg_dump", "-U", "postgres", "-d", "tk_workbench", "-Fc"],
+            target,
+            { cwd: repoRoot, env }
+          );
+          await runFromFile(
+            "docker",
+            ["exec", "-i", containerId, "pg_restore", "--list"],
+            target,
+            { cwd: repoRoot, env }
+          );
+        },
+        createAssetArchive: (target, assetDir) => run(
+          "tar",
+          ["-czf", target, "-C", assetDir, "."],
+          { cwd: repoRoot, env }
+        )
+      });
+    }
   });
 }

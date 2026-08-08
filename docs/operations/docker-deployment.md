@@ -40,8 +40,8 @@ pnpm docker:dev:up
 
 首次执行会按以下顺序工作：
 
-1. 检查 Docker、运行时 `.env`、素材目录和既有 PostgreSQL volume。
-2. 在任何数据库迁移之前，把 PostgreSQL 与素材打包成同一批次备份。
+1. 检查 Docker、运行时 `.env`、素材目录和既有 PostgreSQL volume；若检测到宿主机版 Web / Worker 的运行记录则拒绝继续，并提示先使用原停止入口关闭它们。
+2. 停止仍在运行的旧 Web / Worker，阻断新写入；在任何数据库迁移之前，把 PostgreSQL 与素材打包成同一批次备份。
 3. 构建开发镜像，启动 PostgreSQL，执行迁移，再启动 Web 和 Worker。
 4. Web 健康检查成功后，才记录迁移已完成标记。
 
@@ -80,7 +80,7 @@ node scripts/docker-local.mjs dev:logs worker
 # 安全停止；保留 PostgreSQL volume 和素材
 pnpm docker:dev:down
 
-# 手工创建数据库 + 素材成对备份
+# 手工创建数据库 + 素材成对备份；期间会短暂停止 Web / Worker，完成后自动恢复
 pnpm docker:backup
 ```
 
@@ -97,7 +97,7 @@ pnpm docker:backup
 
 `manifest.json` 保存版本、数据卷名、文件大小和 SHA-256，用于确认数据库和素材确实来自同一批次；它不保存密钥值。
 
-备份命令会先确认既有 volume 存在，并核对 PostgreSQL 容器实际挂载的正是该 volume；不会为了备份自动创建空数据卷。任一阶段失败时，整个临时批次都会清理，不会留下可被误认成成功备份的半成品。
+备份命令会先确认既有 volume 存在，并核对 PostgreSQL 容器实际挂载的正是该 volume；不会为了备份自动创建空数据卷。为了让数据库与素材对应同一业务时间点，命令会短暂停止当前正在运行的 Web / Worker，备份成功或失败后都会恢复它们。任一阶段失败时，整个临时批次都会清理，不会留下可被误认成成功备份的半成品。首次 Docker 迁移是例外：旧应用会保持停止，随后直接启动新容器，避免备份后到迁移前再次写入。
 
 恢复是高影响操作，先停止 Web 和 Worker，并把当前数据再备份一份。先用 `sha256sum postgres.dump assets.tar.gz` 计算两个文件摘要，并逐项与 `manifest.json` 中的值比较；任一不一致都停止恢复。确认目标批次后执行：
 
@@ -220,10 +220,60 @@ ssh -N -L 3000:127.0.0.1:3000 user@your-vps
 
 ## 升级与回滚
 
-升级前先在装有本仓库工具的管理机执行 `pnpm docker:backup`，或在服务器上分别执行 `pg_dump -Fc` 与素材归档并保存同一批次。记录当前版本和备份批次后，导入 / 拉取新镜像，并以新 tag 再次执行 `up`：
+升级前先创建数据库与素材成对备份。若服务器上有本仓库及 Node.js / pnpm，可使用管理脚本；它会自动进入短暂维护窗口：
 
 ```bash
 TK_WORKBENCH_STORAGE_DIR=/srv/tk-workbench pnpm docker:backup
+```
+
+若目标机只有 Docker，使用下面的 Docker-only 流程。先停止写入，再把两个文件放进同一个批次目录；任何一步失败都不要把该目录视为可恢复备份：
+
+```bash
+export TK_IMAGE_TAG=2026.08.08-1 # 替换为当前正在运行的版本
+export TK_WORKBENCH_ENV_FILE=/srv/tk-workbench/.env
+export TK_WORKBENCH_ASSET_DIR=/srv/tk-workbench/data/assets
+(
+  set -eu
+  tk_compose() {
+    docker compose -p tk-commerce-workbench \
+      -f docker-compose.yml -f compose.prod.yml "$@"
+  }
+  TK_RUNNING_SERVICES=$(tk_compose ps --services --status running | \
+    awk '$0 == "web" || $0 == "worker"')
+  TK_BACKUP_ROOT=/srv/tk-workbench/data/backups
+  install -d -m 700 "$TK_BACKUP_ROOT"
+  TK_BACKUP_PARTIAL=$(mktemp -d "$TK_BACKUP_ROOT/.partial-XXXXXXXX")
+  tk_cleanup() {
+    tk_status=$?
+    trap - EXIT
+    rm -rf -- "$TK_BACKUP_PARTIAL"
+    if [ -n "$TK_RUNNING_SERVICES" ]; then
+      # 只恢复备份前实际在运行的服务，不唤醒原本停用的任务。
+      tk_compose start $TK_RUNNING_SERVICES || tk_status=$?
+    fi
+    exit "$tk_status"
+  }
+  trap tk_cleanup EXIT
+  tk_compose stop web worker
+  tk_compose exec -T postgres \
+    pg_dump -U postgres -d tk_workbench -Fc > "$TK_BACKUP_PARTIAL/postgres.dump"
+  tk_compose exec -T postgres pg_restore --list \
+    < "$TK_BACKUP_PARTIAL/postgres.dump" > /dev/null
+  tar -czf "$TK_BACKUP_PARTIAL/assets.tar.gz" \
+    -C /srv/tk-workbench/data/assets .
+  (
+    cd "$TK_BACKUP_PARTIAL"
+    sha256sum postgres.dump assets.tar.gz > SHA256SUMS
+  )
+  TK_BACKUP_BATCH="$TK_BACKUP_ROOT/$(date -u +%Y%m%dT%H%M%SZ)-${TK_BACKUP_PARTIAL##*-}"
+  mv "$TK_BACKUP_PARTIAL" "$TK_BACKUP_BATCH"
+  echo "Backup ready: $TK_BACKUP_BATCH"
+)
+```
+
+确认备份完整后，记录当前版本和批次，再导入 / 拉取新镜像，并以新 tag 启动：
+
+```bash
 export TK_IMAGE_TAG=2026.08.08-2
 export TK_WORKBENCH_ENV_FILE=/srv/tk-workbench/.env
 export TK_WORKBENCH_ASSET_DIR=/srv/tk-workbench/data/assets
@@ -249,5 +299,5 @@ docker compose -p tk-commerce-workbench \
 
 - 不使用 `docker compose down -v`，也不要手工删除 `tk-commerce-workbench_postgres_data`。
 - 不把 `.env`、数据库 dump、素材备份和镜像离线包提交到 Git。
-- 对外部署默认只监听 loopback，通过 HTTPS 反向代理暴露服务。
+- 对外部署默认只监听 loopback；当前版本只允许通过 SSH 本地隧道访问，不直接接入公网反向代理。
 - 每次迁移或升级都把 PostgreSQL 和素材作为同一恢复单元。

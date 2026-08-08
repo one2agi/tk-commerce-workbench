@@ -1,9 +1,12 @@
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
+import { mkdtemp, mkdir, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import test from "node:test";
 
-import { parseDockerCliArguments } from "../docker/cli.mjs";
+import { assertNoHostRuntimeMetadata, parseDockerCliArguments } from "../docker/cli.mjs";
 
 const cli = fileURLToPath(new URL("../docker-local.mjs", import.meta.url));
 
@@ -56,4 +59,23 @@ test("image actions accept pnpm's forwarded argument separator", () => {
     parseDockerCliArguments(["image:import", "/tmp/images.tar"]),
     { action: "image:import", argument: "/tmp/images.tar" }
   );
+});
+
+test("first Docker migration refuses active host runtime metadata", async () => {
+  const storageDir = await mkdtemp(join(tmpdir(), "tk-docker-host-runtime-"));
+  const runtimeDir = join(storageDir, "data", "runtime");
+  await mkdir(runtimeDir, { recursive: true });
+  await writeFile(join(runtimeDir, "processes.json"), "{}\n");
+
+  await assert.rejects(
+    () => assertNoHostRuntimeMetadata(storageDir),
+    /local-production-runtime\.mjs stop/
+  );
+  await rm(storageDir, { recursive: true, force: true });
+});
+
+test("first Docker migration accepts storage without host runtime metadata", async () => {
+  const storageDir = await mkdtemp(join(tmpdir(), "tk-docker-no-host-runtime-"));
+  await assert.doesNotReject(() => assertNoHostRuntimeMetadata(storageDir));
+  await rm(storageDir, { recursive: true, force: true });
 });

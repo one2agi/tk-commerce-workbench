@@ -134,3 +134,69 @@ test("migration marker references only the verified backup and commit", async ()
   assert.doesNotMatch(JSON.stringify(marker), /password|token|secret/i);
   await rm(root, { recursive: true, force: true });
 });
+
+test("backup maintenance window stops running applications and resumes them", async () => {
+  const events = [];
+  const result = await callBackup("runWithApplicationPause", {
+    containerIds: ["web-id", "worker-id"],
+    stopApplications: async (ids) => { events.push(["stop", ...ids]); },
+    startApplications: async (ids) => { events.push(["start", ...ids]); },
+    task: async () => {
+      events.push(["backup"]);
+      return "complete";
+    }
+  });
+
+  assert.equal(result, "complete");
+  assert.deepEqual(events, [
+    ["stop", "web-id", "worker-id"],
+    ["backup"],
+    ["start", "web-id", "worker-id"]
+  ]);
+});
+
+test("failed manual backup still resumes applications", async () => {
+  const events = [];
+  await assert.rejects(
+    () => callBackup("runWithApplicationPause", {
+      containerIds: ["web-id"],
+      stopApplications: async () => { events.push("stop"); },
+      startApplications: async () => { events.push("start"); },
+      task: async () => {
+        events.push("backup");
+        throw new Error("backup failed");
+      }
+    }),
+    /backup failed/
+  );
+  assert.deepEqual(events, ["stop", "backup", "start"]);
+});
+
+test("failed application stop still attempts to restore prior availability", async () => {
+  const events = [];
+  await assert.rejects(
+    () => callBackup("runWithApplicationPause", {
+      containerIds: ["web-id", "worker-id"],
+      stopApplications: async () => {
+        events.push("stop");
+        throw new Error("stop failed");
+      },
+      startApplications: async () => { events.push("start"); },
+      task: async () => { events.push("backup"); }
+    }),
+    /stop failed/
+  );
+  assert.deepEqual(events, ["stop", "start"]);
+});
+
+test("first migration backup keeps old applications stopped", async () => {
+  const events = [];
+  await callBackup("runWithApplicationPause", {
+    containerIds: ["web-id", "worker-id"],
+    restartApplications: false,
+    stopApplications: async () => { events.push("stop"); },
+    startApplications: async () => { events.push("start"); },
+    task: async () => { events.push("backup"); }
+  });
+  assert.deepEqual(events, ["stop", "backup"]);
+});

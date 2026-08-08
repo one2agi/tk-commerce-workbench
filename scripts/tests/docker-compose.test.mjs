@@ -70,6 +70,7 @@ test("development Compose renders hot reload and protected local persistence", a
   assert.equal(web.environment.WATCHPACK_POLLING, "true");
   assert.equal(worker.environment.CHOKIDAR_USEPOLLING, "true");
   assert.equal(worker.environment.TK_WORKER_READY_PATH, "/tmp/tk-worker-ready.json");
+  assert.match(worker.command.join(" "), /rm -f \/tmp\/tk-worker-ready\.json/);
   assert.equal(config.volumes.postgres_data.external, true);
   assert.equal(config.volumes.postgres_data.name, "tk-commerce-workbench_postgres_data");
   assert.ok(web.volumes.some((volume) => volume.source.endsWith("/apps/web/src")));
@@ -85,6 +86,7 @@ test("production Compose uses immutable images without source or database ports"
   assert.equal(config.services.web.environment.ALLOW_LAN, "true");
   assert.equal(config.services.web.environment.TK_RUNTIME_LAUNCH_ID, "docker-test-image-tag");
   assert.equal(config.services.worker.environment.TK_WORKER_READY_PATH, "/tmp/tk-worker-ready.json");
+  assert.match(config.services.worker.command.join(" "), /rm -f \/tmp\/tk-worker-ready\.json/);
   assert.equal(config.services["assets-check"].image, "tk-commerce-workbench-worker:test-image-tag");
   assert.match(config.services.migrate.command.join(" "), /runInitialMigration/);
   assert.deepEqual(config.services.postgres.ports ?? [], []);

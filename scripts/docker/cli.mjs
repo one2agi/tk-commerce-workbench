@@ -1,7 +1,7 @@
 import { spawn } from "node:child_process";
 import { access } from "node:fs/promises";
 import { connect as netConnect } from "node:net";
-import { dirname, resolve } from "node:path";
+import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import {
@@ -81,6 +81,20 @@ async function assertPath(path, label) {
   });
 }
 
+export async function assertNoHostRuntimeMetadata(storageDir) {
+  const metadataPath = join(storageDir, "data", "runtime", "processes.json");
+  const exists = await access(metadataPath).then(() => true, (error) => {
+    if (error?.code === "ENOENT") return false;
+    throw error;
+  });
+  if (exists) {
+    throw new Error(
+      `host Web/Worker runtime must be stopped before Docker migration: ${metadataPath}; ` +
+      "run: node scripts/local-production-runtime.mjs stop"
+    );
+  }
+}
+
 async function composeServiceId(mode, service, env) {
   const result = await runCommand(
     "docker",
@@ -155,8 +169,14 @@ export async function runDockerCli(argv, { baseEnv = process.env } = {}) {
     let migrationBackup;
     const markerExists = await access(paths.migrationMarker).then(() => true, () => false);
     if (!markerExists) {
+      await assertNoHostRuntimeMetadata(paths.storageDir);
       const { createLocalDockerBackup } = await import("./backup.mjs");
-      migrationBackup = await createLocalDockerBackup({ paths, env, repoRoot: REPO_ROOT });
+      migrationBackup = await createLocalDockerBackup({
+        paths,
+        env,
+        repoRoot: REPO_ROOT,
+        restartApplications: false
+      });
     }
     await runCommand("docker", ["build", "--target", "dev", "-t", "tk-commerce-workbench:dev", "."], { env });
     await dockerCompose("dev", ["up", "-d", "--wait"], env);
