@@ -26,7 +26,7 @@ FROM dev AS builder
 ENV NODE_ENV=production
 ENV NEXT_TELEMETRY_DISABLED=1
 RUN pnpm --filter @tk/web build
-RUN pnpm --filter @tk/worker deploy --prod /out/worker
+RUN pnpm --filter @tk/worker deploy --prod /app/out/worker
 
 FROM node:22-bookworm-slim AS web-runner
 WORKDIR /app
@@ -42,6 +42,6 @@ CMD ["node", "apps/web/server.js"]
 FROM node:22-bookworm-slim AS worker-runner
 WORKDIR /app
 ENV NODE_ENV=production
-COPY --chown=node:node --from=builder /out/worker ./
+COPY --chown=node:node --from=builder /app/out/worker ./
 USER node
 CMD ["node", "--import", "tsx", "src/cli.ts"]
