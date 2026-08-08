@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { access, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { access, mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -78,6 +78,43 @@ test("successful paired backup writes digests and non-secret source metadata", a
   assert.match(manifest.assets.sha256, /^[a-f0-9]{64}$/);
   assert.doesNotMatch(JSON.stringify(manifest), /password|token|secret/i);
   await rm(root, { recursive: true, force: true });
+});
+
+test("asset archive failure removes the dump and every partial batch", async () => {
+  const root = await mkdtemp(join(tmpdir(), "tk-backup-asset-failure-"));
+  const paths = callBackup("createBackupPaths", { backupRoot: root, timestamp: "20260808T120000Z" });
+  await assert.rejects(
+    () => callBackup("createPairedBackup", {
+      paths,
+      assetDir: root,
+      repoCommit: "abc1234",
+      volumeName: "tk-commerce-workbench_postgres_data",
+      writeDatabaseDump: async (target) => writeFile(target, "database-bytes"),
+      createAssetArchive: async (target) => {
+        await writeFile(target, "partial-assets");
+        throw new Error("archive failed");
+      }
+    }),
+    /archive failed/
+  );
+  assert.deepEqual(await readdir(root), []);
+  await rm(root, { recursive: true, force: true });
+});
+
+test("backup accepts only the established PostgreSQL volume mount", () => {
+  assert.doesNotThrow(() => callBackup("assertExpectedPostgresVolume", [{
+    Type: "volume",
+    Name: "tk-commerce-workbench_postgres_data",
+    Destination: "/var/lib/postgresql/data"
+  }]));
+  assert.throws(
+    () => callBackup("assertExpectedPostgresVolume", [{
+      Type: "volume",
+      Name: "unexpected_empty_volume",
+      Destination: "/var/lib/postgresql/data"
+    }]),
+    /required volume/
+  );
 });
 
 test("migration marker references only the verified backup and commit", async () => {

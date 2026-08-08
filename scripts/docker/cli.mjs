@@ -6,8 +6,10 @@ import { fileURLToPath } from "node:url";
 
 import {
   POSTGRES_VOLUME_NAME,
+  assertCleanProductionSource,
   buildComposeArgs,
   buildDockerEnvironment,
+  resolveWebUrl,
   resolveDockerPaths,
   validateImageTag
 } from "./config.mjs";
@@ -92,6 +94,7 @@ async function preflight({ mode, paths, env }) {
   await runCommand("docker", ["info"], { env, capture: true }).catch(() => {
     throw new Error("Docker daemon is unavailable");
   });
+  if (mode === "build") return;
   await assertPath(paths.envFile, "Docker environment file");
   await assertPath(paths.assetDir, "Docker asset directory");
 
@@ -165,7 +168,7 @@ export async function runDockerCli(argv, { baseEnv = process.env } = {}) {
         repoCommit: migrationBackup.manifest.repoCommit
       });
     }
-    process.stdout.write("Docker development stack is ready at http://127.0.0.1:3000\n");
+    process.stdout.write(`Docker development stack is ready at ${resolveWebUrl(env)}\n`);
     return;
   }
   if (action === "dev:down") {
@@ -176,7 +179,7 @@ export async function runDockerCli(argv, { baseEnv = process.env } = {}) {
     await preflight({ mode: "dev", paths, env });
     const status = await dockerCompose("dev", ["ps"], env, { capture: true });
     process.stdout.write(status.stdout);
-    const response = await fetch("http://127.0.0.1:3000/api/runtime-health");
+    const response = await fetch(`${resolveWebUrl(env)}/api/runtime-health`);
     if (!response.ok) throw new Error(`runtime health returned HTTP ${response.status}`);
     process.stdout.write(`${JSON.stringify(await response.json())}\n`);
     return;
@@ -188,7 +191,9 @@ export async function runDockerCli(argv, { baseEnv = process.env } = {}) {
     return;
   }
   if (action === "prod:build") {
-    await preflight({ mode: "prod", paths, env });
+    await preflight({ mode: "build", paths, env });
+    const status = await runCommand("git", ["status", "--porcelain"], { capture: true });
+    assertCleanProductionSource(status.stdout);
     await buildProductionImages(imageTag, env);
     process.stdout.write(`Built production images with tag ${imageTag}\n`);
     return;

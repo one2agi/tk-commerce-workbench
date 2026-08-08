@@ -14,7 +14,8 @@ COPY packages ./packages
 RUN pnpm install --frozen-lockfile
 
 FROM deps AS dev
-COPY . .
+COPY --chown=node:node . .
+USER node
 ENV NODE_ENV=development
 
 FROM dev AS builder

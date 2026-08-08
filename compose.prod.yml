@@ -14,6 +14,13 @@ services:
   postgres:
     ports: !reset []
 
+  assets-check:
+    image: ${TK_WORKER_IMAGE:-tk-commerce-workbench-worker}:${TK_IMAGE_TAG:?TK_IMAGE_TAG is required}
+    command: ["node", "-e", "const fs=require('fs');const p='/app/data/assets/.docker-write-check-'+process.pid;fs.writeFileSync(p,'ok',{flag:'wx'});fs.unlinkSync(p)"]
+    volumes:
+      - ${TK_WORKBENCH_ASSET_DIR:?TK_WORKBENCH_ASSET_DIR is required}:/app/data/assets
+    restart: "no"
+
   migrate:
     image: ${TK_WORKER_IMAGE:-tk-commerce-workbench-worker}:${TK_IMAGE_TAG:?TK_IMAGE_TAG is required}
     command:
@@ -46,6 +53,8 @@ services:
     depends_on:
       migrate:
         condition: service_completed_successfully
+      assets-check:
+        condition: service_completed_successfully
     healthcheck:
       test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:3000/api/runtime-health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
       interval: 10s
@@ -59,6 +68,8 @@ services:
     env_file: *app-env-file
     environment:
       <<: *app-environment
+      TK_RUNTIME_LAUNCH_ID: docker-${TK_IMAGE_TAG:?TK_IMAGE_TAG is required}-worker
+      TK_WORKER_READY_PATH: /tmp/tk-worker-ready.json
       WORKER_COMMAND_ID: docker-prod-worker
       WORKER_IDEMPOTENCY_KEY: docker-prod-worker-v1
     volumes:
@@ -66,8 +77,10 @@ services:
     depends_on:
       migrate:
         condition: service_completed_successfully
+      assets-check:
+        condition: service_completed_successfully
     healthcheck:
-      test: ["CMD", "node", "-e", "const fs=require('fs');process.exit(fs.readFileSync('/proc/1/cmdline','utf8').includes('node')?0:1)"]
+      test: ["CMD", "node", "-e", "const fs=require('fs');try{const p=JSON.parse(fs.readFileSync('/tmp/tk-worker-ready.json','utf8'));process.exit(p.launchId===process.env.TK_RUNTIME_LAUNCH_ID&&p.pid===1?0:1)}catch{process.exit(1)}"]
       interval: 10s
       timeout: 5s
       retries: 6

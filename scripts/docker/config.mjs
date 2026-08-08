@@ -26,6 +26,18 @@ export function validateImageTag(value) {
   return value;
 }
 
+export function resolveWebUrl(env = process.env) {
+  const port = env.TK_WEB_PORT || "3000";
+  if (!/^\d{1,5}$/.test(port) || Number(port) < 1 || Number(port) > 65535) {
+    throw new Error("invalid Docker Web port");
+  }
+  return `http://127.0.0.1:${port}`;
+}
+
+export function assertCleanProductionSource(status) {
+  if (status.trim()) throw new Error("production images require a clean Git worktree");
+}
+
 export function buildComposeArgs({
   mode,
   operation,

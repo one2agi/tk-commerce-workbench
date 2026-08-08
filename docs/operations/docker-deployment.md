@@ -97,7 +97,9 @@ pnpm docker:backup
 
 `manifest.json` 保存版本、数据卷名、文件大小和 SHA-256，用于确认数据库和素材确实来自同一批次；它不保存密钥值。
 
-恢复是高影响操作，先停止 Web 和 Worker，并把当前数据再备份一份。确认目标批次后执行：
+备份命令会先确认既有 volume 存在，并核对 PostgreSQL 容器实际挂载的正是该 volume；不会为了备份自动创建空数据卷。任一阶段失败时，整个临时批次都会清理，不会留下可被误认成成功备份的半成品。
+
+恢复是高影响操作，先停止 Web 和 Worker，并把当前数据再备份一份。先用 `sha256sum postgres.dump assets.tar.gz` 计算两个文件摘要，并逐项与 `manifest.json` 中的值比较；任一不一致都停止恢复。确认目标批次后执行：
 
 ```bash
 # 只启动 PostgreSQL
@@ -106,9 +108,14 @@ docker compose -p tk-commerce-workbench -f docker-compose.yml up -d --wait postg
 # 恢复数据库（会覆盖同名对象，请先确认目标数据库）
 docker compose -p tk-commerce-workbench -f docker-compose.yml exec -T postgres \
   pg_restore -U postgres -d tk_workbench --clean --if-exists \
+  --exit-on-error --single-transaction \
   < /绝对路径/备份批次/postgres.dump
 
-# 恢复素材到当前 storage；先把现有素材目录移到安全位置，再解包
+# 恢复素材；先移走旧目录，再以容器 node 用户的 UID/GID 创建空目录
+mv ~/.local/share/tk-commerce-workbench/data/assets \
+  ~/.local/share/tk-commerce-workbench/data/assets.before-restore
+install -d -o 1000 -g 1000 -m 700 \
+  ~/.local/share/tk-commerce-workbench/data/assets
 tar -xzf /绝对路径/备份批次/assets.tar.gz \
   -C ~/.local/share/tk-commerce-workbench/data/assets
 ```
@@ -122,6 +129,8 @@ tar -xzf /绝对路径/备份批次/assets.tar.gz \
 ```bash
 pnpm docker:prod:build
 ```
+
+构建只依赖源码与 Docker，不要求构建机已有运行时 `.env` 或素材目录。为保证版本可审计，工作树有未提交文件时构建会拒绝执行。
 
 也可以显式指定发布版本：
 
@@ -145,8 +154,8 @@ TK_IMAGE_TAG=2026.08.08-1 pnpm docker:prod:build
 3. 创建持久化目录，例如 `/srv/tk-workbench`：
 
 ```bash
-mkdir -p /srv/tk-workbench/data/assets
-chmod 700 /srv/tk-workbench /srv/tk-workbench/data /srv/tk-workbench/data/assets
+install -d -o 1000 -g 1000 -m 700 /srv/tk-workbench/data/assets
+chmod 700 /srv/tk-workbench /srv/tk-workbench/data
 ```
 
 4. 把运行时 `.env` 放到 `/srv/tk-workbench/.env`，权限设为 `0600`。不要把它提交到 Git、复制进镜像或打印到日志。
@@ -197,20 +206,17 @@ docker compose -p tk-commerce-workbench \
   -f docker-compose.yml -f compose.prod.yml up -d --wait
 ```
 
-### 线上入口
+### 远程访问入口
 
-默认仍绑定 `127.0.0.1:3000`，推荐由 Caddy / Nginx / Cloudflare Tunnel 提供域名和 HTTPS。若反向代理运行在另一容器网络或确实需要宿主机外部访问，可显式设置：
+当前产品仍是单用户 loopback 安全模型，Host 和写操作 Origin 都必须是 loopback。它**不支持**直接通过公网域名、Caddy / Nginx / Cloudflare Tunnel 操作，也不应设置 `TK_WEB_BIND_IP=0.0.0.0`。
+
+在 VPS 或另一台电脑上运行时，保持默认 `127.0.0.1:3000`，从操作电脑建立 SSH 本地隧道：
 
 ```bash
-TK_WEB_BIND_IP=0.0.0.0 TK_WEB_PORT=3000 \
-TK_WORKBENCH_ENV_FILE=/srv/tk-workbench/.env \
-TK_WORKBENCH_ASSET_DIR=/srv/tk-workbench/data/assets \
-TK_IMAGE_TAG=2026.08.08-1 \
-docker compose -p tk-commerce-workbench \
-  -f docker-compose.yml -f compose.prod.yml up -d --wait
+ssh -N -L 3000:127.0.0.1:3000 user@your-vps
 ```
 
-开放 `0.0.0.0` 前必须同时配置防火墙、HTTPS 反向代理和访问控制。
+然后只访问操作电脑上的 `http://127.0.0.1:3000`。未来若需要公网多用户访问，必须先增加正式认证、可信代理与 CSRF/Origin 设计，不属于本方案。
 
 ## 升级与回滚
 

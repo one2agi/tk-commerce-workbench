@@ -1,4 +1,4 @@
-import { createHash } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { spawn } from "node:child_process";
 import {
   createReadStream,
@@ -6,6 +6,8 @@ import {
 } from "node:fs";
 import {
   mkdir,
+  rename,
+  rm,
   stat,
   unlink,
   writeFile
@@ -46,40 +48,51 @@ export async function createPairedBackup({
   writeDatabaseDump,
   createAssetArchive
 }) {
-  await mkdir(paths.backupDir, { recursive: true, mode: 0o700 });
-  await writeDatabaseDump(paths.databaseFile);
-  await createAssetArchive(paths.assetsFile, assetDir);
-
-  const [databaseStat, assetsStat, databaseSha256, assetsSha256] = await Promise.all([
-    stat(paths.databaseFile),
-    stat(paths.assetsFile),
-    sha256File(paths.databaseFile),
-    sha256File(paths.assetsFile)
-  ]);
-  if (databaseStat.size === 0 || assetsStat.size === 0) {
-    throw new Error("paired backup contains an empty artifact");
-  }
-
-  const manifest = {
-    timestamp: basename(paths.backupDir),
-    repoCommit,
-    postgres: {
-      volume: volumeName,
-      file: basename(paths.databaseFile),
-      bytes: databaseStat.size,
-      sha256: databaseSha256
-    },
-    assets: {
-      source: assetDir,
-      file: basename(paths.assetsFile),
-      bytes: assetsStat.size,
-      sha256: assetsSha256
-    }
-  };
-  await writeFile(paths.manifestFile, `${JSON.stringify(manifest, null, 2)}\n`, {
-    mode: 0o600
+  const stagingPaths = createBackupPaths({
+    backupRoot: dirname(paths.backupDir),
+    timestamp: `.${basename(paths.backupDir)}.partial-${randomUUID()}`
   });
-  return { ...paths, manifest };
+  await mkdir(dirname(paths.backupDir), { recursive: true, mode: 0o700 });
+  await mkdir(stagingPaths.backupDir, { recursive: false, mode: 0o700 });
+  try {
+    await writeDatabaseDump(stagingPaths.databaseFile);
+    await createAssetArchive(stagingPaths.assetsFile, assetDir);
+
+    const [databaseStat, assetsStat, databaseSha256, assetsSha256] = await Promise.all([
+      stat(stagingPaths.databaseFile),
+      stat(stagingPaths.assetsFile),
+      sha256File(stagingPaths.databaseFile),
+      sha256File(stagingPaths.assetsFile)
+    ]);
+    if (databaseStat.size === 0 || assetsStat.size === 0) {
+      throw new Error("paired backup contains an empty artifact");
+    }
+
+    const manifest = {
+      timestamp: basename(paths.backupDir),
+      repoCommit,
+      postgres: {
+        volume: volumeName,
+        file: basename(paths.databaseFile),
+        bytes: databaseStat.size,
+        sha256: databaseSha256
+      },
+      assets: {
+        source: assetDir,
+        file: basename(paths.assetsFile),
+        bytes: assetsStat.size,
+        sha256: assetsSha256
+      }
+    };
+    await writeFile(stagingPaths.manifestFile, `${JSON.stringify(manifest, null, 2)}\n`, {
+      mode: 0o600
+    });
+    await rename(stagingPaths.backupDir, paths.backupDir);
+    return { ...paths, manifest };
+  } catch (error) {
+    await rm(stagingPaths.backupDir, { recursive: true, force: true });
+    throw error;
+  }
 }
 
 export async function writeMigrationMarker({ markerPath, backupDir, repoCommit }) {
@@ -154,6 +167,12 @@ function run(command, args, { cwd, env }) {
 }
 
 async function postgresContainerId({ repoRoot, env }) {
+  await capture("docker", ["volume", "inspect", POSTGRES_VOLUME_NAME], {
+    cwd: repoRoot,
+    env
+  }).catch(() => {
+    throw new Error(`required PostgreSQL volume is missing: ${POSTGRES_VOLUME_NAME}`);
+  });
   const baseArgs = [
     "compose",
     "-p",
@@ -176,7 +195,21 @@ async function postgresContainerId({ repoRoot, env }) {
     });
   }
   if (!id) throw new Error("PostgreSQL service container is not running");
+  const mounts = JSON.parse(await capture("docker", ["inspect", "--format", "{{json .Mounts}}", id], {
+    cwd: repoRoot,
+    env
+  }));
+  assertExpectedPostgresVolume(mounts);
   return id;
+}
+
+export function assertExpectedPostgresVolume(mounts) {
+  const matched = Array.isArray(mounts) && mounts.some((mount) =>
+    mount?.Type === "volume" &&
+    mount?.Name === POSTGRES_VOLUME_NAME &&
+    mount?.Destination === "/var/lib/postgresql/data"
+  );
+  if (!matched) throw new Error(`PostgreSQL container is not using required volume: ${POSTGRES_VOLUME_NAME}`);
 }
 
 export async function createLocalDockerBackup({ paths, env, repoRoot }) {

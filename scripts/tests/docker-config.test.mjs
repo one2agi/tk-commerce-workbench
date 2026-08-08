@@ -69,3 +69,17 @@ test("image tags reject shell and path syntax", () => {
     assert.throws(() => callConfig("validateImageTag", value), /invalid Docker image tag/);
   }
 });
+
+test("Web readiness uses the configured published port", () => {
+  assert.equal(callConfig("resolveWebUrl", {}), "http://127.0.0.1:3000");
+  assert.equal(callConfig("resolveWebUrl", { TK_WEB_PORT: "3001" }), "http://127.0.0.1:3001");
+  assert.throws(() => callConfig("resolveWebUrl", { TK_WEB_PORT: "70000" }), /invalid Docker Web port/);
+});
+
+test("production image tags cannot describe uncommitted source", () => {
+  assert.doesNotThrow(() => callConfig("assertCleanProductionSource", "\n"));
+  assert.throws(
+    () => callConfig("assertCleanProductionSource", " M apps/web/src/app.tsx\n"),
+    /clean Git worktree/
+  );
+});
