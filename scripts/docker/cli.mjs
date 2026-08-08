@@ -143,8 +143,22 @@ export async function runDockerCli(argv, { baseEnv = process.env } = {}) {
 
   if (action === "dev:up") {
     await preflight({ mode: "dev", paths, env });
+    let migrationBackup;
+    const markerExists = await access(paths.migrationMarker).then(() => true, () => false);
+    if (!markerExists) {
+      const { createLocalDockerBackup } = await import("./backup.mjs");
+      migrationBackup = await createLocalDockerBackup({ paths, env, repoRoot: REPO_ROOT });
+    }
     await runCommand("docker", ["build", "--target", "dev", "-t", "tk-commerce-workbench:dev", "."], { env });
     await dockerCompose("dev", ["up", "-d", "--wait"], env);
+    if (migrationBackup) {
+      const { writeMigrationMarker } = await import("./backup.mjs");
+      await writeMigrationMarker({
+        markerPath: paths.migrationMarker,
+        backupDir: migrationBackup.backupDir,
+        repoCommit: migrationBackup.manifest.repoCommit
+      });
+    }
     process.stdout.write("Docker development stack is ready at http://127.0.0.1:3000\n");
     return;
   }
