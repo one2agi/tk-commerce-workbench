@@ -170,8 +170,9 @@ describe("SettingsWorkspace", () => {
       expect(ctx.queryByRole("region", { name: "保存栏" })).toBeNull();
     });
     expect(fetcher).toHaveBeenCalledTimes(1);
-    expect(ctx.getByText(/已保存/)).toBeInTheDocument();
-    expect(ctx.getByText(/v13/)).toBeInTheDocument(); // server-returned version, not draft.version (12)
+    const savedStatus = ctx.getByRole("status");
+    expect(savedStatus).toHaveTextContent(/更改已保存/);
+    expect(savedStatus).toHaveTextContent(/v13/); // server-returned version, not draft.version (12)
   });
 
   it("PATCH 409 keeps the save bar visible and shows conflict copy", async () => {
@@ -198,7 +199,7 @@ describe("SettingsWorkspace", () => {
     await user.click(ctx.getByRole("button", { name: "保存更改" }));
 
     await waitFor(() => {
-      expect(ctx.getByRole("region", { name: "保存栏" })).toHaveTextContent(/保存失败/);
+      expect(ctx.getByRole("region", { name: "保存栏" })).toHaveTextContent(/设置未保存/);
     });
     expect(ctx.getByDisplayValue("th-TH")).toBeInTheDocument();
   });
