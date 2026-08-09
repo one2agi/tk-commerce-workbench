@@ -12,7 +12,7 @@ describe("worker executable", () => {
     const close = vi.fn(async () => undefined);
 
     await runWorkerProcess({
-      application: { run, counters: () => ({ canvas: 0, llm: 0, exchangeRate: 0, assetStaging: 0 }), close },
+      application: { run, counters: () => ({ canvas: 0, llm: 0, exchangeRate: 0, assetStaging: 0, assetPublishing: 0, imagePlanner: 0, imageGeneration: 0 }), close },
       maxCycles: 1,
       pollIntervalMs: 1
     });
@@ -29,7 +29,7 @@ describe("worker executable", () => {
     await runWorkerProcess({
       application: {
         run: vi.fn(async () => ({ processed: 0 })),
-        counters: () => ({ canvas: 0, llm: 0, exchangeRate: 0, assetStaging: 0 }),
+        counters: () => ({ canvas: 0, llm: 0, exchangeRate: 0, assetStaging: 0, assetPublishing: 0, imagePlanner: 0, imageGeneration: 0 }),
         close
       },
       env: {
@@ -53,7 +53,7 @@ describe("worker executable", () => {
     await expect(runWorkerProcess({
       application: {
         run: vi.fn(async () => { throw new Error("database unavailable"); }),
-        counters: () => ({ canvas: 0, llm: 0, exchangeRate: 0, assetStaging: 0 }),
+        counters: () => ({ canvas: 0, llm: 0, exchangeRate: 0, assetStaging: 0, assetPublishing: 0, imagePlanner: 0, imageGeneration: 0 }),
         close: vi.fn(async () => undefined)
       },
       env: {
@@ -90,7 +90,7 @@ describe("worker executable", () => {
               );
               throw error;
             }),
-            counters: () => ({ canvas: 0, llm: 0, exchangeRate: 0, assetStaging: 0 }),
+            counters: () => ({ canvas: 0, llm: 0, exchangeRate: 0, assetStaging: 0, assetPublishing: 0, imagePlanner: 0, imageGeneration: 0 }),
             close: vi.fn(async () => undefined)
           },
           env: {

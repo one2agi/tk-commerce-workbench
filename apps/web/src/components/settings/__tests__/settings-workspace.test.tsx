@@ -34,7 +34,7 @@ function baseline(): WorkspaceSettingsView {
       imageProviderModel: "image-v2"
     },
     retryPolicy: { maxAttempts: 5, initialDelaySeconds: 30 },
-    secretStatus: { miaoshouConfigured: true, canvasConfigured: true, llmConfigured: true, exchangeRateConfigured: false },
+    secretStatus: { miaoshouConfigured: true, canvasConfigured: true, llmConfigured: true, exchangeRateConfigured: false, imageGenerationConfigured: true, imageGenerationPath: "headless" },
     runtimeStatus: {
       active: {
         externalAdapterMode: "mock",

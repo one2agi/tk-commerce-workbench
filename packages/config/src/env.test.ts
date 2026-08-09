@@ -68,7 +68,9 @@ describe("config env", () => {
       canvasConfigured: true,
       llmConfigured: true,
       exchangeRateConfigured: true,
-      imageGenerationConfigured: false
+      imageGenerationConfigured: false,
+      imageGenerationPath: "canvas",
+      assetPublishingConfigured: false
     });
   });
 
@@ -106,5 +108,67 @@ describe("config env", () => {
 
   it("accepts zero Canvas runs as the documented unlimited value", () => {
     expect(loadConfig({ ...BASE_ENV, MAX_CANVAS_RUNS_PER_DAY: "0" }).maxCanvasRunsPerDay).toBe(0);
+  });
+
+  it("reports image generation configured only when both planner and image provider are complete", () => {
+    const cfg = loadConfig({
+      ...BASE_ENV,
+      IMAGE_PLANNER_BASE_URL: "https://planner.test",
+      IMAGE_PLANNER_API_KEY: "planner-key",
+      IMAGE_PLANNER_MODEL: "gpt-4o",
+      IMAGE_PROVIDER_BASE_URL: "https://images.test",
+      IMAGE_PROVIDER_API_KEY: "provider-key",
+      IMAGE_PROVIDER_MODEL: "dall-e-3"
+    });
+    expect(cfg.imageGenerationConfigured).toBe(true);
+  });
+
+  it("reports asset publishing configured only when all S3 fields are present", () => {
+    const cfg = loadConfig({
+      ...BASE_ENV,
+      ASSET_PUBLISH_S3_ENDPOINT: "https://s3.example.com",
+      ASSET_PUBLISH_S3_REGION: "us-east-1",
+      ASSET_PUBLISH_S3_BUCKET: "tk-assets",
+      ASSET_PUBLISH_S3_ACCESS_KEY_ID: "test-key",
+      ASSET_PUBLISH_S3_SECRET_ACCESS_KEY: "test-secret",
+      ASSET_PUBLISH_PUBLIC_BASE_URL: "https://cdn.example.com"
+    });
+    expect(cfg.assetPublishingConfigured).toBe(true);
+    expect(getSecretStatus(cfg).assetPublishingConfigured).toBe(true);
+  });
+
+  it("reports asset publishing not configured when any S3 field is missing", () => {
+    const cfg = loadConfig({
+      ...BASE_ENV,
+      ASSET_PUBLISH_S3_ENDPOINT: "https://s3.example.com",
+      ASSET_PUBLISH_S3_REGION: "us-east-1",
+      ASSET_PUBLISH_S3_BUCKET: "tk-assets",
+      ASSET_PUBLISH_S3_ACCESS_KEY_ID: "test-key",
+      ASSET_PUBLISH_S3_SECRET_ACCESS_KEY: "",
+      ASSET_PUBLISH_PUBLIC_BASE_URL: "https://cdn.example.com"
+    });
+    expect(cfg.assetPublishingConfigured).toBe(false);
+  });
+
+  it("defaults IMAGE_GENERATION_PATH to canvas when not set", () => {
+    const cfg = loadConfig(BASE_ENV);
+    expect(cfg.imageGenerationPath).toBe("canvas");
+    expect(getSecretStatus(cfg).imageGenerationPath).toBe("canvas");
+  });
+
+  it("accepts explicit headless and canvas routing", () => {
+    expect(loadConfig({ ...BASE_ENV, IMAGE_GENERATION_PATH: "headless" }).imageGenerationPath).toBe("headless");
+    expect(loadConfig({ ...BASE_ENV, IMAGE_GENERATION_PATH: "canvas" }).imageGenerationPath).toBe("canvas");
+  });
+
+  it("parses IMAGE_GENERATION_PATH as headless when explicitly set", () => {
+    const cfg = loadConfig({ ...BASE_ENV, IMAGE_GENERATION_PATH: "headless" });
+    expect(cfg.imageGenerationPath).toBe("headless");
+    expect(getSecretStatus(cfg).imageGenerationPath).toBe("headless");
+  });
+
+  it("rejects unknown IMAGE_GENERATION_PATH values", () => {
+    expect(() => loadConfig({ ...BASE_ENV, IMAGE_GENERATION_PATH: "unknown" }))
+      .toThrow(/IMAGE_GENERATION_PATH/);
   });
 });

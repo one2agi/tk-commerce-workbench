@@ -8,11 +8,25 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { ContentAddressedStore, createNodePinnedAssetFetch, type AssetFetch } from "./content-addressed-store.js";
 
 const jpeg = (...payload: string[]) => Buffer.concat([
-  Buffer.from([0xff, 0xd8, 0xff, 0xe0]),
+  Buffer.from([
+    0xff, 0xd8,
+    0xff, 0xe0, 0x00, 0x02,
+    0xff, 0xc0, 0x00, 0x0b, 0x08,
+    0x01, 0xe0, 0x02, 0x80,
+    0x01, 0x01, 0x11, 0x00
+  ]),
   ...payload.map((part) => Buffer.from(part))
 ]);
 const png = (...payload: string[]) => Buffer.concat([
   Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]),
+  Buffer.from([
+    0x00, 0x00, 0x00, 0x0d,
+    0x49, 0x48, 0x44, 0x52,
+    0x00, 0x00, 0x01, 0x40,
+    0x00, 0x00, 0x00, 0xf0,
+    0x08, 0x06, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00
+  ]),
   ...payload.map((part) => Buffer.from(part))
 ]);
 
@@ -68,6 +82,7 @@ describe("ContentAddressedStore", () => {
     const second = await store.archive("https://cdn.example/item.jpg");
 
     expect(first.sha256).toMatch(/^[a-f0-9]{64}$/);
+    expect(first).toMatchObject({ width: 640, height: 480, extension: "jpg" });
     expect(first.path).toBe(join(assetRoot, first.sha256.slice(0, 2), `${first.sha256}.jpg`));
     expect(second.path).toBe(first.path);
     expect(await readFile(first.path)).toEqual(jpeg("hello world"));
@@ -89,6 +104,7 @@ describe("ContentAddressedStore", () => {
     const archived = await store.archive("http://127.0.0.1:8123/assets/output/generated.png");
 
     expect(archived.extension).toBe("png");
+    expect(archived).toMatchObject({ width: 320, height: 240 });
     expect(fetch).toHaveBeenCalledWith(expect.objectContaining({
       connectAddress: "127.0.0.1",
       hostHeader: "127.0.0.1:8123"

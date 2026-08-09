@@ -29,7 +29,7 @@ describe("adapter bundle factory cost boundary", () => {
     const createLiveFetch = vi.fn(() => { throw new Error("must not construct dispatcher"); });
     const bundle = createAdapterBundle(mockConfig, undefined, { constructLive, createLiveFetch });
     expect(bundle.mode).toBe("mock");
-    expect(bundle.counters()).toEqual({ canvas: 0, llm: 0, exchangeRate: 0, assetStaging: 0 });
+    expect(bundle.counters()).toEqual({ canvas: 0, llm: 0, exchangeRate: 0, assetStaging: 0, assetPublishing: 0, imagePlanner: 0, imageGeneration: 0 });
     expect(constructLive).not.toHaveBeenCalled();
     expect(createLiveFetch).not.toHaveBeenCalled();
   });
@@ -38,7 +38,7 @@ describe("adapter bundle factory cost boundary", () => {
     const bundle = createAdapterBundle(mockConfig);
     await bundle.canvas.readWorkflowCapacity("workflow_1");
     await bundle.exchangeRate.latestSnapshot({ base: "CNY", target: "THB" });
-    expect(bundle.counters()).toEqual({ canvas: 1, llm: 0, exchangeRate: 1, assetStaging: 0 });
+    expect(bundle.counters()).toEqual({ canvas: 1, llm: 0, exchangeRate: 1, assetStaging: 0, assetPublishing: 0, imagePlanner: 0, imageGeneration: 0 });
   });
 
   it.each(["test", "integration", "e2e"] as const)("fails closed for live mode in %s", (processKind) => {
@@ -86,7 +86,9 @@ describe("adapter bundle factory cost boundary", () => {
       externalAdapterMode: "live", nodeEnv: "production", assetRoot,
       canvasBaseUrl: "https://canvas.test", canvasId: "canvas-local-1", canvasWorkflowName: "Local TK", canvasApiKey: "canvas-secret",
       llmBaseUrl: "https://llm.test/v1", llmApiKey: "llm-secret", llmModel: "model-1",
-      exchangeRateBaseUrl: "https://rates.test"
+      exchangeRateBaseUrl: "https://rates.test",
+      imagePlannerBaseUrl: "https://planner.test", imagePlannerApiKey: "planner-key", imagePlannerModel: "gpt-4o",
+      imageProviderBaseUrl: "https://images.test", imageProviderApiKey: "provider-key", imageProviderModel: "dall-e-3"
     }, { kind: "worker_command", commandId: "command_123", idempotencyKey: "stable:key:123" }, { createLiveFetch });
 
     expect(createLiveFetch).toHaveBeenCalledTimes(1);
@@ -119,7 +121,9 @@ describe("adapter bundle factory cost boundary", () => {
       externalAdapterMode: "live", nodeEnv: "production", assetRoot: "./data/assets",
       canvasBaseUrl: "https://canvas.test",
       llmBaseUrl: "https://llm.test/v1", llmApiKey: "llm-secret", llmModel: "model-1",
-      exchangeRateBaseUrl: "https://rates.test"
+      exchangeRateBaseUrl: "https://rates.test",
+      imagePlannerBaseUrl: "https://planner.test", imagePlannerApiKey: "planner-key", imagePlannerModel: "gpt-4o",
+      imageProviderBaseUrl: "https://images.test", imageProviderApiKey: "provider-key", imageProviderModel: "dall-e-3"
     }, { kind: "worker_command", commandId: "command_123", idempotencyKey: "stable:key:123" }, {
       createLiveFetch: () => sharedFetch
     });
@@ -157,7 +161,9 @@ describe("adapter bundle factory cost boundary", () => {
       externalAdapterMode: "live", nodeEnv: "production", assetRoot: "./data/assets",
       canvasBaseUrl: "https://canvas.test",
       llmBaseUrl: "https://llm.test/v1", llmApiKey: "llm-secret", llmModel: "model-1",
-      exchangeRateBaseUrl: "https://rates.test"
+      exchangeRateBaseUrl: "https://rates.test",
+      imagePlannerBaseUrl: "https://planner.test", imagePlannerApiKey: "planner-key", imagePlannerModel: "gpt-4o",
+      imageProviderBaseUrl: "https://images.test", imageProviderApiKey: "provider-key", imageProviderModel: "dall-e-3"
     }, { kind: "worker_command", commandId: "command_123", idempotencyKey: "stable:key:123" }, {
       createLiveFetch: () => sharedFetch
     });
@@ -244,5 +250,12 @@ describe("adapter bundle factory cost boundary", () => {
     }
     expect(serialized).toContain("adapter.proxy_invalid");
     expect(serialized).not.toContain(sentinel);
+  });
+
+  it("refuses live worker startup with an incomplete image provider", () => {
+    expect(() => createAdapterBundle(
+      { externalAdapterMode: "live", nodeEnv: "production", assetRoot: "./data/assets", imageProviderApiKey: "" },
+      { kind: "worker_command", commandId: "command_123", idempotencyKey: "stable:key:123" }
+    )).toThrow("live adapter configuration is incomplete");
   });
 });

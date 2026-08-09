@@ -12,3 +12,8 @@ export * from "./templates/match-template.js";
 export * from "./automation/graph.js";
 export * from "./approval/create-snapshot.js";
 export * from "./approval/invalidate-approval.js";
+export * from "./image-generation/validate-recipe.js";
+export * from "./image-generation/validate-plan.js";
+export * from "./image-generation/resolve-template.js";
+export * from "./image-generation/infer-category.js";
+export * from "./image-generation/slot-business-key.js";

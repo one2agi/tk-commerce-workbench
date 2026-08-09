@@ -98,6 +98,12 @@ test("sync-live copies only allowed runtime keys, preserves loopback safety, and
     "LLM_BASE_URL=https://api.siliconflow.cn/v1",
     "LLM_API_KEY=llm-secret",
     "LLM_MODEL=deepseek-ai/DeepSeek-V4-Flash",
+    "IMAGE_PLANNER_BASE_URL=https://planner.test/v1",
+    "IMAGE_PLANNER_API_KEY=planner-secret",
+    "IMAGE_PLANNER_MODEL=planner-model",
+    "IMAGE_PROVIDER_BASE_URL=https://api.apimart.ai/v1/images/generations",
+    "IMAGE_PROVIDER_API_KEY=image-secret",
+    "IMAGE_PROVIDER_MODEL=gpt-image-2",
     "EXCHANGE_RATE_BASE_URL=https://rates.test/latest",
     "ASSET_ROOT=/tmp/tk-assets",
     "WORKER_CONCURRENCY=2",
@@ -117,9 +123,14 @@ test("sync-live copies only allowed runtime keys, preserves loopback safety, and
   assert.match(env, /^CANVAS_ID=canvas-id$/m);
   assert.match(env, /^CANVAS_WORKFLOW_NAME=TK工作流$/m);
   assert.match(env, /^LLM_MODEL=deepseek-ai\/DeepSeek-V4-Flash$/m);
+  assert.match(env, /^IMAGE_PLANNER_MODEL=planner-model$/m);
+  assert.match(env, /^IMAGE_PROVIDER_BASE_URL=https:\/\/api\.apimart\.ai\/v1\/images\/generations$/m);
+  assert.match(env, /^IMAGE_PROVIDER_MODEL=gpt-image-2$/m);
   assert.equal(env.includes("UNRELATED_SECRET"), false);
   assert.equal(JSON.stringify(result).includes("llm-secret"), false);
   assert.equal(JSON.stringify(result).includes("miaoshou-secret"), false);
+  assert.equal(JSON.stringify(result).includes("planner-secret"), false);
+  assert.equal(JSON.stringify(result).includes("image-secret"), false);
   assert.equal(result.status.LLM_API_KEY, "set");
   assert.equal(result.status.CANVAS_API_KEY, "empty");
 });

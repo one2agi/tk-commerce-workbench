@@ -1,7 +1,5 @@
-import { redirect } from "next/navigation";
+import { ImageGenerationTemplateManager } from "../../components/templates/image-generation-template-manager";
 
-export { renderProcessingRulesPage as renderTemplatesPage } from "../processing-rules/page";
-
-export default function TemplatesPage() {
-  redirect("/processing-rules");
+export default async function TemplatesPage() {
+  return <ImageGenerationTemplateManager items={[]} />;
 }

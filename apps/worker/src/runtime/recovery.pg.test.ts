@@ -334,6 +334,12 @@ describe("real PostgreSQL hard-crash recovery through production handlers", () =
     const handler = createMiaoshouEditHandler({
       edit,
       staging,
+      publishing: {
+        publish: vi.fn(async ({ assets }) => assets.map(({ assetId }: { assetId: string }) => ({
+          remoteUrl: `https://published.test/${assetId}`
+        }))),
+        release: vi.fn(async () => undefined)
+      },
       repository: {
         loadSnapshot: vi.fn(async () => approvalSnapshot),
         saveSucceeded: vi.fn(async () => true),

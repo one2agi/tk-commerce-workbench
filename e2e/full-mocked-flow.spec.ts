@@ -6,6 +6,7 @@ import { join } from "node:path";
 import { expect, test } from "@playwright/test";
 
 import { createFakePorts } from "../packages/contracts/src/testing/fake-ports.js";
+import type { AssetPublishingPort } from "../packages/contracts/src/ports.js";
 import { ApprovalRepository } from "../packages/db/src/repositories/approval-repository.js";
 import { AuditRepository } from "../packages/db/src/repositories/audit-repository.js";
 import { CanvasQuotaRepository } from "../packages/db/src/repositories/canvas-quota-repository.js";
@@ -14,20 +15,44 @@ import { ExchangeRateRepository } from "../packages/db/src/repositories/exchange
 import { INITIAL_SQL } from "../packages/db/src/migrations/0000_initial.js";
 import { JobRepository } from "../packages/db/src/repositories/job-repository.js";
 import { PipelineRepository, pipelineRepositories } from "../packages/db/src/repositories/pipeline-repository.js";
+import { ImageGenerationRepository } from "../packages/db/src/repositories/image-generation-repository.js";
 import { createPostHandler as createIngestHandler } from "../apps/web/src/app/api/v1/ingest-links/route.js";
 import { createPostHandler as createAutomationHandler } from "../apps/web/src/app/api/v1/automation-runs/route.js";
 import { createPatchHandler as createDraftHandler } from "../apps/web/src/app/api/v1/products/[productId]/draft/route.js";
 import { createExtensionTokenVerifier } from "../apps/web/src/server/auth/extension-token.js";
 import { createServerServices } from "../apps/web/src/server/composition.js";
 import { buildWorkerRuntime } from "../apps/worker/src/main.js";
-import { createMiaoshouEditHandler } from "../apps/worker/src/handlers/miaoshou-edit.js";
-import { adaptLeasedJobRepository, runWorkerLoop } from "../apps/worker/src/runtime/worker-loop.js";
+import { adaptLeasedJobRepository } from "../apps/worker/src/runtime/worker-loop.js";
 import { createStagingCleanupCodec } from "../apps/worker/src/runtime/staging-cleanup-codec.js";
 import { openE2eDatabase } from "./fixtures/test-database.js";
 
 const SELECTED_URL = "https://detail.1688.com/offer/892408514788.html";
 const UNSELECTED_URL = "https://detail.1688.com/offer/892408514799.html";
 const EXTENSION_TOKEN = "wave3-e2e-extension";
+
+const testJpeg = (payload: string) => Buffer.concat([
+  Buffer.from([
+    0xff, 0xd8,
+    0xff, 0xe0, 0x00, 0x02,
+    0xff, 0xc0, 0x00, 0x0b, 0x08,
+    0x04, 0xb0, 0x04, 0xb0,
+    0x01, 0x01, 0x11, 0x00
+  ]),
+  Buffer.from(payload)
+]);
+
+const testPng = (payload: string) => Buffer.concat([
+  Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]),
+  Buffer.from([
+    0x00, 0x00, 0x00, 0x0d,
+    0x49, 0x48, 0x44, 0x52,
+    0x00, 0x00, 0x04, 0xb0,
+    0x00, 0x00, 0x04, 0xb0,
+    0x08, 0x06, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00
+  ]),
+  Buffer.from(payload)
+]);
 
 function browserMutation(url: string, body: unknown): Request {
   return new Request(url, {
@@ -97,6 +122,7 @@ test("勾选采集到当前版本审批每个修订只生成一次 TK，且只�
 
     const jobs = new JobRepository(database.pool);
     const pipeline = new PipelineRepository(database.pool);
+    const imageGeneration = new ImageGenerationRepository(database.pool);
     const approvals = new ApprovalRepository(database.pool);
     const auditRepository = new AuditRepository(database.pool);
     const store = new ContentAddressedStore({
@@ -106,10 +132,7 @@ test("勾选采集到当前版本审批每个修订只生成一次 TK，且只�
         status: 200,
         headers: { "content-type": url.endsWith(".jpg") ? "image/jpeg" : "image/png" },
         body: (async function* () {
-          const signature = url.endsWith(".jpg")
-            ? Buffer.from([0xff, 0xd8, 0xff, 0xe0])
-            : Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
-          yield Buffer.concat([signature, Buffer.from(url)]);
+          yield url.endsWith(".jpg") ? testJpeg(url) : testPng(url);
         })()
       })
     });
@@ -120,9 +143,45 @@ test("勾选采集到当前版本审批每个修订只生成一次 TK，且只�
       targetId: String(event.targetId ?? "unknown"),
       payload: event.payload as Record<string, unknown> | undefined
     }) };
+    const publishing: AssetPublishingPort = {
+      publish: async ({ assets }) => assets.map((asset) => ({
+        remoteUrl: `https://published.test/${asset.assetId}.${asset.extension}`
+      })),
+      release: async () => undefined
+    };
+    const editRepository = {
+      loadSnapshot: (id: string) => approvals.loadSnapshot(id),
+      saveSucceeded: (...args: Parameters<ApprovalRepository["saveSucceeded"]>) => approvals.saveSucceeded(...args),
+      saveValidationFailure: (...args: Parameters<ApprovalRepository["saveValidationFailure"]>) => approvals.saveValidationFailure(...args),
+      saveResultUnknown: (...args: Parameters<ApprovalRepository["saveResultUnknown"]>) => approvals.saveResultUnknown(...args),
+      saveReconciliationResultUnknown: (...args: Parameters<ApprovalRepository["saveReconciliationResultUnknown"]>) => approvals.saveReconciliationResultUnknown(...args),
+      saveReconciled: (...args: Parameters<ApprovalRepository["saveReconciled"]>) => approvals.saveReconciled(...args),
+      persistReconciliationContext: (context: Parameters<JobRepository["persistMiaoshouReconciliationContext"]>[4], fence: { jobId: string; owner: string; leaseToken: string }) =>
+        jobs.persistMiaoshouReconciliationContext(fence.jobId, fence.owner, fence.leaseToken, new Date(), context)
+    };
     const runtime = () => buildWorkerRuntime({
-      ports: { miaoshou: ports.miaoshouSource, llm: ports.llm, exchangeRate: ports.exchangeRate, canvas: ports.canvas, staging: ports.assetStaging },
-      repositories: pipelineRepositories(pipeline),
+      ports: {
+        miaoshou: ports.miaoshouSource,
+        miaoshouEdit: ports.miaoshouEdit,
+        llm: ports.llm,
+        exchangeRate: ports.exchangeRate,
+        canvas: ports.canvas,
+        staging: ports.assetStaging,
+        publishing,
+        imagePlanner: ports.imagePlanner,
+        imageGeneration: ports.imageGeneration
+      },
+      repositories: {
+        ...pipelineRepositories(pipeline),
+        prepareMiaoshouWriteback: {
+          bindCanonicalAndEnqueueEdit: (...args: Parameters<ApprovalRepository["bindCanonicalAndEnqueueEdit"]>) =>
+            approvals.bindCanonicalAndEnqueueEdit(...args)
+        },
+        imageGeneration,
+        imageSlot: imageGeneration,
+        miaoshouEdit: editRepository
+      },
+      reachability: { assertReachable: async () => undefined },
       store,
       analyzer: { analyze: async ({ remoteUrl, position }: { remoteUrl: string; position: number }) => ({
         width: 1200, height: 1200, perceptualHash: `hash-${position}-${remoteUrl}`,
@@ -135,17 +194,19 @@ test("勾选采集到当前版本审批每个修订只生成一次 TK，且只�
       now: () => new Date(),
       cleanupCodec: createStagingCleanupCodec("wave3-e2e-cleanup-secret"),
       maxCanvasRunsPerDay: 10,
+      imageGenerationPath: "canvas",
       adapterLimits: {
         miaoshou: { concurrency: 1, minIntervalMs: 0 }, llm: { concurrency: 1, minIntervalMs: 0 },
         exchangeRate: { concurrency: 1, minIntervalMs: 0 }, canvas: { concurrency: 1, minIntervalMs: 0 },
-        staging: { concurrency: 1, minIntervalMs: 0 }
+        staging: { concurrency: 1, minIntervalMs: 0 }, imageGeneration: { concurrency: 1, minIntervalMs: 0 }
       }
     });
 
     const services = createServerServices({
       pool: database.pool,
       config: { extensionToken: EXTENSION_TOKEN, externalAdapterMode: "mock", assetRoot, workerConcurrency: 1,
-        maxCanvasRunsPerDay: 10, miaoshouConfigured: true, canvasConfigured: true, llmConfigured: true, exchangeRateConfigured: true }
+        maxCanvasRunsPerDay: 10, miaoshouConfigured: true, canvasConfigured: true, llmConfigured: true,
+        exchangeRateConfigured: true, imageGenerationConfigured: false, imageGenerationPath: "canvas" }
     });
     const ingest = createIngestHandler({ verifyToken: createExtensionTokenVerifier(EXTENSION_TOKEN), service: services.ingest });
     const candidateLinks = [SELECTED_URL, UNSELECTED_URL];
@@ -188,8 +249,8 @@ test("勾选采集到当前版本审批每个修订只生成一次 TK，且只�
 
     const approvalV1 = await approvals.confirmAndEnqueue({
       version: 1, productId: first.product_id, expectedDraftVersion: 1,
-      expectedListingRunId: String(draftV1.listingRunId), expectedPricingRunId: String(draftV1.pricingRunId),
-      expectedTemplateVersion: 7, orderedFinalAssetIds: finalOrderV1 as never
+      expectedListingRunId: String(draftV1.listingRunId),
+      expectedTemplateVersion: 7, orderedFinalAssetIds: finalOrderV1 ?? []
     });
 
     const updateDraft = createDraftHandler({ drafts: {
@@ -272,26 +333,17 @@ test("勾选采集到当前版本审批每个修订只生成一次 TK，且只�
     const finalOrderV2 = draftV2.finalAssetOrder as string[] | undefined;
     const currentApproval = await approvals.confirmAndEnqueue({
       version: 1, productId: first.product_id, expectedDraftVersion: 2,
-      expectedListingRunId: String(draftV2.listingRunId), expectedPricingRunId: String(draftV2.pricingRunId),
-      expectedTemplateVersion: 7, orderedFinalAssetIds: finalOrderV2 as never
+      expectedListingRunId: String(draftV2.listingRunId),
+      expectedTemplateVersion: 7, orderedFinalAssetIds: finalOrderV2 ?? []
     });
     expect(currentApproval.approvalSnapshotId).not.toBe(approvalV1.approvalSnapshotId);
 
-    const editRepository = {
-      loadSnapshot: (id: string) => approvals.loadSnapshot(id),
-      saveSucceeded: (...args: Parameters<ApprovalRepository["saveSucceeded"]>) => approvals.saveSucceeded(...args),
-      saveValidationFailure: (...args: Parameters<ApprovalRepository["saveValidationFailure"]>) => approvals.saveValidationFailure(...args),
-      saveResultUnknown: (...args: Parameters<ApprovalRepository["saveResultUnknown"]>) => approvals.saveResultUnknown(...args),
-      saveReconciled: (...args: Parameters<ApprovalRepository["saveReconciled"]>) => approvals.saveReconciled(...args),
-      persistReconciliationContext: async () => true
-    };
-    const cleanupCodec = createStagingCleanupCodec({
-      key: "wave3-e2e-staging-cleanup-key"
+    await runtime().run({
+      jobs: adaptLeasedJobRepository(jobs),
+      workerId: "miaoshou-current-approval",
+      leaseMs: 30_000,
+      maxJobs: 1
     });
-    const editHandler = createMiaoshouEditHandler({ edit: ports.miaoshouEdit, staging: ports.assetStaging,
-      repository: editRepository, reachability: { assertReachable: async () => undefined }, audit, cleanupCodec });
-    await runWorkerLoop({ jobs: adaptLeasedJobRepository(jobs), handlers: { miaoshou_edit: editHandler }, clock: { now: () => new Date() },
-      workerId: "miaoshou-current-approval", leaseMs: 30_000, maxJobs: 1 });
 
     const editCalls = ports.miaoshouEdit.calls.filter((call) => call.method === "applyEdit");
     expect(editCalls).toHaveLength(1);

@@ -36,4 +36,48 @@ describe("AdapterLimiterSet", () => {
     ]);
     expect(starts[1]! - starts[0]!).toBeGreaterThanOrEqual(15);
   });
+
+  it("image_generate_slot: blocks third concurrent call until one of first two releases", async () => {
+    const limiters = new AdapterLimiterSet({ "imageGeneration:openai-dall-e-3": { concurrency: 2, minIntervalMs: 0 } });
+    // Use shared gates so first+second hold slots open until we release them
+    let releaseFirst!: () => void;
+    let releaseSecond!: () => void;
+    const gate1 = new Promise<void>((r) => { releaseFirst = r; });
+    const gate2 = new Promise<void>((r) => { releaseSecond = r; });
+    const order: string[] = [];
+
+    const op = async (label: string, gate: Promise<void>) =>
+      limiters.run("imageGeneration:openai-dall-e-3", async () => {
+        order.push(`${label}:start`);
+        await gate;
+        order.push(`${label}:end`);
+      });
+
+    // Start first two — both acquire slots immediately, then block on their gates
+    const first = op("first", gate1);
+    const second = op("second", gate2);
+
+    // Wait one tick for both to acquire their slots
+    await new Promise<void>((resolve) => setTimeout(resolve, 10));
+    expect(order.filter((s) => s === "first:start")).toHaveLength(1);
+    expect(order.filter((s) => s === "second:start")).toHaveLength(1);
+
+    // Third should be blocked because both slots are held by first+second
+    let thirdDidRun = false;
+    const third = op("third", Promise.resolve()).then(() => { thirdDidRun = true; });
+
+    // Give the event loop a tick — third must not have run yet
+    await new Promise<void>((resolve) => setTimeout(resolve, 20));
+    expect(thirdDidRun).toBe(false);
+
+    // Release second — third can now acquire the freed slot
+    releaseSecond();
+    await third;
+    expect(thirdDidRun).toBe(true);
+
+    // Clean up first
+    releaseFirst();
+    await first;
+    await second;
+  });
 });

@@ -23,7 +23,7 @@ function baselineFixture(): WorkspaceSettingsView {
     },
     providerOptions: { listingProvider: "miaoshou", listingModel: "v3", canvasWorkflow: "wf-1", imageGenerationPath: "canvas", imagePlannerModel: "", imageProviderModel: "" },
     retryPolicy: { maxAttempts: 5, initialDelaySeconds: 30 },
-    secretStatus: { miaoshouConfigured: true, canvasConfigured: true, llmConfigured: true, exchangeRateConfigured: true },
+    secretStatus: { miaoshouConfigured: true, canvasConfigured: true, llmConfigured: true, exchangeRateConfigured: true, imageGenerationConfigured: false, imageGenerationPath: "canvas" },
     runtimeStatus: { active: { externalAdapterMode: "mock", workerConcurrency: 4, maxCanvasRunsPerDay: 50, assetRoot: "/tmp/assets", imageGenerationPath: "canvas", imagePlannerModel: "", imageProviderModel: "", canvasWorkflow: "wf-1", imageGenerationConfigured: false }, restartRequiredFields: [] },
     applicationNote: ""
   };

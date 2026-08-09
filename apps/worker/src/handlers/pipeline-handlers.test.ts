@@ -744,6 +744,35 @@ describe("persisted ready-preview DAG nodes", () => {
     expect(result.next[0]).toMatchObject({ kind: "image_select", businessKey: "rev-1:images" });
   });
 
+  it("finishes image selection without creating a Canvas job in headless mode", async () => {
+    const repository = {
+      loadSelectionInputs: vi.fn(async () => ({
+        capacity: 2,
+        referenceUrls: ["https://reference.test/a.jpg"],
+        candidates: [{ assetId: "a", url: "local:a", role: "primary" as const, score: 1, perceptualHash: "hash-a" }]
+      })),
+      saveSelection: vi.fn(async () => true),
+      markReadyForImageGeneration: vi.fn(async () => true)
+    };
+    const result = await invoke(createImageSelectHandler({ repository, imageGenerationPath: "headless" }), job("image_select", { revisionId: "rev_new" }));
+    expect(result.next).toEqual([]);
+    expect(repository.markReadyForImageGeneration).toHaveBeenCalledWith("rev_new", expect.anything());
+  });
+
+  it("keeps legacy Canvas routing available when imageGenerationPath is canvas", async () => {
+    const repository = {
+      loadSelectionInputs: vi.fn(async () => ({
+        capacity: 2,
+        referenceUrls: ["https://reference.test/a.jpg"],
+        candidates: [{ assetId: "a", url: "local:a", role: "primary" as const, score: 1, perceptualHash: "hash-a" }]
+      })),
+      saveSelection: vi.fn(async () => true),
+      markReadyForImageGeneration: vi.fn(async () => true)
+    };
+    const result = await invoke(createImageSelectHandler({ repository, imageGenerationPath: "canvas" }), job("image_select", { revisionId: "rev_legacy" }));
+    expect(result.next).toEqual([expect.objectContaining({ kind: "canvas_generate" })]);
+  });
+
   it("persists capacity-aware ordered image selection before Canvas", async () => {
     const repository = {
       loadSelectionInputs: vi.fn(async () => ({
@@ -751,9 +780,10 @@ describe("persisted ready-preview DAG nodes", () => {
         referenceUrls: ["https://reference.test/a.jpg"],
         candidates: [{ assetId: "a", url: "local:a", role: "primary" as const, score: 1, perceptualHash: "hash-a" }]
       })),
-      saveSelection: vi.fn(async () => true)
+      saveSelection: vi.fn(async () => true),
+      markReadyForImageGeneration: vi.fn(async () => true)
     };
-    const result = await invoke(createImageSelectHandler({ repository }), job("image_select", { revisionId: "rev-1" }));
+    const result = await invoke(createImageSelectHandler({ repository, imageGenerationPath: "canvas" }), job("image_select", { revisionId: "rev-1" }));
     expect(repository.saveSelection).toHaveBeenCalledWith(expect.objectContaining({ assetIds: ["a"] }), execution.fence);
     expect(result.next[0]).toMatchObject({ kind: "canvas_generate", businessKey: "rev-1:canvas", maxAttempts: 30 });
   });

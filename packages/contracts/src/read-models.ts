@@ -87,6 +87,7 @@ export type ProductWorkspaceV1 = Readonly<{
   } | null;
   template: { templateId: TemplateId; version: number; matchedReason: string } | null;
   canvas: { runId: string; outputs: string[]; state: CanvasState } | null;
+  imageGeneration: ImageGenerationViewV1 | null;
   finalAssetOrder: AssetId[];
   warningCodes: string[];
 }>;
@@ -135,6 +136,8 @@ export type ApprovalSnapshotV1 = Readonly<{
   templateVersion: number;
   orderedFinalAssetIds: AssetId[];
   orderedFinalAssetLocalPaths?: string[];
+  orderedFinalAssetSha256?: string[];
+  orderedFinalAssetExtension?: string[];
   sourcePlatform: "1688";
   sourceCanonicalUrl: string;
   sourceItemId: SourceItemId;
@@ -180,6 +183,8 @@ export type WorkspaceSettingsViewV1 = Readonly<{
     canvasConfigured: boolean;
     llmConfigured: boolean;
     exchangeRateConfigured: boolean;
+    imageGenerationConfigured: boolean;
+    imageGenerationPath: "canvas" | "headless";
   };
   workerConcurrency: number;
   maxCanvasRunsPerDay: number;
@@ -193,4 +198,54 @@ export type MiaoshouSyncStatusV1 = Readonly<{
   remoteDetailId: MiaoshouDetailId | null;
   lastReconciledAt: string | null;
   error: ExternalFailure | null;
+}>;
+
+export type ImageGenerationSlotViewV1 = Readonly<{
+  slotId: string;
+  slotNumber: number;
+  role: string;
+  status: string;
+  attempt: number;
+  localUrl: string | null;
+  /** One-based persisted position in the accepted final image order. */
+  acceptedOrder: number | null;
+  error: string | null;
+}>;
+
+export type ImageGenerationViewV1 = Readonly<{
+  batchId: string | null;
+  availableInputs: ReadonlyArray<{
+    assetId: AssetId;
+    localUrl: string;
+    role: string | null;
+    /** Original collected URL used to de-duplicate the local archive from source evidence. */
+    sourceUrl?: string | null;
+  }>;
+  selectedInputs: ReadonlyArray<{ assetId: AssetId; localUrl: string }>;
+  inferredCategory: string | null;
+  confirmedCategory: string | null;
+  requestedCount: number;
+  successfulCount: number;
+  state: "not_started" | "planning" | "generating" | "partial" | "succeeded" | "failed";
+  slots: ReadonlyArray<ImageGenerationSlotViewV1>;
+  warnings: string[];
+}>;
+
+export type ImageGenerationTemplateViewV1 = Readonly<{
+  templateId: TemplateId;
+  name: string;
+  categoryKey: string;
+  parentCategoryKey: string | null;
+  version: number;
+  lifecycleState: "draft" | "active" | "archived";
+  recipe: Readonly<{
+    inputCounts: { default: number; min: number; max: number };
+    outputCounts: { default: number; min: number; max: number };
+    mustPreserve: string[];
+    visualDirection: string;
+    forbidden: string[];
+    roles: Array<{ key: string; instruction: string }>;
+  }>;
+  activatedAt: string | null;
+  createdAt: string;
 }>;

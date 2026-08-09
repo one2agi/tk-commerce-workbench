@@ -88,6 +88,8 @@ export function ApprovalActions(props: Readonly<{
   listingRunId: string;
   templateVersion: number;
   orderedFinalAssetIds: string[];
+  canonicalMiaoshouTarget?: string | null;
+  firstFinalImageUrl?: string | null;
   targetLocale: string;
   translationStyle: string;
   miaoshouWriteback?: ApprovalPreviewV1["miaoshouWriteback"];
@@ -110,6 +112,11 @@ export function ApprovalActions(props: Readonly<{
     ...defaultActions,
     rerun: (command: RerunDownstreamV1) => request(`/api/v1/products/${props.productId}/rerun`, "POST", command)
   };
+  const confirmationBlockers = [
+    ...(props.orderedFinalAssetIds.length === 0 ? ["请先确认最终图片"] : []),
+    ...(!props.listingRunId ? ["商品文案尚未生成完成"] : []),
+    ...(approvalInvalidated ? ["草稿已变化，请重新审核"] : [])
+  ];
 
   async function saveDraft() {
     let command: VersionedDraftUpdate;
@@ -182,7 +189,7 @@ export function ApprovalActions(props: Readonly<{
     try {
       await actions.retryMiaoshouEdit(props.productId);
       setWritebackState("queued");
-      setStatus("正在写回妙手");
+      setStatus("已进入妙手同步队列");
     } catch (error) {
       const code = error instanceof Error ? error.message : "miaoshou_retry_failed";
       setStatus(code === "revision_changed"
@@ -199,55 +206,74 @@ export function ApprovalActions(props: Readonly<{
   return (
     <section aria-label="审核操作" className="tk-panel tk-review__actions">
       <header><h2>审核与同步</h2><span role="status" aria-live="polite">{approvalInvalidated ? "审批状态：已失效，需重新确认" : `审批状态：${status}`}</span></header>
-      <div className="tk-form-row">
-        <label>目标语言
-          <input
-            value={locale}
-            onChange={(event) => setLocale(event.target.value)}
-            list="recommended-locales"
-            pattern={BASIC_BCP47_PATTERN_SOURCE}
-            placeholder="例如 ms-MY"
-            aria-describedby="locale-format-help"
-          />
-          <datalist id="recommended-locales">
-            <option value="th-TH">泰语（泰国）</option>
-            <option value="en-US">英语（美国）</option>
-            <option value="vi-VN">越南语</option>
-            <option value="id-ID">印度尼西亚语</option>
-          </datalist>
-          <small id="locale-format-help">支持任意合法 BCP-47 语言代码</small>
-        </label>
-        <label>翻译风格
-          <select value={style} onChange={(event) => setStyle(event.target.value)}>
-            <option value="marketplace">电商转化</option>
-            <option value="concise">简洁</option>
-            <option value="premium">高端</option>
-          </select>
-        </label>
-        <button type="button" onClick={() => void saveDraft()}>保存草稿设置</button>
+      <div className="tk-review__writeback-summary">
+        {props.firstFinalImageUrl ? <img src={props.firstFinalImageUrl} alt="写回主图预览" /> : <div className="tk-review__writeback-placeholder">暂无主图</div>}
+        <dl>
+          <div><dt>妙手目标</dt><dd>{props.canonicalMiaoshouTarget ?? "待系统匹配"}</dd></div>
+          <div><dt>最终图片</dt><dd>{props.orderedFinalAssetIds.length} 张</dd></div>
+          <div><dt>同步状态</dt><dd>{writebackStatus({ ...initialWriteback, state: writebackState })}</dd></div>
+        </dl>
       </div>
-      <div className="tk-form-row">
-        <label>从节点重跑
-          <select value={startNode} onChange={(event) => setStartNode(event.target.value as RerunDownstreamV1["startNode"])}>
-            <option value="listing">Listing</option>
-            <option value="template">模板匹配</option>
-            <option value="canvas">Canvas 生图</option>
-          </select>
-        </label>
-        <button type="button" onClick={() => void rerun()}>开始局部重跑</button>
+      <div className="tk-review__writeback-actions">
         {writebackState === "not_started" && <button
           type="button"
-          disabled={confirmPending || props.orderedFinalAssetIds.length === 0 || !props.listingRunId}
+          className="tk-review__primary-action"
+          disabled={confirmPending || confirmationBlockers.length > 0}
           onClick={() => void confirm()}
-        >确认写回妙手</button>}
-        {writebackState === "result_unknown" && initialWriteback.retryAllowed && !approvalInvalidated && <button
+        >确认并写回妙手</button>}
+        {(writebackState === "result_unknown" || writebackState === "failed") && initialWriteback.retryAllowed && !approvalInvalidated && <button
           type="button"
+          className="tk-review__primary-action"
           disabled={retryPending}
           onClick={() => void retryMiaoshouEdit()}
         >重新写回妙手</button>}
-        {(writebackState === "queued" || writebackState === "syncing") && <button type="button" disabled>正在写回妙手</button>}
+        {(writebackState === "queued" || writebackState === "syncing") && <button type="button" className="tk-review__primary-action" disabled>正在写回妙手</button>}
+        {confirmationBlockers.length > 0 && writebackState === "not_started" ? (
+          <ul className="tk-review__writeback-blockers">{confirmationBlockers.map((blocker) => <li key={blocker}>{blocker}</li>)}</ul>
+        ) : null}
+        {writebackState === "failed" ? <p className="tk-review__writeback-warning">写回失败，但已确认图片和审核结果仍保留；重新写回不会重新洗图。</p> : null}
+        <p>进入队列后系统才开始同步；这里只更新妙手采集箱草稿，不会发布到店铺。</p>
       </div>
-      <p>确认后，如商品尚未进入妙手采集箱，系统会先低频导入再编辑；不会触发店铺发布。</p>
+      <details className="tk-review__advanced-actions">
+        <summary>高级恢复与生成设置</summary>
+        <div className="tk-form-row">
+          <label>目标语言
+            <input
+              value={locale}
+              onChange={(event) => setLocale(event.target.value)}
+              list="recommended-locales"
+              pattern={BASIC_BCP47_PATTERN_SOURCE}
+              placeholder="例如 ms-MY"
+              aria-describedby="locale-format-help"
+            />
+            <datalist id="recommended-locales">
+              <option value="th-TH">泰语（泰国）</option>
+              <option value="en-US">英语（美国）</option>
+              <option value="vi-VN">越南语</option>
+              <option value="id-ID">印度尼西亚语</option>
+            </datalist>
+            <small id="locale-format-help">支持任意合法 BCP-47 语言代码</small>
+          </label>
+          <label>翻译风格
+            <select value={style} onChange={(event) => setStyle(event.target.value)}>
+              <option value="marketplace">电商转化</option>
+              <option value="concise">简洁</option>
+              <option value="premium">高端</option>
+            </select>
+          </label>
+          <button type="button" onClick={() => void saveDraft()}>保存草稿设置</button>
+        </div>
+        <div className="tk-form-row">
+          <label>恢复起点
+            <select value={startNode} onChange={(event) => setStartNode(event.target.value as RerunDownstreamV1["startNode"])}>
+              <option value="listing">从商品文案环节重跑</option>
+              <option value="template">从模板匹配环节重跑</option>
+              <option value="canvas">从洗图环节重跑</option>
+            </select>
+          </label>
+          <button type="button" onClick={() => void rerun()}>提交恢复任务</button>
+        </div>
+      </details>
     </section>
   );
 }

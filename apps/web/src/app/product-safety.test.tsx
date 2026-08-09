@@ -21,7 +21,7 @@ describe("product safety boundary", () => {
       translationStyle="marketplace"
     />);
     const labels = Array.from(html.matchAll(/<button[^>]*>(.*?)<\/button>/g), (match) => match[1]);
-    expect(labels).toEqual(expect.arrayContaining(["保存草稿设置", "开始局部重跑", "确认写回妙手"]));
+    expect(labels).toEqual(expect.arrayContaining(["保存草稿设置", "提交恢复任务", "确认并写回妙手"]));
     expect(labels.some((label) => /claim|publish|TikTok/i.test(label))).toBe(false);
   });
 
@@ -34,13 +34,23 @@ describe("product safety boundary", () => {
         `${match[1]} ${relative(apiRoot, file).replaceAll("\\", "/").replace(/\/route\.ts$/, "")}`);
     }).sort();
     expect(mutationRoutes).toEqual([
+      "PATCH image-generation-templates/[templateId]",
       "PATCH products/[productId]/draft",
+      "PATCH products/[productId]/image-generations/[batchId]/slots/[slotId]",
       "PATCH settings",
       "PATCH templates",
       "POST automation-runs",
+      "POST image-generation-templates",
+      "POST image-generation-templates/[templateId]/activate",
+      "POST image-generation-templates/[templateId]/archive",
+      "POST image-generation-templates/[templateId]/duplicate",
+      "POST image-generation-templates/[templateId]/prompt-test",
+      "POST image-generation-templates/[templateId]/restore",
       "POST ingest-links",
       "POST local-captures",
       "POST products/[productId]/confirm-miaoshou-edit",
+      "POST products/[productId]/image-generations",
+      "POST products/[productId]/image-generations/[batchId]/accept",
       "POST products/[productId]/rerun",
       "POST products/[productId]/retry-miaoshou-edit",
       "POST products/batch-actions",

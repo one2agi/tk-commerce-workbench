@@ -56,7 +56,7 @@ describe("approval action submission safety", () => {
       />
     );
 
-    const button = screen.getByRole("button", { name: "确认写回妙手" });
+    const button = screen.getByRole("button", { name: "确认并写回妙手" });
     await user.dblClick(button);
 
     expect(confirm).toHaveBeenCalledTimes(1);
@@ -64,7 +64,7 @@ describe("approval action submission safety", () => {
 
     resolveConfirm({});
     await waitFor(() => expect(screen.getByRole("status")).toHaveTextContent("已进入妙手同步队列"));
-    expect(screen.queryByRole("button", { name: "确认写回妙手" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "确认并写回妙手" })).not.toBeInTheDocument();
     expect(screen.getByRole("button", { name: "正在写回妙手" })).toBeDisabled();
   }, 60_000);
 
@@ -94,7 +94,7 @@ describe("approval action submission safety", () => {
       translationStyle="marketplace"
       actions={actions}
     />);
-    const button = screen.getByRole("button", { name: "确认写回妙手" });
+    const button = screen.getByRole("button", { name: "确认并写回妙手" });
 
     await user.click(button);
 
@@ -138,14 +138,14 @@ describe("approval action submission safety", () => {
     />);
 
     expect(screen.getByRole("status")).toHaveTextContent("妙手写回未生效，远端仍为原内容");
-    expect(screen.queryByRole("button", { name: "确认写回妙手" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "确认并写回妙手" })).not.toBeInTheDocument();
     const button = screen.getByRole("button", { name: "重新写回妙手" });
     await user.dblClick(button);
 
     expect(retryMiaoshouEdit).toHaveBeenCalledTimes(1);
     expect(button).toBeDisabled();
     resolveRetry({});
-    await waitFor(() => expect(screen.getByRole("status")).toHaveTextContent("正在写回妙手"));
+    await waitFor(() => expect(screen.getByRole("status")).toHaveTextContent("已进入妙手同步队列"));
   }, 60_000);
 
   it("shows an unknown-result warning without exposing retry for unproven failures", async () => {
@@ -173,5 +173,64 @@ describe("approval action submission safety", () => {
 
     expect(screen.getByRole("status")).toHaveTextContent("妙手写回结果未知，需要人工核对");
     expect(screen.queryByRole("button", { name: "重新写回妙手" })).not.toBeInTheDocument();
+  });
+
+  it("summarizes the writeback target, image count, and main image before confirmation", async () => {
+    const { render, screen } = await import("@testing-library/react");
+    render(<ApprovalActions
+      productId="product-1"
+      revisionId="revision-1"
+      draftVersion={1}
+      listingRunId="listing-1"
+      templateVersion={1}
+      orderedFinalAssetIds={["asset-1", "asset-2", "asset-3"]}
+      firstFinalImageUrl="/api/v1/assets/asset-1/content?variant=thumbnail"
+      canonicalMiaoshouTarget="3853105827"
+      targetLocale="th-TH"
+      translationStyle="marketplace"
+      actions={{ updateDraft: vi.fn(), rerun: vi.fn(), confirm: vi.fn(), retryMiaoshouEdit: vi.fn() }}
+    />);
+
+    expect(screen.getByText("3853105827")).toBeInTheDocument();
+    expect(screen.getByText("3 张")).toBeInTheDocument();
+    expect(screen.getByRole("img", { name: "写回主图预览" })).toHaveAttribute("src", "/api/v1/assets/asset-1/content?variant=thumbnail");
+  });
+
+  it("keeps the primary action visible but explains why it is disabled", async () => {
+    const { render, screen } = await import("@testing-library/react");
+    render(<ApprovalActions
+      productId="product-1"
+      revisionId="revision-1"
+      draftVersion={1}
+      listingRunId=""
+      templateVersion={1}
+      orderedFinalAssetIds={[]}
+      targetLocale="th-TH"
+      translationStyle="marketplace"
+      actions={{ updateDraft: vi.fn(), rerun: vi.fn(), confirm: vi.fn(), retryMiaoshouEdit: vi.fn() }}
+    />);
+
+    expect(screen.getByRole("button", { name: "确认并写回妙手" })).toBeDisabled();
+    expect(screen.getByText(/请先确认最终图片/)).toBeInTheDocument();
+    expect(screen.getByText(/商品文案尚未生成完成/)).toBeInTheDocument();
+  });
+
+  it("explains that a failed writeback preserves approval and generated images", async () => {
+    const { render, screen } = await import("@testing-library/react");
+    render(<ApprovalActions
+      productId="product-1"
+      revisionId="revision-1"
+      draftVersion={1}
+      listingRunId="listing-1"
+      templateVersion={1}
+      orderedFinalAssetIds={["asset-1"]}
+      targetLocale="th-TH"
+      translationStyle="marketplace"
+      miaoshouWriteback={{ state: "failed", failureCode: "network", safeMessage: "timeout", retryAllowed: true, approvalSnapshotId: "approval-1" }}
+      actions={{ updateDraft: vi.fn(), rerun: vi.fn(), confirm: vi.fn(), retryMiaoshouEdit: vi.fn() }}
+    />);
+
+    expect(screen.getByText(/已确认图片和审核结果仍保留/)).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "重新写回妙手" })).toBeInTheDocument();
   });
 });

@@ -2,17 +2,10 @@
 
 import type { ApprovalPreviewV1 } from "@tk/contracts/read-models";
 import type { ReviewWorkspaceView } from "./review-workspace-view";
+import { ProductImageWorkbench } from "../products/product-image-workbench";
 import { OriginalListingPanel } from "./original-listing-panel";
 import { TargetListingPanel } from "./target-listing-panel";
-import { FinalImageOrder } from "./final-image-order";
 import { ApprovalActions, type ReviewActions } from "./approval-actions";
-
-function displayCanvasStatus(workspace: ReviewWorkspaceView): string {
-  if (workspace.reviewFacts.orderedFinalImages.length > 0) return "图片已生成";
-  if (workspace.canvas?.state === "succeeded") return "待选最终图";
-  if (workspace.canvas?.state === "running") return "生图中";
-  return "待处理";
-}
 
 function displaySkuCount(count: number | null): string {
   return count === null ? "SKU 数量未知" : `SKU ${count} 个`;
@@ -36,7 +29,7 @@ function ReviewNextStepPanel({ workspace }: { workspace: ReviewWorkspaceView }) 
       <dl>
         <div><dt>妙手目标</dt><dd>{target ? `妙手目标 ${target}` : "妙手目标未知"}</dd></div>
         <div><dt>当前版本</dt><dd>草稿 v{workspace.draftVersion}</dd></div>
-        <div><dt>处理链路</dt><dd>采集 → 标题清洗 → Canvas 生图 → 人工确认 → 妙手待发布</dd></div>
+        <div><dt>处理链路</dt><dd>采集 → 文案处理 → 洗图 → 人工确认 → 妙手待发布</dd></div>
       </dl>
     </section>
   );
@@ -64,7 +57,7 @@ function ReviewGeneratedInfoPanel({ workspace }: { workspace: ReviewWorkspaceVie
       <dl className="tk-review__info-list">
         <div><dt>目标语言</dt><dd>{workspace.target?.locale ?? "未设置"}</dd></div>
         <div><dt>标题风格</dt><dd>{workspace.target?.style ?? "未设置"}</dd></div>
-        <div><dt>Canvas模板</dt><dd>{workspace.template?.matchedReason ?? "TK工作流"}</dd></div>
+        <div><dt>洗图模板</dt><dd>{workspace.template?.matchedReason ?? "TK工作流"}</dd></div>
         <div><dt>模板版本</dt><dd>{workspace.template ? `v${workspace.template.version}` : "未匹配"}</dd></div>
       </dl>
     </section>
@@ -91,7 +84,6 @@ export function FinalReview({ workspace, approvalPreview, actions }: {
   approvalPreview?: ApprovalPreviewV1 | null;
   actions?: ReviewActions;
 }) {
-  const canvasOutputs = workspace.canvas?.outputs ?? [];
   return (
     <article aria-label={`最终审核 ${workspace.productId}`} className="tk-review">
       <header className="tk-page-heading tk-review__heading">
@@ -105,22 +97,8 @@ export function FinalReview({ workspace, approvalPreview, actions }: {
         </div>
         <a className="tk-review__back-link" href="/products">返回商品处理台</a>
       </header>
-      <div className="tk-review__workspace">
-        <section aria-label="图片确认" className="tk-review__images">
-          <header className="tk-review__image-header">
-            <div>
-              <p>图片确认</p>
-              <h2>{displayCanvasStatus(workspace)}</h2>
-            </div>
-            <span>{workspace.reviewFacts.orderedFinalImages.length} / {canvasOutputs.length || "—"}</span>
-          </header>
-          <div className="tk-review__image-tabs" aria-label="图片来源统计">
-            <span>AI图 {canvasOutputs.length}</span>
-            <span>采集图 {workspace.reviewFacts.orderedFinalImages.length + (workspace.originalListing?.mainImages.length ?? 0) + (workspace.originalListing?.detailImages.length ?? 0)}</span>
-            <span>最终图 {workspace.reviewFacts.orderedFinalImages.length}</span>
-          </div>
-          <FinalImageOrder orderedFinalImages={workspace.reviewFacts.orderedFinalImages} outputs={canvasOutputs} />
-        </section>
+      <ProductImageWorkbench workspace={workspace} />
+      <div className="tk-review__lower">
         <section aria-label="商品内容" className="tk-review__content">
           <ReviewNextStepPanel workspace={workspace} />
           <ReviewGeneratedInfoPanel workspace={workspace} />
@@ -153,6 +131,8 @@ export function FinalReview({ workspace, approvalPreview, actions }: {
             listingRunId={approvalPreview?.listingRunId ?? ""}
             templateVersion={approvalPreview?.templateVersion ?? workspace.template?.version ?? 1}
             orderedFinalAssetIds={(approvalPreview?.orderedFinalAssetIds ?? workspace.finalAssetOrder).map(String)}
+            canonicalMiaoshouTarget={workspace.reviewFacts.canonicalMiaoshouTarget}
+            firstFinalImageUrl={workspace.reviewFacts.orderedFinalImages[0]?.thumbnailUrl ?? workspace.reviewFacts.orderedFinalImages[0]?.previewUrl ?? null}
             targetLocale={workspace.target?.locale ?? approvalPreview?.locale ?? "th-TH"}
             translationStyle={workspace.target?.style ?? "marketplace"}
             miaoshouWriteback={approvalPreview?.miaoshouWriteback}

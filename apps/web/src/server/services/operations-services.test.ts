@@ -82,7 +82,9 @@ const runtime = {
     miaoshouConfigured: true,
     canvasConfigured: false,
     llmConfigured: false,
-    exchangeRateConfigured: true
+    exchangeRateConfigured: true,
+    imageGenerationConfigured: true,
+    imageGenerationPath: "headless" as const
   },
   activeRuntime: {
     externalAdapterMode: "mock" as const,

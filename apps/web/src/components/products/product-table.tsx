@@ -1,10 +1,9 @@
 "use client";
 
-import { Fragment, useState, type ChangeEvent, type ReactElement, type UIEvent } from "react";
+import { useState, type ChangeEvent, type ReactElement, type UIEvent } from "react";
 import type { ProductPoolItemV1 } from "@tk/contracts/read-models";
 import type { StageKey } from "./product-workbench.selectors";
 import type { StartStatus } from "./product-workbench.state";
-import { ProductImageGallery } from "./product-image-gallery";
 import { buildProductRowView } from "./product-row-view";
 
 type Props = Readonly<{
@@ -105,8 +104,7 @@ export function ProductTable({
                 ? startBlockedReason(item)
                 : null;
               return (
-                <Fragment key={productId}>
-                  <tr data-product-summary-for={productId} aria-selected={checked}>
+                  <tr key={productId} data-product-summary-for={productId} aria-selected={checked}>
                   <td>
                     <label className="tk-product-table__checkbox">
                       <input
@@ -168,18 +166,6 @@ export function ProductTable({
                     </a>
                   </td>
                   </tr>
-                  <tr className="tk-product-table__gallery-row" data-product-gallery-for={productId}>
-                    <td colSpan={10}>
-                      <div role="group" aria-label={`商品 ${productId} 图片`}>
-                        <ProductImageGallery
-                          productId={productId}
-                          originalImageUrls={item.originalImageUrls}
-                          processedImageUrls={item.processedImageUrls}
-                        />
-                      </div>
-                    </td>
-                  </tr>
-                </Fragment>
               );
             })}
           </tbody>

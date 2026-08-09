@@ -1,17 +1,22 @@
 "use client";
 
-import {
-  useRef,
-  useState,
-  type ReactElement
-} from "react";
+import { useRef, useState, type ReactElement } from "react";
 
 import { ImagePreviewDialog } from "./image-preview-dialog";
 
+export type ProductGalleryImage = Readonly<{
+  key: string;
+  url: string;
+  assetId: string | null;
+  selectable: boolean;
+}>;
+
 export type ProductImageGalleryProps = Readonly<{
   productId: string;
-  originalImageUrls: readonly string[];
-  processedImageUrls: readonly string[];
+  originalImages: readonly ProductGalleryImage[];
+  processedImages: readonly ProductGalleryImage[];
+  selectedOriginalAssetIds?: ReadonlySet<string>;
+  onToggleOriginal?: (assetId: string) => void;
 }>;
 
 type GalleryKind = "original" | "processed";
@@ -23,8 +28,10 @@ type PreviewState = Readonly<{
 type ImageSectionProps = Readonly<{
   productId: string;
   kind: GalleryKind;
-  images: readonly string[];
+  images: readonly ProductGalleryImage[];
   failedImageKeys: ReadonlySet<string>;
+  selectedOriginalAssetIds: ReadonlySet<string>;
+  onToggleOriginal?: (assetId: string) => void;
   onImageFailure: (key: string) => void;
   onOpen: (kind: GalleryKind, index: number, opener: HTMLButtonElement) => void;
 }>;
@@ -39,6 +46,8 @@ function ImageSection({
   kind,
   images,
   failedImageKeys,
+  selectedOriginalAssetIds,
+  onToggleOriginal,
   onImageFailure,
   onOpen
 }: ImageSectionProps): ReactElement {
@@ -60,46 +69,59 @@ function ImageSection({
         <div>
           <h2>{label}</h2><span>{images.length}</span>
         </div>
-        <p>{kind === "original" ? "采集完成即展示" : "Canvas 生成后自动补充"}</p>
+        <p>{kind === "original" ? "采集完成即展示" : "洗图完成后自动展示"}</p>
       </header>
       {images.length > 0 ? (
         <>
           <div ref={scrollerRef} className="tk-product-image-gallery__scroller">
             <div className="tk-product-image-gallery__strip">
-              {images.map((url, index) => {
-                const failedKey = `${kind}:${index}:${url}`;
+              {images.map((image, index) => {
+                const failedKey = `${kind}:${image.key}:${image.url}`;
                 const failed = failedImageKeys.has(failedKey);
+                const canSelect = kind === "original" && image.selectable && image.assetId !== null && onToggleOriginal;
                 return (
-                  <button
-                    key={failedKey}
-                    type="button"
-                    className="tk-product-image-gallery__tile"
-                    aria-label={`放大${label} ${index + 1}/${images.length}`}
-                    onClick={(event) => onOpen(kind, index, event.currentTarget)}
-                  >
-                    {failed ? (
-                      <span>图片加载失败</span>
-                    ) : (
-                      <img
-                        src={url}
-                        alt={`${label} ${index + 1}`}
-                        loading="lazy"
-                        onError={() => onImageFailure(failedKey)}
-                      />
-                    )}
-                    <small>{index + 1}</small>
-                  </button>
+                  <div key={failedKey} className="tk-product-image-gallery__tile">
+                    <button
+                      type="button"
+                      className="tk-product-image-gallery__preview"
+                      aria-label={`放大${label} ${index + 1}/${images.length}`}
+                      onClick={(event) => onOpen(kind, index, event.currentTarget)}
+                    >
+                      {failed ? (
+                        <span>图片加载失败</span>
+                      ) : (
+                        <img
+                          src={image.url}
+                          alt={`${label} ${index + 1}`}
+                          loading="lazy"
+                          onError={() => onImageFailure(failedKey)}
+                        />
+                      )}
+                      <small>{index + 1}</small>
+                    </button>
+                    {kind === "original" ? (
+                      canSelect ? (
+                        <label className="tk-product-image-gallery__select">
+                          <input
+                            type="checkbox"
+                            checked={selectedOriginalAssetIds.has(image.assetId!)}
+                            aria-label={`选作洗图输入 ${label} ${index + 1}`}
+                            onChange={() => onToggleOriginal(image.assetId!)}
+                          />
+                          <span>用于洗图</span>
+                        </label>
+                      ) : (
+                        <span className="tk-product-image-gallery__unavailable">尚未保存完成</span>
+                      )
+                    ) : null}
+                  </div>
                 );
               })}
             </div>
           </div>
           <div className="tk-product-image-gallery__controls">
-            <button type="button" aria-label={`${label}向左滚动`} onClick={() => scrollBy(-320)}>
-              ‹
-            </button>
-            <button type="button" aria-label={`${label}向右滚动`} onClick={() => scrollBy(320)}>
-              ›
-            </button>
+            <button type="button" aria-label={`${label}向左滚动`} onClick={() => scrollBy(-320)}>‹</button>
+            <button type="button" aria-label={`${label}向右滚动`} onClick={() => scrollBy(320)}>›</button>
           </div>
         </>
       ) : (
@@ -111,24 +133,22 @@ function ImageSection({
 
 export function ProductImageGallery({
   productId,
-  originalImageUrls,
-  processedImageUrls
+  originalImages,
+  processedImages,
+  selectedOriginalAssetIds = new Set(),
+  onToggleOriginal
 }: ProductImageGalleryProps): ReactElement {
   const [preview, setPreview] = useState<PreviewState>(null);
   const [failedImageKeys, setFailedImageKeys] = useState<ReadonlySet<string>>(new Set());
   const openerRef = useRef<HTMLButtonElement | null>(null);
 
   const previewImages = preview?.kind === "original"
-    ? originalImageUrls
+    ? originalImages.map((image) => image.url)
     : preview?.kind === "processed"
-      ? processedImageUrls
+      ? processedImages.map((image) => image.url)
       : [];
 
-  function handleOpen(
-    kind: GalleryKind,
-    activeIndex: number,
-    opener: HTMLButtonElement
-  ): void {
+  function handleOpen(kind: GalleryKind, activeIndex: number, opener: HTMLButtonElement): void {
     openerRef.current = opener;
     setPreview({ kind, activeIndex });
   }
@@ -147,16 +167,19 @@ export function ProductImageGallery({
       <ImageSection
         productId={productId}
         kind="original"
-        images={originalImageUrls}
+        images={originalImages}
         failedImageKeys={failedImageKeys}
+        selectedOriginalAssetIds={selectedOriginalAssetIds}
+        onToggleOriginal={onToggleOriginal}
         onImageFailure={handleImageFailure}
         onOpen={handleOpen}
       />
       <ImageSection
         productId={productId}
         kind="processed"
-        images={processedImageUrls}
+        images={processedImages}
         failedImageKeys={failedImageKeys}
+        selectedOriginalAssetIds={selectedOriginalAssetIds}
         onImageFailure={handleImageFailure}
         onOpen={handleOpen}
       />

@@ -43,6 +43,7 @@ const workspace: ProductWorkspaceV1 = {
     outputs: ["https://images.test/generated.png"],
     state: "succeeded"
   },
+  imageGeneration: null,
   finalAssetOrder: [assetId("asset-1")],
   warningCodes: []
 };
@@ -83,7 +84,7 @@ describe("product detail page", () => {
 
     expect(html).toContain("商品详情 / 图片确认");
     expect(html).toContain("图片确认");
-    expect(html).toContain("图片已生成");
+    expect(html).toContain("洗图后的图");
     expect(html).toContain("商品内容");
     expect(html).toContain("下一步");
     expect(html).toContain("确认后写入妙手采集箱");
@@ -91,7 +92,7 @@ describe("product detail page", () => {
     expect(html).toContain("SKU确认");
     expect(html).toContain("检查结果");
     expect(html).toContain("检查通过");
-    expect(html).toContain("确认写回妙手");
+    expect(html).toContain("确认并写回妙手");
     expect(html).toContain("ชื่อจากฐานข้อมูล");
     expect(html).toContain("https://images.test/final.jpg");
     expect(html).not.toContain("请回到");

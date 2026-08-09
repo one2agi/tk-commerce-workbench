@@ -60,6 +60,7 @@ const workspace: ProductWorkspaceV1 = {
     state: "succeeded",
     outputs: Array.from({ length: 5 }, (_, index) => `https://canvas.test/output-${index + 1}.jpg`)
   },
+  imageGeneration: null,
   finalAssetOrder: [assetId("asset-2"), assetId("asset-1")],
   warningCodes: ["W_TITLE_LONG"]
 };
@@ -95,11 +96,17 @@ describe("final review flow", () => {
     expect(html).toContain("20 × 10 × 8 cm");
     expect(html).toContain("妙手目标 detail-13");
     expect(html).toContain("W_TITLE_LONG");
+    expect(html).toContain('aria-label="商品 product-13 原产品图"');
+    expect(html).toContain('aria-label="商品 product-13 洗图后的图"');
+    expect(html).toContain("<h2>原产品图</h2><span>2</span>");
+    expect(html).toContain("<h2>洗图后的图</h2><span>5</span>");
     expect(html).toContain("最终图 1");
     expect(html).toContain("https://images.test/final-2.jpg");
-    expect(html.match(/alt=\"待确认 Canvas 产出/g)).toHaveLength(5);
-    expect(html).toContain("确认写回妙手");
+    expect(html.match(/alt=\"待确认图片/g)).toHaveLength(5);
+    expect(html).toContain("确认并写回妙手");
     expect(html).not.toContain("发布 TikTok");
+    expect(html).toContain('class="tk-review__image-workbench"');
+    expect(html).toContain('class="tk-review__lower"');
   });
 
   it("shows unknown instead of guessing SKU count from sale attributes", () => {
@@ -214,7 +221,9 @@ describe("operational pages", () => {
         miaoshouConfigured: true,
         canvasConfigured: false,
         llmConfigured: true,
-        exchangeRateConfigured: true
+        exchangeRateConfigured: true,
+        imageGenerationConfigured: true,
+        imageGenerationPath: "headless"
       },
       workerConcurrency: 2,
       maxCanvasRunsPerDay: 50,

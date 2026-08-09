@@ -32,16 +32,28 @@ afterEach(() => {
 function renderGallery(overrides: {
   originalImageUrls?: string[];
   processedImageUrls?: string[];
+  selectedOriginalAssetIds?: ReadonlySet<string>;
+  onToggleOriginal?: (assetId: string) => void;
 } = {}) {
+  const originalImageUrls = overrides.originalImageUrls ?? ["/source-1.jpg", "/source-2.jpg", "/source-3.jpg"];
+  const processedImageUrls = overrides.processedImageUrls ?? ["/washed-1.jpg", "/washed-2.jpg"];
   return render(
     <ProductImageGallery
       productId="prod-1"
-      originalImageUrls={
-        overrides.originalImageUrls ?? ["/source-1.jpg", "/source-2.jpg", "/source-3.jpg"]
-      }
-      processedImageUrls={
-        overrides.processedImageUrls ?? ["/canvas-1.jpg", "/canvas-2.jpg"]
-      }
+      originalImages={originalImageUrls.map((url, index) => ({
+        key: `source-${index + 1}`,
+        url,
+        assetId: `asset-${index + 1}`,
+        selectable: true
+      }))}
+      processedImages={processedImageUrls.map((url, index) => ({
+        key: `washed-${index + 1}`,
+        url,
+        assetId: `generated-${index + 1}`,
+        selectable: false
+      }))}
+      selectedOriginalAssetIds={overrides.selectedOriginalAssetIds ?? new Set()}
+      onToggleOriginal={overrides.onToggleOriginal}
     />
   );
 }
@@ -73,6 +85,20 @@ describe("ProductImageGallery", () => {
     fireEvent.keyDown(document, { key: "Escape" });
     expect(screen.queryByRole("dialog")).toBeNull();
     expect(opener).toHaveFocus();
+  });
+
+  it("uses a separate checkbox to select a local source image without opening preview", () => {
+    const onToggleOriginal = vi.fn();
+    const screen = renderGallery({
+      selectedOriginalAssetIds: new Set(["asset-1"]),
+      onToggleOriginal
+    });
+
+    const checkbox = screen.getByRole("checkbox", { name: "选作洗图输入 原产品图 1" });
+    expect(checkbox).toBeChecked();
+    fireEvent.click(screen.getByRole("checkbox", { name: "选作洗图输入 原产品图 2" }));
+    expect(onToggleOriginal).toHaveBeenCalledWith("asset-2");
+    expect(screen.queryByRole("dialog")).toBeNull();
   });
 
   it("shows explicit empty states without requiring a detail-page click", () => {

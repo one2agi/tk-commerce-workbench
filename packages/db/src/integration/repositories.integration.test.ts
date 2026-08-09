@@ -21,7 +21,12 @@ import { AssetRepository } from "../repositories/asset-repository.js";
 import { PipelineRepository } from "../repositories/pipeline-repository.js";
 import { LocalCaptureRepository } from "../repositories/local-capture-repository.js";
 import { ApprovalRepository } from "../repositories/approval-repository.js";
+import { ImageGenerationRepository } from "../repositories/image-generation-repository.js";
 import { INITIAL_SQL } from "../migrations/0000_initial.js";
+
+function newId(prefix: string): string {
+  return `${prefix}_${Date.now().toString(36)}${Math.random().toString(36).slice(2, 10)}`;
+}
 
 let handle: TestDbHandle;
 let catalog: CatalogRepository;
@@ -33,6 +38,7 @@ let canvasQuota: CanvasQuotaRepository;
 let assets: AssetRepository;
 let pipeline: PipelineRepository;
 let localCaptures: LocalCaptureRepository;
+let imageGen: ImageGenerationRepository;
 
 beforeAll(async () => {
   handle = await bootTestDb();
@@ -46,6 +52,7 @@ beforeAll(async () => {
   assets = new AssetRepository(handle.pool);
   pipeline = new PipelineRepository(handle.pool);
   localCaptures = new LocalCaptureRepository(handle.pool);
+  imageGen = new ImageGenerationRepository(handle.pool);
 });
 
 beforeEach(async () => {
@@ -1503,6 +1510,37 @@ describe("integration: ApprovalRepository.confirmAndEnqueue", () => {
        ('asset-b', $1, $2, 'https://source.test/b.jpg', 'generated', 'ready', '/assets/b.jpg', 'jpg')`,
       [productId, revisionId]
     );
+    // T13 fix: slot backing for accepted assets. Existing tests must keep green
+    // while the slot filter is active, so each ready asset is wired to a
+    // succeeded, archived, non-excluded slot row.
+    const readyApprovalTemplateId = newId("rtmpl");
+    await handle.pool.query(
+      `INSERT INTO image_generation_templates (id, name, category_key, enabled, created_at, updated_at)
+       VALUES ($1, 'Ready Approval Template', 'dress', true, now(), now())`,
+      [readyApprovalTemplateId]
+    );
+    const readyApprovalTemplateVersionId = newId("tv");
+    await handle.pool.query(
+      `INSERT INTO image_generation_template_versions (id, template_id, version, lifecycle_state, recipe, created_at)
+       VALUES ($1, $2, 3, 'active', '{}'::jsonb, now())`,
+      [readyApprovalTemplateVersionId, readyApprovalTemplateId]
+    );
+    const readyApprovalBatchId = newId("batch");
+    await handle.pool.query(
+      `INSERT INTO image_generation_batches
+        (id, product_id, revision_id, idempotency_key, selected_asset_ids, requested_output_count,
+         category_key, template_id, template_version_id, template_version, recipe_snapshot,
+         product_facts_snapshot, product_facts_digest, state)
+       VALUES ($1, $2, $3, $4, '[]'::jsonb, 2, 'dress', $5, $6, 3, '{}'::jsonb, '{}'::jsonb, 'digest', 'succeeded')`,
+      [readyApprovalBatchId, productId, revisionId, `ready-key-${newId("idem")}`, readyApprovalTemplateId, readyApprovalTemplateVersionId]
+    );
+    await handle.pool.query(
+      `INSERT INTO image_generation_slots (id, batch_id, slot_number, role, state, archived_asset_id)
+       VALUES
+        ($1, $2, 1, 'primary', 'succeeded', 'asset-a'),
+        ($3, $2, 2, 'detail', 'succeeded', 'asset-b')`,
+      [newId("slot"), readyApprovalBatchId, newId("slot")]
+    );
     return { productId, revisionId };
   }
 
@@ -1924,5 +1962,621 @@ describe("integration: ApprovalRepository.confirmAndEnqueue", () => {
       [confirmed.approvalSnapshotId]
     );
     expect(state.rows[0]).toEqual({ approval: "approved", sync: "succeeded" });
+  });
+});
+
+describe("integration: image generation repository", () => {
+  // Helper to count rows in a table filtered by batch_id
+  async function countSlotRows(batchId: string): Promise<number> {
+    const result = await handle.pool.query(
+      "SELECT count(*)::integer AS count FROM image_generation_slots WHERE batch_id = $1",
+      [batchId]
+    );
+    return result.rows[0]?.count ?? 0;
+  }
+
+  // Helper to count jobs of a specific kind for a batch
+  async function countPlannerJobs(batchId: string): Promise<number> {
+    const result = await handle.pool.query(
+      "SELECT count(*)::integer AS count FROM jobs WHERE batch_key = $1 AND kind = 'image_prompt_plan'",
+      [batchId]
+    );
+    return result.rows[0]?.count ?? 0;
+  }
+
+  // Fixture: minimal template + version + assets for image generation tests
+  async function fixtureTemplate(): Promise<{ templateId: string; versionId: string }> {
+    const templateId = newId("tmpl");
+    const versionId = newId("tv");
+    await handle.pool.query(
+      `INSERT INTO image_generation_templates
+       (id, name, category_key, enabled, created_at, updated_at)
+       VALUES ($1, 'Test Template', 'dress', true, now(), now())`,
+      [templateId]
+    );
+    await handle.pool.query(
+      `INSERT INTO image_generation_template_versions
+       (id, template_id, version, lifecycle_state, recipe, created_at)
+       VALUES ($1, $2, 1, 'active', $3::jsonb, now())`,
+      [versionId, templateId, JSON.stringify({
+        version: 1,
+        inputCount: 3,
+        outputCount: 3,
+        mustPreserve: ["product identity"],
+        visualDirection: "marketplace product photography",
+        forbidden: ["brand logos"],
+        roles: [
+          { key: "primary", instruction: "front-facing hero image" },
+          { key: "detail", instruction: "material detail image" },
+          { key: "lifestyle", instruction: "realistic usage scene" }
+        ],
+        providerParameters: {}
+      })]
+    );
+    await handle.pool.query(
+      `UPDATE image_generation_templates SET active_version_id = $1 WHERE id = $2`,
+      [versionId, templateId]
+    );
+    return { templateId, versionId };
+  }
+
+  // Fixture: archived asset for markSlotSucceeded
+  function _fixtureArchivedAsset(assetId: string) {
+    return assetId;
+  }
+
+  // Fixture: failure for markSlotFailed
+  function _safeFailure(code: string) {
+    return { kind: "retryable" as const, code, safeMessage: "test failure" };
+  }
+
+  // Fixture: createBatch input
+  async function fixtureStart(overrides: {
+    idempotencyKey?: string;
+    outputCount?: number;
+    templateId?: string;
+    versionId?: string;
+  } = {}): Promise<Parameters<typeof imageGen.createBatch>[0]> {
+    const { templateId, versionId } = overrides.templateId && overrides.versionId
+      ? { templateId: overrides.templateId, versionId: overrides.versionId }
+      : await fixtureTemplate();
+
+    const opId = await catalog.upsertLocalOperator({ handle: "img-op", displayName: "Image Gen Op" });
+    const productId = await catalog.insertProduct({
+      operatorId: opId,
+      sourceUrl: "https://detail.1688.com/offer/img.html",
+      locale: "th-TH",
+      currency: "THB"
+    });
+    const revisionId = await catalog.insertRevision({
+      productId,
+      draftVersion: 1,
+      sourceTitle: "Image Gen Product",
+      workingDraft: {}
+    });
+
+    // Create ready assets
+    const assetIds: string[] = [];
+    for (let i = 0; i < 3; i++) {
+      const assetId = newId(`ast${i}`);
+      await handle.pool.query(
+        `INSERT INTO assets (id, product_id, revision_id, remote_url, kind, state, local_path, extension)
+         VALUES ($1, $2, $3, $4, 'detail', 'ready', '/assets/asset.png', 'png')`,
+        [assetId, productId, revisionId, `https://cdn.test/asset${i}.jpg`]
+      );
+      assetIds.push(assetId);
+    }
+
+    return {
+      idempotencyKey: overrides.idempotencyKey ?? `start:rev_1:${newId("idem")}`,
+      productId,
+      revisionId,
+      selectedAssetIds: assetIds.slice(0, 3),
+      requestedOutputCount: overrides.outputCount ?? 3,
+      categoryKey: "dress",
+      templateId: overrides.templateId ?? templateId,
+      templateVersionId: overrides.versionId ?? versionId,
+      templateVersion: 1,
+      recipe: {
+        version: 1 as const,
+        inputCount: 3,
+        outputCount: 3,
+        mustPreserve: ["product identity"],
+        visualDirection: "marketplace product photography",
+        forbidden: ["brand logos"],
+        roles: [
+          { key: "primary", instruction: "front-facing hero image" },
+          { key: "detail", instruction: "material detail image" },
+          { key: "lifestyle", instruction: "realistic usage scene" }
+        ],
+        providerParameters: {}
+      },
+      productFacts: { title: "Test Product", category: "dress" },
+      productFactsDigest: "abc123"
+    };
+  }
+
+  async function claimPlanner(batchId: string) {
+    const planner = (await handle.pool.query(
+      "SELECT id FROM jobs WHERE batch_key = $1 AND kind = 'image_prompt_plan'",
+      [batchId]
+    )).rows[0]!;
+    const fence = { jobId: String(planner.id), owner: "planner-worker", leaseToken: newId("lease") };
+    await handle.pool.query(
+      `UPDATE jobs SET status = 'running', owner = $2, lease_token = $3,
+         lease_expires_at = now() + interval '5 minutes' WHERE id = $1`,
+      [fence.jobId, fence.owner, fence.leaseToken]
+    );
+    return fence;
+  }
+
+  test("creates batch, planner job, and requested slots atomically and idempotently", async () => {
+    const input = await fixtureStart({ idempotencyKey: `start:rev_1:abc${newId("idem")}`, outputCount: 3 });
+    const first = await imageGen.createBatch(input);
+    const second = await imageGen.createBatch({ ...input, idempotencyKey: input.idempotencyKey });
+
+    expect(second.batchId).toBe(first.batchId);
+    expect(await countSlotRows(first.batchId)).toBe(3);
+    expect(await countPlannerJobs(first.batchId)).toBe(1);
+    const context = await imageGen.loadPlanningContext(first.batchId);
+    expect(context?.references).toEqual(input.selectedAssetIds.map((assetId) => ({
+      assetId,
+      localPath: "/assets/asset.png",
+      extension: "png"
+    })));
+    expect((await handle.pool.query(
+      "SELECT role FROM image_generation_slots WHERE batch_id = $1 ORDER BY slot_number",
+      [first.batchId]
+    )).rows.map((row) => row.role)).toEqual(["primary", "detail", "lifestyle"]);
+  });
+
+  test("rejects an expired planner lease before prompts or slot jobs are written", async () => {
+    const input = await fixtureStart({ idempotencyKey: `start:planner-fence:${newId("idem")}`, outputCount: 1 });
+    const { batchId } = await imageGen.createBatch(input);
+    const fence = await claimPlanner(batchId);
+    await handle.pool.query(
+      "UPDATE jobs SET lease_expires_at = now() - interval '1 second' WHERE id = $1",
+      [fence.jobId]
+    );
+
+    await expect(imageGen.savePlanAndQueueSlots(batchId, {
+      prompts: [{
+        slot: 1,
+        role: "primary",
+        prompt: "must not be persisted",
+        mustPreserve: [],
+        forbidden: []
+      }]
+    }, fence)).rejects.toMatchObject({ code: "lease_fence_lost" });
+
+    expect((await handle.pool.query(
+      "SELECT state, prompt FROM image_generation_slots WHERE batch_id = $1",
+      [batchId]
+    )).rows).toEqual([expect.objectContaining({ state: "waiting_for_plan", prompt: null })]);
+    expect((await handle.pool.query(
+      "SELECT count(*)::integer AS count FROM jobs WHERE batch_key = $1 AND kind = 'image_generate_slot'",
+      [batchId]
+    )).rows[0]?.count).toBe(0);
+  });
+
+  test("atomically creates a ready generated asset and stores its id on the fenced slot", async () => {
+    const input = await fixtureStart({ idempotencyKey: `start:archive:${newId("idem")}`, outputCount: 1 });
+    const { batchId } = await imageGen.createBatch(input);
+    const slot = (await handle.pool.query(
+      "SELECT id, slot_number, role FROM image_generation_slots WHERE batch_id = $1",
+      [batchId]
+    )).rows[0]!;
+    await imageGen.savePlanAndQueueSlots(batchId, {
+      prompts: [{
+        slot: Number(slot.slot_number),
+        role: String(slot.role),
+        prompt: "archive this generated image",
+        mustPreserve: [],
+        forbidden: []
+      }]
+    }, await claimPlanner(batchId));
+    const job = (await handle.pool.query(
+      "SELECT id FROM jobs WHERE batch_key = $1 AND kind = 'image_generate_slot'",
+      [batchId]
+    )).rows[0]!;
+    const fence = { jobId: String(job.id), owner: "archive-worker", leaseToken: newId("lease") };
+    await handle.pool.query(
+      `UPDATE jobs SET status = 'running', owner = $2, lease_token = $3,
+         lease_expires_at = now() + interval '5 minutes' WHERE id = $1`,
+      [fence.jobId, fence.owner, fence.leaseToken]
+    );
+
+    const assetId = await imageGen.archiveSlotOutput(String(slot.id), {
+      remoteUrl: "https://provider.test/generated.png",
+      finalUrl: "https://cdn.provider.test/generated.png",
+      sha256: "a".repeat(64),
+      path: "/data/assets/aa/generated.png",
+      extension: "png",
+      bytes: 4096,
+      width: 1024,
+      height: 1024
+    }, fence);
+
+    expect(assetId).toMatch(/^asset_/);
+    const persisted = await handle.pool.query(
+      `SELECT s.state, s.archived_asset_id, a.product_id, a.revision_id,
+              a.state AS asset_state, a.remote_url, a.local_path, a.extension,
+              a.sha256, a.width, a.height
+       FROM image_generation_slots s
+       JOIN assets a ON a.id = s.archived_asset_id
+       WHERE s.id = $1`,
+      [slot.id]
+    );
+    expect(persisted.rows[0]).toMatchObject({
+      state: "succeeded",
+      archived_asset_id: assetId,
+      product_id: input.productId,
+      revision_id: input.revisionId,
+      asset_state: "ready",
+      remote_url: "https://provider.test/generated.png",
+      local_path: "/data/assets/aa/generated.png",
+      extension: "png",
+      sha256: "a".repeat(64),
+      width: 1024,
+      height: 1024
+    });
+    expect(persisted.rows[0]?.archived_asset_id).not.toBe("/data/assets/aa/generated.png");
+  });
+
+  test("retries slot four with a versioned payload that preserves slot number and increments attempt", async () => {
+    const input = await fixtureStart({ idempotencyKey: `start:retry:${newId("idem")}`, outputCount: 4 });
+    const { batchId } = await imageGen.createBatch(input);
+    const slot = (await handle.pool.query(
+      "SELECT id FROM image_generation_slots WHERE batch_id = $1 AND slot_number = 4",
+      [batchId]
+    )).rows[0]!;
+    await handle.pool.query(
+      "UPDATE image_generation_slots SET state = 'failed', error = '{}'::jsonb WHERE id = $1",
+      [slot.id]
+    );
+
+    expect(await imageGen.retrySlot(String(slot.id))).toBe(true);
+    const retried = await handle.pool.query(
+      `SELECT s.attempt, j.payload
+       FROM image_generation_slots s
+       JOIN jobs j ON j.batch_key = s.batch_id AND j.kind = 'image_generate_slot'
+       WHERE s.id = $1 AND (j.payload->>'attempt')::integer = 1`,
+      [slot.id]
+    );
+    expect(retried.rows[0]).toMatchObject({
+      attempt: 1,
+      payload: { version: 1, batchId, slotId: slot.id, slotNumber: 4, attempt: 1 }
+    });
+  });
+
+  test("rejects a ready asset owned by another product revision inside batch creation", async () => {
+    const input = await fixtureStart({ idempotencyKey: `start:foreign:${newId("idem")}` });
+    const otherProductId = await catalog.insertProduct({
+      operatorId: await catalog.upsertLocalOperator({ handle: "img-other-op", displayName: "Other Image Op" }),
+      sourceUrl: "https://detail.1688.com/offer/other-img.html",
+      locale: "th-TH",
+      currency: "THB"
+    });
+    const otherRevisionId = await catalog.insertRevision({
+      productId: otherProductId,
+      draftVersion: 1,
+      sourceTitle: "Other Product",
+      workingDraft: {}
+    });
+    const foreignAssetId = newId("foreign_asset");
+    await handle.pool.query(
+      `INSERT INTO assets (id, product_id, revision_id, remote_url, kind, state, local_path, extension)
+       VALUES ($1, $2, $3, 'https://cdn.test/foreign.png', 'main', 'ready', '/assets/foreign.png', 'png')`,
+      [foreignAssetId, otherProductId, otherRevisionId]
+    );
+
+    await expect(imageGen.createBatch({
+      ...input,
+      selectedAssetIds: [foreignAssetId]
+    })).rejects.toMatchObject({ code: "asset_not_in_revision" });
+
+    expect((await handle.pool.query(
+      "SELECT count(*)::integer AS count FROM image_generation_batches WHERE idempotency_key = $1",
+      [input.idempotencyKey]
+    )).rows[0]?.count).toBe(0);
+  });
+
+  test("keeps successful siblings unchanged when one slot fails", async () => {
+    const input = await fixtureStart({ idempotencyKey: `start:rev_1:sibs${newId("idem")}`, outputCount: 3 });
+    const { batchId } = await imageGen.createBatch(input);
+
+    // First, save plan to move slots from waiting_for_plan to queued
+    const slotsBefore = await handle.pool.query(
+      "SELECT id, slot_number, role FROM image_generation_slots WHERE batch_id = $1 ORDER BY slot_number",
+      [batchId]
+    );
+    const plannedPrompts = slotsBefore.rows.map((s) => ({
+      slot: Number(s.slot_number),
+      role: String(s.role),
+      prompt: "test prompt for " + s.role,
+      mustPreserve: [] as string[],
+      forbidden: [] as string[]
+    }));
+    await imageGen.savePlanAndQueueSlots(batchId, { prompts: plannedPrompts }, await claimPlanner(batchId));
+
+    // Create a real archived asset for the succeeded slot
+    const succeededAssetId = newId("succeeded_asset");
+    await handle.pool.query(
+      `INSERT INTO assets (id, product_id, revision_id, remote_url, kind, state, local_path, extension)
+       VALUES ($1, $2, $3, 'https://cdn.test/succeeded.jpg', 'generated', 'ready', '/assets/succeeded.jpg', 'jpg')`,
+      [succeededAssetId, input.productId, input.revisionId]
+    );
+
+    // Simulate: slot_1 succeeded, slot_2 failed, slot_3 still queued
+    const slots = await handle.pool.query(
+      "SELECT id, slot_number FROM image_generation_slots WHERE batch_id = $1 ORDER BY slot_number",
+      [batchId]
+    );
+    const [slot1, slot2, _slot3] = slots.rows;
+
+    // Mark slot 1 succeeded
+    await handle.pool.query(
+      `UPDATE image_generation_slots SET state = 'succeeded', archived_asset_id = $1, updated_at = now()
+       WHERE id = $2`,
+      [succeededAssetId, slot1.id]
+    );
+
+    // Mark slot 2 failed
+    await handle.pool.query(
+      `UPDATE image_generation_slots SET state = 'failed', error = $1::jsonb, updated_at = now()
+       WHERE id = $2`,
+      [JSON.stringify({ kind: "retryable", code: "provider_timeout", safeMessage: "timeout" }), slot2.id]
+    );
+
+    // slot3 stays in 'queued' state
+
+    const projection = await imageGen.getProductProjection(input.productId);
+    expect(projection).not.toBeNull();
+    expect(projection!.slots.map((s) => s.state)).toEqual(["succeeded", "failed", "queued"]);
+  });
+
+  test("accepting generated slots makes the exact ordered assets approval-ready", async () => {
+    const input = await fixtureStart({
+      idempotencyKey: `start:accept-ready:${newId("idem")}`,
+      outputCount: 2
+    });
+    const { batchId } = await imageGen.createBatch(input);
+    const slots = await handle.pool.query<{ id: string }>(
+      "SELECT id FROM image_generation_slots WHERE batch_id = $1 ORDER BY slot_number",
+      [batchId]
+    );
+    const assetIds = [newId("accepted_asset"), newId("accepted_asset")];
+    for (let index = 0; index < assetIds.length; index++) {
+      await handle.pool.query(
+        `INSERT INTO assets (id, product_id, revision_id, remote_url, kind, state, local_path, extension)
+         VALUES ($1, $2, $3, $4, 'generated', 'ready', $5, 'png')`,
+        [assetIds[index], input.productId, input.revisionId, `https://cdn.test/accepted-${index}.png`, `/assets/accepted-${index}.png`]
+      );
+      await handle.pool.query(
+        "UPDATE image_generation_slots SET state = 'succeeded', archived_asset_id = $1 WHERE id = $2",
+        [assetIds[index], slots.rows[index]!.id]
+      );
+    }
+
+    const acceptedOrder = [assetIds[1]!, assetIds[0]!];
+    await imageGen.acceptPartial(batchId, acceptedOrder);
+
+    const state = await handle.pool.query<{ state_automation: string; working_draft: Record<string, unknown> }>(
+      `SELECT product.state_automation, revision.working_draft
+       FROM products product
+       JOIN product_revisions revision ON revision.product_id = product.id
+       WHERE revision.id = $1`,
+      [input.revisionId]
+    );
+    expect(state.rows[0]?.state_automation).toBe("ready");
+    expect(state.rows[0]?.working_draft.finalAssetOrder).toEqual(acceptedOrder);
+  });
+});
+
+// T13 fix: every accepted assetId must come from a succeeded, archived, not-excluded slot.
+// Pin spec gap A and B in a single suite so they can be moved to a unit file later if needed.
+describe("integration: ApprovalRepository T13 acceptance wiring", () => {
+  async function slotFixture(): Promise<{
+    productId: string;
+    revisionId: string;
+    batchId: string;
+    assetA: string;
+    assetB: string;
+    slotAId: string;
+    slotBId: string;
+    templateVersionId: string;
+  }> {
+    const opId = await catalog.upsertLocalOperator({
+      handle: "slot-approval-op",
+      displayName: "Slot Approval Op"
+    });
+    const productId = await catalog.insertProduct({
+      operatorId: opId,
+      sourceUrl: "https://detail.1688.com/offer/slots.html",
+      sourceItemId: "slot-1",
+      locale: "th-TH",
+      currency: "THB"
+    });
+    await handle.pool.query(
+      `UPDATE products
+       SET state_automation = 'ready', state_source = 'success',
+           canonical_success_detail_id = 'detail-slot-canonical'
+       WHERE id = $1`,
+      [productId]
+    );
+    const revisionId = await catalog.insertRevision({
+      productId,
+      draftVersion: 1,
+      sourceTitle: "Slot Approval Source",
+      workingDraft: {
+        listingRunId: "run-listing-slots",
+        pricingRunId: "run-pricing-slots",
+        templateMatch: { templateId: "slot-template", templateVersion: 1 },
+        finalAssetOrder: ["slot-asset-a", "slot-asset-b"]
+      }
+    });
+    await handle.pool.query(
+      "UPDATE product_revisions SET source_payload = $2::jsonb WHERE id = $1",
+      [revisionId, JSON.stringify({
+        sourceItemId: "slot-1",
+        itemNumber: "ITEM-SLOT-1",
+        skus: []
+      })]
+    );
+    await handle.pool.query(
+      `INSERT INTO listing_drafts
+        (id, product_id, revision_id, draft_version, target_locale, style, title, description, attributes)
+       VALUES ('run-listing-slots', $1, $2, 1, 'th-TH', 'neutral', 'Slot Title', 'Slot description', '[]'::jsonb)`,
+      [productId, revisionId]
+    );
+
+    // Create a template + active version so batches reference real rows.
+    const templateId = newId("tmpl");
+    const templateVersionId = newId("tv");
+    await handle.pool.query(
+      `INSERT INTO image_generation_templates (id, name, category_key, enabled, created_at, updated_at)
+       VALUES ($1, 'Slot Template', 'dress', true, now(), now())`,
+      [templateId]
+    );
+    await handle.pool.query(
+      `INSERT INTO image_generation_template_versions (id, template_id, version, lifecycle_state, recipe, created_at)
+       VALUES ($1, $2, 1, 'active', $3::jsonb, now())`,
+      [templateVersionId, templateId, JSON.stringify({ version: 1, inputCount: 1, outputCount: 2, roles: ["primary", "detail"] })]
+    );
+    await handle.pool.query(
+      `UPDATE image_generation_templates SET active_version_id = $1 WHERE id = $2`,
+      [templateVersionId, templateId]
+    );
+
+    // Batch + succeeded slot rows that reference archived assets.
+    const batchId = newId("batch");
+    await handle.pool.query(
+      `INSERT INTO image_generation_batches
+        (id, product_id, revision_id, idempotency_key, selected_asset_ids, requested_output_count,
+         category_key, template_id, template_version_id, template_version, recipe_snapshot,
+         product_facts_snapshot, product_facts_digest, state)
+       VALUES ($1, $2, $3, $4, '[]'::jsonb, 2, 'dress', $5, $6, 1, '{}'::jsonb, '{}'::jsonb, 'digest', 'succeeded')`,
+      [batchId, productId, revisionId, `slot-key-${newId("idem")}`, templateId, templateVersionId]
+    );
+
+    const assetA = "slot-asset-a";
+    const assetB = "slot-asset-b";
+    await handle.pool.query(
+      `INSERT INTO assets (id, product_id, revision_id, remote_url, kind, state, local_path, extension, sha256)
+       VALUES
+         ($1, $2, $3, 'https://source.test/a.jpg', 'generated', 'ready', '/assets/slot-a.png', 'png', 'sha-a'),
+         ($4, $2, $3, 'https://source.test/b.jpg', 'generated', 'ready', '/assets/slot-b.png', 'png', 'sha-b')`,
+      [assetA, productId, revisionId, assetB]
+    );
+
+    const slotAId = newId("slot");
+    const slotBId = newId("slot");
+    await handle.pool.query(
+      `INSERT INTO image_generation_slots
+        (id, batch_id, slot_number, role, state, archived_asset_id)
+       VALUES
+         ($1, $2, 1, 'primary', 'succeeded', $3),
+         ($4, $2, 2, 'detail', 'succeeded', $5)`,
+      [slotAId, batchId, assetA, slotBId, assetB]
+    );
+
+    return { productId, revisionId, batchId, assetA, assetB, slotAId, slotBId, templateVersionId };
+  }
+
+  test("rejects confirmation when an accepted asset has no succeeded slot", async () => {
+    const fixture = await slotFixture();
+    // Demote slot B to failed: the asset is "ready" but no slot produced it.
+    await handle.pool.query(
+      "UPDATE image_generation_slots SET state = 'failed', archived_asset_id = NULL WHERE id = $1",
+      [fixture.slotBId]
+    );
+
+    await expect(
+      approvals.confirmAndEnqueue({
+        version: 1,
+        productId: fixture.productId,
+        expectedDraftVersion: 1,
+        expectedListingRunId: "run-listing-slots",
+        expectedTemplateVersion: 1,
+        orderedFinalAssetIds: [fixture.assetA, fixture.assetB]
+      })
+    ).rejects.toMatchObject({
+      code: "approval_conflict",
+      metadata: expect.objectContaining({ field: "orderedFinalAssetIds" })
+    });
+    const rows = await handle.pool.query("SELECT count(*)::integer AS count FROM approval_snapshots");
+    expect(rows.rows[0].count).toBe(0);
+  });
+
+  test("rejects confirmation when an accepted slot is excluded", async () => {
+    const fixture = await slotFixture();
+    await handle.pool.query(
+      "UPDATE image_generation_slots SET excluded_at = now() WHERE id = $1",
+      [fixture.slotAId]
+    );
+    await expect(
+      approvals.confirmAndEnqueue({
+        version: 1,
+        productId: fixture.productId,
+        expectedDraftVersion: 1,
+        expectedListingRunId: "run-listing-slots",
+        expectedTemplateVersion: 1,
+        orderedFinalAssetIds: [fixture.assetA, fixture.assetB]
+      })
+    ).rejects.toMatchObject({
+      code: "approval_conflict",
+      metadata: expect.objectContaining({ field: "orderedFinalAssetIds" })
+    });
+  });
+
+  test("accepts a confirmation where every asset is produced by a succeeded, archived, non-excluded slot", async () => {
+    const fixture = await slotFixture();
+    const result = await approvals.confirmAndEnqueue({
+      version: 1,
+      productId: fixture.productId,
+      expectedDraftVersion: 1,
+      expectedListingRunId: "run-listing-slots",
+      expectedTemplateVersion: 1,
+      orderedFinalAssetIds: [fixture.assetA, fixture.assetB]
+    });
+    expect(result.approvalSnapshotId).toMatch(/^approval_/);
+  });
+
+  test("keeps completed legacy Canvas outputs eligible for approval", async () => {
+    const fixture = await slotFixture();
+    await handle.pool.query("DELETE FROM image_generation_slots WHERE batch_id = $1", [fixture.batchId]);
+    await handle.pool.query(
+      `INSERT INTO canvas_runs
+         (id, product_id, revision_id, template_id, template_version, state, outputs)
+       VALUES ($1, $2, $3, 'legacy-canvas-template', 1, 'succeeded', $4::jsonb)`,
+      [newId("canvas"), fixture.productId, fixture.revisionId, JSON.stringify([fixture.assetA, fixture.assetB])]
+    );
+
+    const result = await approvals.confirmAndEnqueue({
+      version: 1,
+      productId: fixture.productId,
+      expectedDraftVersion: 1,
+      expectedListingRunId: "run-listing-slots",
+      expectedTemplateVersion: 1,
+      orderedFinalAssetIds: [fixture.assetA, fixture.assetB]
+    });
+    expect(result.approvalSnapshotId).toMatch(/^approval_/);
+  });
+
+  test("loadSnapshot exposes sha256 and extension in asset order", async () => {
+    const fixture = await slotFixture();
+    const confirmed = await approvals.confirmAndEnqueue({
+      version: 1,
+      productId: fixture.productId,
+      expectedDraftVersion: 1,
+      expectedListingRunId: "run-listing-slots",
+      expectedTemplateVersion: 1,
+      orderedFinalAssetIds: [fixture.assetA, fixture.assetB]
+    });
+    const snapshot = await approvals.loadSnapshot(confirmed.approvalSnapshotId);
+    expect(snapshot.orderedFinalAssetIds).toEqual([fixture.assetA, fixture.assetB]);
+    expect(snapshot.orderedFinalAssetLocalPaths).toEqual(["/assets/slot-a.png", "/assets/slot-b.png"]);
+    expect(snapshot.orderedFinalAssetSha256).toEqual(["sha-a", "sha-b"]);
+    expect(snapshot.orderedFinalAssetExtension).toEqual(["png", "png"]);
   });
 });

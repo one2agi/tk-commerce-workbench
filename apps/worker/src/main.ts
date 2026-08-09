@@ -1,21 +1,23 @@
-import type { AssetStagingPort, CanvasPort, ExchangeRatePort, LlmPort, MiaoshouEditPort, MiaoshouSourcePort } from "@tk/contracts";
+import type { AssetPublishingPort, AssetStagingPort, CanvasPort, ExchangeRatePort, ImageGenerationPort, ImagePromptPlannerPort, LlmPort, MiaoshouEditPort, MiaoshouSourcePort } from "@tk/contracts";
 import { createArchiveAssetsHandler } from "./handlers/archive-assets.js";
 import { createPricingHandler } from "./handlers/calculate-pricing.js";
 import { createCollectHandler } from "./handlers/collect.js";
 import { createFinalPreviewHandler } from "./handlers/final-preview.js";
 import { createCanvasHandler } from "./handlers/generate-canvas.js";
+import { createGenerateImageSlotHandler, type ContentAddressedStore } from "./handlers/generate-image-slot.js";
 import { createGenerateListingHandler } from "./handlers/generate-listing.js";
 import { createTemplateMatchHandler } from "./handlers/match-template.js";
 import { createExchangeRateRefreshHandler } from "./handlers/refresh-exchange-rate.js";
 import { createImageSelectHandler } from "./handlers/select-images.js";
 import { createStagingCleanupHandler } from "./handlers/staging-cleanup.js";
 import { createMiaoshouEditHandler } from "./handlers/miaoshou-edit.js";
+import { createPlanImagesHandler } from "./handlers/plan-images.js";
 import { createPrepareMiaoshouWritebackHandler } from "./handlers/prepare-miaoshou-writeback.js";
 import { AdapterLimiterSet, type AdapterLimit } from "./runtime/adapter-limiter.js";
 import { runWorkerLoop, type WorkerHandler, type WorkerJobRepository } from "./runtime/worker-loop.js";
 import type { StagingCleanupCodec } from "./runtime/staging-cleanup-codec.js";
 
-export type CoreAdapterName = "miaoshou" | "llm" | "exchangeRate" | "canvas" | "staging";
+export type CoreAdapterName = "miaoshou" | "llm" | "exchangeRate" | "canvas" | "staging" | "imageGeneration";
 type LimitedRun = <T>(operation: () => Promise<T>) => Promise<T>;
 
 export function createAtomicStagingPort(port: AssetStagingPort, run: LimitedRun): AssetStagingPort {
@@ -45,6 +47,9 @@ export interface HandlerRegistryInput {
     exchangeRate: ExchangeRatePort;
     canvas: CanvasPort;
     staging: AssetStagingPort;
+    publishing: AssetPublishingPort;
+    imagePlanner: ImagePromptPlannerPort;
+    imageGeneration: ImageGenerationPort;
   };
   repositories: {
     collect: Parameters<typeof createCollectHandler>[0]["repository"];
@@ -57,16 +62,19 @@ export interface HandlerRegistryInput {
     images: Parameters<typeof createImageSelectHandler>[0]["repository"];
     canvas: Parameters<typeof createCanvasHandler>[0]["repository"];
     finalPreview: Parameters<typeof createFinalPreviewHandler>[0]["repository"];
+    imageGeneration: Parameters<typeof createPlanImagesHandler>[0]["repository"];
+    imageSlot: Parameters<typeof createGenerateImageSlotHandler>[0]["repository"];
     miaoshouEdit: Parameters<typeof createMiaoshouEditHandler>[0]["repository"];
   };
   reachability: Parameters<typeof createMiaoshouEditHandler>[0]["reachability"];
   cleanupCodec: StagingCleanupCodec;
-  store: Parameters<typeof createArchiveAssetsHandler>[0]["store"];
+  store: ContentAddressedStore;
   analyzer: Parameters<typeof createArchiveAssetsHandler>[0]["analyzer"];
   quota: Parameters<typeof createCanvasHandler>[0]["quota"];
   audit: Parameters<typeof createCollectHandler>[0]["audit"];
   now: () => Date;
   maxCanvasRunsPerDay: number;
+  imageGenerationPath: "canvas" | "headless";
   adapterLimits: Readonly<Record<CoreAdapterName, AdapterLimit>>;
 }
 
@@ -92,6 +100,10 @@ export function buildHandlerRegistry(input: HandlerRegistryInput): Readonly<Reco
     applyEdit: (value) => limiters.run("miaoshou", () => input.ports.miaoshouEdit.applyEdit(value)),
     reconcileByCanonicalDetailId: (value) => limiters.run("miaoshou", () => input.ports.miaoshouEdit.reconcileByCanonicalDetailId(value))
   };
+  const imageGeneration: ImageGenerationPort = {
+    submit: (value) => limiters.run("imageGeneration", () => input.ports.imageGeneration.submit(value)),
+    fetch: (value) => limiters.run("imageGeneration", () => input.ports.imageGeneration.fetch(value))
+  };
   return Object.freeze({
     miaoshou_collect: createCollectHandler({ port: miaoshou, repository: input.repositories.collect, audit: input.audit }),
     miaoshou_prepare_writeback: createPrepareMiaoshouWritebackHandler({
@@ -103,7 +115,10 @@ export function buildHandlerRegistry(input: HandlerRegistryInput): Readonly<Reco
     listing_generate: createGenerateListingHandler({ llm, repository: input.repositories.listing, audit: input.audit }),
     pricing_calculate: createPricingHandler({ repository: input.repositories.pricing }),
     template_match: createTemplateMatchHandler({ repository: input.repositories.templates }),
-    image_select: createImageSelectHandler({ repository: input.repositories.images }),
+    image_select: createImageSelectHandler({
+      repository: input.repositories.images,
+      imageGenerationPath: input.imageGenerationPath
+    }),
     canvas_generate: createCanvasHandler({ canvas, staging, store: input.store, repository: input.repositories.canvas, quota: input.quota, audit: input.audit, now: input.now, cleanupCodec: input.cleanupCodec, maxRunsPerDay: input.maxCanvasRunsPerDay }),
     final_preview: createFinalPreviewHandler({ repository: input.repositories.finalPreview }),
     exchange_rate_refresh: createExchangeRateRefreshHandler({ port: exchangeRate, repository: input.repositories.exchangeRate, audit: input.audit, now: input.now }),
@@ -111,9 +126,21 @@ export function buildHandlerRegistry(input: HandlerRegistryInput): Readonly<Reco
     miaoshou_edit: createMiaoshouEditHandler({
       edit: miaoshouEdit,
       staging,
+      publishing: input.ports.publishing,
       repository: input.repositories.miaoshouEdit,
       reachability: input.reachability,
       cleanupCodec: input.cleanupCodec,
+      audit: input.audit
+    }),
+    image_prompt_plan: createPlanImagesHandler({
+      planner: input.ports.imagePlanner,
+      repository: input.repositories.imageGeneration,
+      audit: input.audit
+    }),
+    image_generate_slot: createGenerateImageSlotHandler({
+      provider: imageGeneration,
+      store: input.store,
+      repository: input.repositories.imageSlot,
       audit: input.audit
     })
   });

@@ -448,4 +448,82 @@ ALTER TABLE workspace_settings ADD COLUMN IF NOT EXISTS provider_options JSONB N
 ALTER TABLE workspace_settings ADD COLUMN IF NOT EXISTS retry_policy JSONB NOT NULL DEFAULT
   '{"maxAttempts":3,"initialDelaySeconds":30}'::jsonb;
 ALTER TABLE workspace_settings ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ NOT NULL DEFAULT now();
+
+-- Image generation templates (with versioned drafts) --------------------------------
+CREATE TABLE IF NOT EXISTS image_generation_templates (
+  id               TEXT PRIMARY KEY,
+  name             TEXT NOT NULL,
+  category_key     TEXT NOT NULL,
+  parent_category_key TEXT,
+  active_version_id  TEXT,
+  enabled          BOOLEAN NOT NULL DEFAULT true,
+  archived_at      TIMESTAMPTZ,
+  created_at       TIMESTAMPTZ NOT NULL DEFAULT now(),
+  updated_at       TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE TABLE IF NOT EXISTS image_generation_template_versions (
+  id               TEXT PRIMARY KEY,
+  template_id      TEXT NOT NULL REFERENCES image_generation_templates(id) ON DELETE CASCADE,
+  version          INTEGER NOT NULL CHECK (version > 0),
+  lifecycle_state  TEXT NOT NULL CHECK (lifecycle_state IN ('draft', 'active', 'archived')),
+  recipe           JSONB NOT NULL,
+  activated_at     TIMESTAMPTZ,
+  created_at       TIMESTAMPTZ NOT NULL DEFAULT now(),
+  UNIQUE(template_id, version)
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS image_generation_one_active_version
+  ON image_generation_template_versions(template_id)
+  WHERE lifecycle_state = 'active';
+
+DO $$ BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'image_generation_active_version_fk') THEN
+    ALTER TABLE image_generation_templates
+      ADD CONSTRAINT image_generation_active_version_fk
+      FOREIGN KEY (active_version_id) REFERENCES image_generation_template_versions(id);
+  END IF;
+END $$;
+
+-- Image generation batches (one per product revision generation request) -------------
+CREATE TABLE IF NOT EXISTS image_generation_batches (
+  id                       TEXT PRIMARY KEY,
+  product_id               TEXT NOT NULL REFERENCES products(id) ON DELETE CASCADE,
+  revision_id               TEXT NOT NULL REFERENCES product_revisions(id) ON DELETE CASCADE,
+  idempotency_key          TEXT NOT NULL UNIQUE,
+  selected_asset_ids        JSONB NOT NULL,
+  requested_output_count    INTEGER NOT NULL CHECK (requested_output_count BETWEEN 1 AND 8),
+  category_key             TEXT NOT NULL,
+  template_id               TEXT NOT NULL REFERENCES image_generation_templates(id),
+  template_version_id       TEXT NOT NULL REFERENCES image_generation_template_versions(id),
+  template_version          INTEGER NOT NULL,
+  recipe_snapshot           JSONB NOT NULL,
+  product_facts_snapshot    JSONB NOT NULL,
+  product_facts_digest      TEXT NOT NULL,
+  state                     TEXT NOT NULL DEFAULT 'planning',
+  accepted_asset_ids        JSONB NOT NULL DEFAULT '[]'::jsonb,
+  created_at               TIMESTAMPTZ NOT NULL DEFAULT now(),
+  updated_at               TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+-- Image generation slots (one per output slot, independently recoverable) -----------
+CREATE TABLE IF NOT EXISTS image_generation_slots (
+  id                   TEXT PRIMARY KEY,
+  batch_id             TEXT NOT NULL REFERENCES image_generation_batches(id) ON DELETE CASCADE,
+  slot_number          INTEGER NOT NULL CHECK (slot_number BETWEEN 1 AND 8),
+  role                 TEXT NOT NULL,
+  prompt               JSONB,
+  prompt_hash          TEXT,
+  business_key         TEXT UNIQUE,
+  state                TEXT NOT NULL DEFAULT 'waiting_for_plan',
+  attempt              INTEGER NOT NULL DEFAULT 0,
+  remote_task_id       TEXT,
+  remote_output_url    TEXT,
+  archived_asset_id    TEXT REFERENCES assets(id) ON DELETE SET NULL,
+  error                JSONB,
+  excluded_at          TIMESTAMPTZ,
+  created_at           TIMESTAMPTZ NOT NULL DEFAULT now(),
+  updated_at           TIMESTAMPTZ NOT NULL DEFAULT now(),
+  UNIQUE(batch_id, slot_number)
+);
 `;

@@ -32,7 +32,6 @@ describe("read1688PageContext", () => {
       }
     };
     const uninstall = installPageContextBridge(pageWindow);
-
     const snapshot = await requestPageContext(pageWindow, 100);
 
     expect(snapshot).toMatchObject({

@@ -6,7 +6,8 @@ import pg from "pg";
 import { AutomationRunRepository } from "../../../../packages/db/src/repositories/automation-run-repository.js";
 import { JobRepository } from "../../../../packages/db/src/repositories/job-repository.js";
 import { LocalCaptureRepository } from "../../../../packages/db/src/repositories/local-capture-repository.js";
-import { ApprovalRepository } from "@tk/db";
+import { ApprovalRepository, schema } from "@tk/db";
+import { ImageGenerationRepository } from "../../../../packages/db/src/repositories/image-generation-repository.js";
 import type { DbPool } from "../../../../packages/db/src/schema/index.js";
 
 import { createExtensionTokenVerifier, type ExtensionTokenVerifier } from "./auth/extension-token";
@@ -20,6 +21,13 @@ import { createPgRerunPort } from "../app/api/v1/products/[productId]/rerun/rout
 import { createPgApprovalInvalidationPort } from "./services/approval-invalidation";
 import { TaskService, type TaskAction, type TaskActionUnitOfWork } from "./services/task-service";
 import { PgTemplateStore, TemplateService } from "./services/template-service";
+import {
+  ImageGenerationTemplateService,
+  type ImageGenerationTemplateStore,
+  type ImageGenerationTemplate,
+  type ImageGenerationTemplateVersion
+} from "./services/image-generation-template-service";
+import { ImageGenerationService } from "./services/image-generation-service";
 
 export interface ServerServices {
   verifyExtensionToken: ExtensionTokenVerifier;
@@ -32,6 +40,8 @@ export interface ServerServices {
   approvals: ApprovalRepository;
   syncs: MiaoshouSyncService;
   productReruns: ProductRerunService;
+  imageGenerationTemplates: ImageGenerationTemplateService;
+  imageGeneration: ImageGenerationService;
 }
 
 interface RuntimeConfig {
@@ -92,6 +102,221 @@ class RevisionVersions {
     const row = result.rows[0];
     if (!row) throw new Error("revision_not_found");
     return Number(row.draft_version);
+  }
+}
+
+class PgImageGenerationTemplateStore implements ImageGenerationTemplateStore {
+  constructor(private readonly pool: DbPool) {}
+
+  async createTemplate(input: {
+    name: string;
+    categoryKey: string;
+    parentCategoryKey?: string;
+  }): Promise<ImageGenerationTemplate> {
+    const id = `tmpl_${Date.now().toString(36)}${Math.random().toString(36).slice(2, 8)}`;
+    const now = new Date();
+    await this.pool.query(
+      `INSERT INTO ${schema.imageGenerationTemplates}
+        (id, name, category_key, parent_category_key, enabled, created_at, updated_at)
+       VALUES ($1, $2, $3, $4, true, $5, $5)`,
+      [id, input.name, input.categoryKey, input.parentCategoryKey ?? null, now]
+    );
+    return {
+      id,
+      name: input.name,
+      categoryKey: input.categoryKey,
+      parentCategoryKey: input.parentCategoryKey ?? null,
+      activeVersionId: null,
+      enabled: true,
+      archivedAt: null,
+      createdAt: now,
+      updatedAt: now
+    };
+  }
+
+  async createVersion(input: {
+    templateId: string;
+    version: number;
+    lifecycleState: "draft" | "active" | "archived";
+    recipe: import("./services/image-generation-template-service").ValidatedRecipe;
+    activatedAt?: Date;
+  }): Promise<ImageGenerationTemplateVersion> {
+    const id = `ver_${Date.now().toString(36)}${Math.random().toString(36).slice(2, 8)}`;
+    const now = new Date();
+    await this.pool.query(
+      `INSERT INTO ${schema.imageGenerationTemplateVersions}
+        (id, template_id, version, lifecycle_state, recipe, activated_at, created_at)
+       VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+      [
+        id,
+        input.templateId,
+        input.version,
+        input.lifecycleState,
+        JSON.stringify(input.recipe),
+        input.activatedAt ?? null,
+        now
+      ]
+    );
+    return {
+      id,
+      templateId: input.templateId,
+      version: input.version,
+      lifecycleState: input.lifecycleState,
+      recipe: input.recipe,
+      activatedAt: input.activatedAt ?? null,
+      createdAt: now
+    };
+  }
+
+  async getVersionsByTemplate(templateId: string): Promise<ImageGenerationTemplateVersion[]> {
+    const result = await this.pool.query(
+      `SELECT id, template_id, version, lifecycle_state, recipe, activated_at, created_at
+       FROM ${schema.imageGenerationTemplateVersions}
+       WHERE template_id = $1 ORDER BY version DESC`,
+      [templateId]
+    );
+    return result.rows.map((row) => ({
+      id: String(row.id),
+      templateId: String(row.template_id),
+      version: Number(row.version),
+      lifecycleState: row.lifecycle_state as "draft" | "active" | "archived",
+      recipe: row.recipe,
+      activatedAt: row.activated_at ? new Date(row.activated_at) : null,
+      createdAt: new Date(row.created_at)
+    }));
+  }
+
+  async getVersion(versionId: string): Promise<ImageGenerationTemplateVersion | null> {
+    const result = await this.pool.query(
+      `SELECT id, template_id, version, lifecycle_state, recipe, activated_at, created_at
+       FROM ${schema.imageGenerationTemplateVersions} WHERE id = $1`,
+      [versionId]
+    );
+    if (!result.rowCount || result.rowCount === 0) return null;
+    const row = result.rows[0];
+    return {
+      id: String(row.id),
+      templateId: String(row.template_id),
+      version: Number(row.version),
+      lifecycleState: row.lifecycle_state as "draft" | "active" | "archived",
+      recipe: row.recipe,
+      activatedAt: row.activated_at ? new Date(row.activated_at) : null,
+      createdAt: new Date(row.created_at)
+    };
+  }
+
+  async getTemplate(templateId: string): Promise<ImageGenerationTemplate | null> {
+    const result = await this.pool.query(
+      `SELECT id, name, category_key, parent_category_key, active_version_id, enabled, archived_at, created_at, updated_at
+       FROM ${schema.imageGenerationTemplates} WHERE id = $1`,
+      [templateId]
+    );
+    if (!result.rowCount || result.rowCount === 0) return null;
+    const row = result.rows[0];
+    return {
+      id: String(row.id),
+      name: String(row.name),
+      categoryKey: String(row.category_key),
+      parentCategoryKey: row.parent_category_key ? String(row.parent_category_key) : null,
+      activeVersionId: row.active_version_id ? String(row.active_version_id) : null,
+      enabled: row.enabled === true,
+      archivedAt: row.archived_at ? new Date(row.archived_at) : null,
+      createdAt: new Date(row.created_at),
+      updatedAt: new Date(row.updated_at)
+    };
+  }
+
+  async getTemplateByCategoryKey(categoryKey: string): Promise<ImageGenerationTemplate | null> {
+    const result = await this.pool.query(
+      `SELECT id, name, category_key, parent_category_key, active_version_id, enabled, archived_at, created_at, updated_at
+       FROM ${schema.imageGenerationTemplates}
+       WHERE category_key = $1 AND archived_at IS NULL`,
+      [categoryKey]
+    );
+    if (!result.rowCount || result.rowCount === 0) return null;
+    const row = result.rows[0];
+    return {
+      id: String(row.id),
+      name: String(row.name),
+      categoryKey: String(row.category_key),
+      parentCategoryKey: row.parent_category_key ? String(row.parent_category_key) : null,
+      activeVersionId: row.active_version_id ? String(row.active_version_id) : null,
+      enabled: row.enabled === true,
+      archivedAt: row.archived_at ? new Date(row.archived_at) : null,
+      createdAt: new Date(row.created_at),
+      updatedAt: new Date(row.updated_at)
+    };
+  }
+
+  async updateVersionArchived(version: ImageGenerationTemplateVersion): Promise<void> {
+    await this.pool.query(
+      `UPDATE ${schema.imageGenerationTemplateVersions} SET lifecycle_state = 'archived' WHERE id = $1`,
+      [version.id]
+    );
+  }
+
+  async updateTemplateActiveVersion(templateId: string, versionId: string): Promise<void> {
+    await this.pool.query(
+      `UPDATE ${schema.imageGenerationTemplates}
+       SET active_version_id = $1, updated_at = now() WHERE id = $2`,
+      [versionId, templateId]
+    );
+  }
+
+  async listTemplates(): Promise<ImageGenerationTemplate[]> {
+    const result = await this.pool.query(
+      `SELECT id, name, category_key, parent_category_key, active_version_id, enabled, archived_at, created_at, updated_at
+       FROM ${schema.imageGenerationTemplates} ORDER BY created_at DESC`
+    );
+    return result.rows.map((row) => ({
+      id: String(row.id),
+      name: String(row.name),
+      categoryKey: String(row.category_key),
+      parentCategoryKey: row.parent_category_key ? String(row.parent_category_key) : null,
+      activeVersionId: row.active_version_id ? String(row.active_version_id) : null,
+      enabled: row.enabled === true,
+      archivedAt: row.archived_at ? new Date(row.archived_at) : null,
+      createdAt: new Date(row.created_at),
+      updatedAt: new Date(row.updated_at)
+    }));
+  }
+
+  async resolveActiveByCategory(categoryKey: string): Promise<{
+    template: ImageGenerationTemplate;
+    version: ImageGenerationTemplateVersion;
+  } | null> {
+    // Try exact match, then parent fallbacks
+    const candidates = await this.pool.query(
+      `SELECT id, name, category_key, parent_category_key, active_version_id, enabled, archived_at, created_at, updated_at
+       FROM ${schema.imageGenerationTemplates}
+       WHERE (category_key = $1 OR category_key = $2 OR $1 LIKE category_key || '.%')
+         AND archived_at IS NULL
+       ORDER BY LENGTH(category_key) DESC, created_at ASC`,
+      [categoryKey, categoryKey.split(".").slice(0, -1).join(".")]
+    );
+    if (!candidates.rowCount || candidates.rowCount === 0) return null;
+
+    for (const row of candidates.rows) {
+      if (!row.active_version_id) continue;
+      const ver = await this.getVersion(String(row.active_version_id));
+      if (ver && ver.lifecycleState === "active") {
+        return {
+          template: {
+            id: String(row.id),
+            name: String(row.name),
+            categoryKey: String(row.category_key),
+            parentCategoryKey: row.parent_category_key ? String(row.parent_category_key) : null,
+            activeVersionId: String(row.active_version_id),
+            enabled: row.enabled === true,
+            archivedAt: row.archived_at ? new Date(row.archived_at) : null,
+            createdAt: new Date(row.created_at),
+            updatedAt: new Date(row.updated_at)
+          },
+          version: ver
+        };
+      }
+    }
+    return null;
   }
 }
 
@@ -190,7 +415,9 @@ export function createServerServices(input: {
     miaoshouConfigured: input.config.miaoshouConfigured,
     canvasConfigured: input.config.canvasConfigured,
     llmConfigured: input.config.llmConfigured,
-    exchangeRateConfigured: input.config.exchangeRateConfigured
+    exchangeRateConfigured: input.config.exchangeRateConfigured,
+    imageGenerationConfigured: input.config.imageGenerationConfigured ?? false,
+    imageGenerationPath
   };
   return {
     verifyExtensionToken: createExtensionTokenVerifier(input.config.extensionToken),
@@ -241,7 +468,12 @@ export function createServerServices(input: {
     }),
     approvals: new ApprovalRepository(input.pool),
     syncs: new MiaoshouSyncService(database),
-    productReruns: new ProductRerunService(products, reruns)
+    productReruns: new ProductRerunService(products, reruns),
+    imageGenerationTemplates: new ImageGenerationTemplateService(new PgImageGenerationTemplateStore(input.pool)),
+    imageGeneration: new ImageGenerationService({
+      imageGenerationRepository: new ImageGenerationRepository(input.pool),
+      imageGenerationTemplates: new PgImageGenerationTemplateStore(input.pool)
+    })
   };
 }
 

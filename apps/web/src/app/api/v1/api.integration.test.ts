@@ -177,7 +177,9 @@ describe("v1 API integration", () => {
         miaoshouConfigured: true,
         canvasConfigured: true,
         llmConfigured: true,
-        exchangeRateConfigured: true
+        exchangeRateConfigured: true,
+        imageGenerationConfigured: true,
+        imageGenerationPath: "headless"
       }
     });
 
@@ -390,7 +392,9 @@ describe("v1 API integration", () => {
         miaoshouConfigured: true,
         canvasConfigured: true,
         llmConfigured: false,
-        exchangeRateConfigured: true
+        exchangeRateConfigured: true,
+        imageGenerationConfigured: true,
+        imageGenerationPath: "headless"
       }
     });
     const response = await createSettingsHandler({ service })(
@@ -721,7 +725,9 @@ describe.runIf(Boolean(pgTestUrl))("v1 API PostgreSQL integration", () => {
           miaoshouConfigured: false,
           canvasConfigured: false,
           llmConfigured: false,
-          exchangeRateConfigured: false
+          exchangeRateConfigured: false,
+          imageGenerationConfigured: false,
+          imageGenerationPath: "headless"
         }
       });
       const ingest = createIngestHandler({
@@ -810,7 +816,8 @@ describe.runIf(Boolean(pgTestUrl))("v1 API PostgreSQL integration", () => {
       extensionToken: "extension-secret", externalAdapterMode: "mock" as const,
       assetRoot: "./data/assets", workerConcurrency: 2, maxCanvasRunsPerDay: 50,
       miaoshouConfigured: false, canvasConfigured: false, llmConfigured: false,
-      exchangeRateConfigured: false
+      exchangeRateConfigured: false, imageGenerationConfigured: false,
+      imageGenerationPath: "headless" as const
     };
     try {
       await pool.query("DROP SCHEMA IF EXISTS public CASCADE");

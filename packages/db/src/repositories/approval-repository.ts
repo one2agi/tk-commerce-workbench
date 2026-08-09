@@ -249,6 +249,31 @@ export class ApprovalRepository {
     const invalidAssetId = command.orderedFinalAssetIds.find((assetId) => !assetsById.has(assetId));
     if (invalidAssetId) conflict("orderedFinalAssetIds", command.orderedFinalAssetIds, { invalidAssetId });
 
+    // New headless outputs must come from succeeded, non-excluded slots. Keep
+    // completed legacy Canvas outputs eligible so already-running Canvas work can
+    // still be approved during the headless migration.
+    const provenanceResult = await client.query<{ asset_id: string }>(
+      `SELECT archived_asset_id AS asset_id
+       FROM ${schema.imageGenerationSlots}
+       WHERE archived_asset_id = ANY($1::text[])
+         AND state = 'succeeded'
+         AND archived_asset_id IS NOT NULL
+         AND excluded_at IS NULL
+       UNION
+       SELECT output.asset_id
+       FROM ${schema.canvasRuns} canvas
+       CROSS JOIN LATERAL jsonb_array_elements_text(canvas.outputs) AS output(asset_id)
+       WHERE canvas.revision_id = $2
+         AND canvas.state IN ('succeeded', 'partial')
+         AND output.asset_id = ANY($1::text[])`,
+      [command.orderedFinalAssetIds, revision.id]
+    );
+    const producedAssetIds = new Set(provenanceResult.rows.map((row) => row.asset_id));
+    const unbackedAssetId = command.orderedFinalAssetIds.find((assetId) => !producedAssetIds.has(assetId));
+    if (unbackedAssetId) {
+      conflict("orderedFinalAssetIds", command.orderedFinalAssetIds, { unbackedAssetId });
+    }
+
     return { product, revision, listing, assetsById, templateVersion };
   }
 
@@ -827,18 +852,30 @@ export class ApprovalRepository {
     const row = result.rows[0];
     assert(row, "approval snapshot not found");
     const snapshot = snapshotFromRow(row);
-    const assets = snapshot.orderedFinalAssetIds.length === 0 ? { rows: [] } : await this.pool.query<{ id: string; local_path: string }>(
-      `SELECT id, local_path FROM ${schema.assets}
-       WHERE revision_id = $1 AND id = ANY($2::text[]) AND state = 'ready' AND local_path IS NOT NULL`,
-      [snapshot.revisionId, snapshot.orderedFinalAssetIds]
-    );
+    const assets = snapshot.orderedFinalAssetIds.length === 0
+      ? { rows: [] }
+      : await this.pool.query<{ id: string; local_path: string; sha256: string | null; extension: string | null }>(
+          `SELECT id, local_path, sha256, extension FROM ${schema.assets}
+           WHERE revision_id = $1 AND id = ANY($2::text[]) AND state = 'ready' AND local_path IS NOT NULL`,
+          [snapshot.revisionId, snapshot.orderedFinalAssetIds]
+        );
     const pathsById = new Map(assets.rows.map((asset) => [asset.id, asset.local_path]));
+    const sha256ById = new Map(assets.rows.map((asset) => [asset.id, asset.sha256]));
+    const extensionById = new Map(assets.rows.map((asset) => [asset.id, asset.extension]));
     const { sourcePlatform: _sourcePlatform, ...material } = snapshot;
     return createApprovalSnapshot({
       ...material,
       orderedFinalAssetLocalPaths: snapshot.orderedFinalAssetIds.flatMap((assetId) =>
         pathsById.has(assetId) ? [pathsById.get(assetId)!] : []
-      )
+      ),
+      orderedFinalAssetSha256: snapshot.orderedFinalAssetIds.flatMap((assetId) => {
+        const value = sha256ById.get(assetId);
+        return value ? [value] : [];
+      }),
+      orderedFinalAssetExtension: snapshot.orderedFinalAssetIds.flatMap((assetId) => {
+        const value = extensionById.get(assetId);
+        return value ? [value] : [];
+      })
     });
   }
 

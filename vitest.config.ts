@@ -6,7 +6,9 @@ export default defineConfig({
   test: {
     projects: [
       "apps/web/vitest.config.ts",
+      "apps/web/vitest.jsdom.config.ts",
       "apps/extension/vitest.config.ts",
+      "apps/extension/vitest.jsdom.config.ts",
       "apps/worker/vitest.config.ts",
       "packages/contracts/vitest.config.ts",
       "packages/config/vitest.config.ts",

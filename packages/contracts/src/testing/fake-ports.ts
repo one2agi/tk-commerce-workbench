@@ -10,6 +10,8 @@ import type {
   CanvasSubmitResult,
   CanvasFetchOutputsResult,
   ExchangeRatePort,
+  ImageGenerationPort,
+  ImagePromptPlannerPort,
   LlmPort,
   LlmStructuredOutputV1,
   MiaoshouCollectedDetail,
@@ -18,6 +20,7 @@ import type {
   MiaoshouEditPort,
   MiaoshouSourceCollectResult,
   MiaoshouSourcePort,
+  PlannedImagePromptV1,
   StagedAsset
 } from "../ports.js";
 import type { ExchangeRateSnapshotWire } from "../quantities.js";
@@ -175,6 +178,34 @@ class FakeAssetStaging implements AssetStagingPort {
   }
 }
 
+class FakeImagePlanner implements ImagePromptPlannerPort {
+  public readonly calls: { method: string; input: unknown }[] = [];
+  public planResult: { prompts: PlannedImagePromptV1[] } = {
+    prompts: [{ slot: 1, role: "hero", prompt: "fake prompt", mustPreserve: [], forbidden: [] }]
+  };
+
+  async plan(input: Parameters<ImagePromptPlannerPort["plan"]>[0]): Promise<{ prompts: PlannedImagePromptV1[] }> {
+    this.calls.push({ method: "plan", input });
+    return this.planResult;
+  }
+}
+
+class FakeImageGeneration implements ImageGenerationPort {
+  public readonly calls: { method: string; input: unknown }[] = [];
+  public submitResult: Awaited<ReturnType<ImageGenerationPort["submit"]>> = { kind: "completed", outputUrl: "https://images.test/fake.png" };
+  public fetchResult: Awaited<ReturnType<ImageGenerationPort["fetch"]>> = { state: "succeeded", outputUrl: "https://images.test/fake.png" };
+
+  async submit(input: Parameters<ImageGenerationPort["submit"]>[0]): Promise<{ kind: "completed"; outputUrl: string } | { kind: "accepted"; remoteTaskId: string }> {
+    this.calls.push({ method: "submit", input });
+    return this.submitResult as { kind: "completed"; outputUrl: string } | { kind: "accepted"; remoteTaskId: string };
+  }
+
+  async fetch(input: Parameters<ImageGenerationPort["fetch"]>[0]): Promise<{ state: "pending" } | { state: "succeeded"; outputUrl: string } | { state: "failed"; failure: ExternalFailure }> {
+    this.calls.push({ method: "fetch", input });
+    return this.fetchResult as { state: "pending" } | { state: "succeeded"; outputUrl: string } | { state: "failed"; failure: ExternalFailure };
+  }
+}
+
 export interface FakePortCounters {
   readonly miaoshouSource: number;
   readonly miaoshouEdit: number;
@@ -182,6 +213,8 @@ export interface FakePortCounters {
   readonly llm: number;
   readonly exchangeRate: number;
   readonly assetStaging: number;
+  readonly imagePlanner: number;
+  readonly imageGeneration: number;
 }
 
 export interface FakePorts {
@@ -191,6 +224,8 @@ export interface FakePorts {
   readonly llm: FakeLlm;
   readonly exchangeRate: FakeExchangeRate;
   readonly assetStaging: FakeAssetStaging;
+  readonly imagePlanner: FakeImagePlanner;
+  readonly imageGeneration: FakeImageGeneration;
   counters(): FakePortCounters;
   reset(): void;
 }
@@ -202,6 +237,8 @@ export function createFakePorts(): FakePorts {
   const llm = new FakeLlm();
   const exchangeRate = new FakeExchangeRate();
   const assetStaging = new FakeAssetStaging();
+  const imagePlanner = new FakeImagePlanner();
+  const imageGeneration = new FakeImageGeneration();
 
   return {
     miaoshouSource,
@@ -210,13 +247,17 @@ export function createFakePorts(): FakePorts {
     llm,
     exchangeRate,
     assetStaging,
+    imagePlanner,
+    imageGeneration,
     counters: () => ({
       miaoshouSource: miaoshouSource.calls.length,
       miaoshouEdit: miaoshouEdit.calls.length,
       canvas: canvas.calls.length,
       llm: llm.calls.length,
       exchangeRate: exchangeRate.calls.length,
-      assetStaging: assetStaging.calls.length
+      assetStaging: assetStaging.calls.length,
+      imagePlanner: imagePlanner.calls.length,
+      imageGeneration: imageGeneration.calls.length
     }),
     reset: () => {
       miaoshouSource.calls.length = 0;
@@ -225,6 +266,8 @@ export function createFakePorts(): FakePorts {
       llm.calls.length = 0;
       exchangeRate.calls.length = 0;
       assetStaging.calls.length = 0;
+      imagePlanner.calls.length = 0;
+      imageGeneration.calls.length = 0;
       miaoshouSource.responses = [];
       miaoshouEdit.responses = [];
     }
