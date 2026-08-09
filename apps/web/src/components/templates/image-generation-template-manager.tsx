@@ -3,6 +3,7 @@
 import { useRouter } from "next/navigation";
 import { useState, type FormEvent } from "react";
 import type { ImageGenerationTemplateViewV1 } from "@tk/contracts/read-models";
+import type { PlannedImagePromptV1 } from "@tk/contracts/ports";
 
 type LifecycleState = "draft" | "active" | "archived";
 type Recipe = ImageGenerationTemplateViewV1["recipe"];
@@ -37,6 +38,27 @@ function createErrorMessage(error: unknown): string {
   return "模板创建失败，请检查名称和类目标识后重试。";
 }
 
+export function PromptTestResults({ prompts }: { prompts: PlannedImagePromptV1[] }) {
+  if (prompts.length === 0) return null;
+  return (
+    <section className="tk-prompt-test-results" aria-label="提示词测试结果">
+      <div className="tk-prompt-test-results__heading">
+        <strong>提示词测试结果</strong>
+        <span>{prompts.length} 条</span>
+      </div>
+      <p>不会创建图片任务，但会产生提示词模型费用。</p>
+      <ol>
+        {prompts.map((item) => (
+          <li key={`${item.slot}:${item.role}`}>
+            <div><strong>#{item.slot} · {item.role}</strong></div>
+            <p>{item.prompt}</p>
+          </li>
+        ))}
+      </ol>
+    </section>
+  );
+}
+
 function TemplateItem({ template, onRefresh }: {
   template: ImageGenerationTemplateViewV1;
   onRefresh: () => void;
@@ -45,6 +67,7 @@ function TemplateItem({ template, onRefresh }: {
   const [pending, setPending] = useState<string | null>(null);
   const [message, setMessage] = useState<{ text: string; error: boolean } | null>(null);
   const [sampleProductId, setSampleProductId] = useState("");
+  const [promptResults, setPromptResults] = useState<PlannedImagePromptV1[]>([]);
   const [recipe, setRecipe] = useState<Recipe>(() => structuredClone(template.recipe));
 
   function updateCounts(kind: "inputCounts" | "outputCounts", field: "default" | "min" | "max", value: number) {
@@ -93,6 +116,7 @@ function TemplateItem({ template, onRefresh }: {
     if (!sampleProductId.trim()) return;
     setPending("test");
     setMessage(null);
+    setPromptResults([]);
     try {
       const response = await fetch(`/api/v1/image-generation-templates/${template.templateId}/prompt-test`, {
         method: "POST",
@@ -104,10 +128,16 @@ function TemplateItem({ template, onRefresh }: {
         })
       });
       if (!response.ok) throw new Error(String((await response.json().catch(() => ({})) as { error?: unknown }).error ?? response.status));
-      const data = await response.json() as { prompts?: unknown[] };
+      const data = await response.json() as { prompts?: PlannedImagePromptV1[] };
+      setPromptResults(data.prompts ?? []);
       setMessage({ text: `提示词测试完成：生成 ${data.prompts?.length ?? 0} 条提示词，不会启动洗图。`, error: false });
-    } catch {
-      setMessage({ text: "提示词测试失败，没有启动洗图任务。", error: true });
+    } catch (error) {
+      const text = error instanceof Error && error.message === "product_not_found"
+        ? "没有找到这个样例商品，请复制商品处理台中的有效商品 ID。"
+        : error instanceof Error && error.message === "runtime_configuration_unavailable"
+          ? "当前生图配置尚未生效，请先到设置页检查运行状态。"
+          : "提示词测试失败，没有启动洗图任务。";
+      setMessage({ text, error: true });
     } finally {
       setPending(null);
     }
@@ -182,8 +212,9 @@ function TemplateItem({ template, onRefresh }: {
             <label>样例商品 ID
               <input value={sampleProductId} onChange={(event) => setSampleProductId(event.target.value)} placeholder="例如 prod_ms1tnmsvx2sxoh0r" />
             </label>
-            <small>只生成提示词用于检查，不会创建付费洗图任务。</small>
+            <small>只生成提示词，不会创建图片任务；会产生提示词模型费用。</small>
             <button type="button" disabled={disabled || !sampleProductId.trim()} onClick={() => void testPrompt()}>{pending === "test" ? "正在测试…" : "测试提示词"}</button>
+            <PromptTestResults prompts={promptResults} />
           </fieldset>
         </div>
       ) : null}

@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import type { ImagePromptPlannerPort, PlannedImagePromptV1 } from "@tk/contracts/ports";
+import type { ImagePromptPlannerPort, PlannedImagePromptV1, ResolvedImageReferenceV1 } from "@tk/contracts/ports";
 import { createPostHandler } from "./route";
 
 // Minimal recipe for test fixtures
@@ -153,11 +153,19 @@ function makePromptTestHandler(deps: {
   jobRepository: FakeJobRepository;
   recordAuditEvent: typeof fakeRecordAuditEvent;
 }) {
+  const references: ResolvedImageReferenceV1[] = [
+    { assetId: "asset_main", localPath: "/assets/main.jpg", extension: "jpg" },
+    { assetId: "asset_detail", localPath: "/assets/detail.png", extension: "png" }
+  ];
   return createPostHandler({
     service: deps.service as never,
     planner: deps.planner,
+    loadPlanner: async () => deps.planner,
+    loadProductContext: async (productId: string) => productId === "prod_missing"
+      ? null
+      : { productFacts: { title: "真实商品", category: "test.category" }, references },
     recordAuditEvent: deps.recordAuditEvent
-  });
+  } as never);
 }
 
 function promptTestRequest(overrides: { productId?: string; outputCount?: number } = {}) {
@@ -199,7 +207,7 @@ describe("prompt-test route", () => {
     expect(Array.isArray(body.prompts)).toBe(true);
   });
 
-  it("calls the planner with correct recipe from template", async () => {
+  it("calls the planner with real product facts, references, and the selected recipe", async () => {
     const store = makeInMemoryStore();
     const service = makeService(store);
     const planner = new FakeImagePlanner();
@@ -223,7 +231,11 @@ describe("prompt-test route", () => {
     expect(planner.calls).toHaveLength(1);
     const planInput = planner.calls[0]!.input;
     expect(planInput.requestedOutputCount).toBe(3);
-    expect(planInput.references).toEqual([]);
+    expect(planInput.productFacts).toEqual({ title: "真实商品", category: "test.category" });
+    expect(planInput.references).toEqual([
+      { assetId: "asset_main", localPath: "/assets/main.jpg", extension: "jpg" },
+      { assetId: "asset_detail", localPath: "/assets/detail.png", extension: "png" }
+    ]);
     expect(planInput.recipe).toEqual({
       version: 1,
       inputCount: 2,
@@ -237,6 +249,28 @@ describe("prompt-test route", () => {
       ],
       providerParameters: {}
     });
+  });
+
+  it("returns 404 when the sample product does not exist", async () => {
+    const store = makeInMemoryStore();
+    const service = makeService(store);
+    const planner = new FakeImagePlanner();
+    await service.createDraft({ name: "Test Template", categoryKey: "test.category", recipe: minimalRecipe as any });
+    await service.activate("tmpl_1", 1);
+    const handler = makePromptTestHandler({
+      service,
+      planner,
+      jobRepository: new FakeJobRepository(),
+      recordAuditEvent: fakeRecordAuditEvent
+    });
+
+    const response = await handler(
+      promptTestRequest({ productId: "prod_missing" }),
+      { params: Promise.resolve({ templateId: "tmpl_1" }) }
+    );
+
+    expect(response.status).toBe(404);
+    expect(planner.calls).toHaveLength(0);
   });
 
   it("records a redacted audit event", async () => {
@@ -266,6 +300,35 @@ describe("prompt-test route", () => {
     const event = (fakeRecordAuditEvent.mock.calls[0] as any)[0];
     expect(event.type).toBe("prompt_test");
     expect(event.productId).toBeDefined();
+  });
+
+  it("returns generated prompts when audit recording fails after planning", async () => {
+    const store = makeInMemoryStore();
+    const service = makeService(store);
+    const planner = new FakeImagePlanner();
+
+    await service.createDraft({
+      name: "Test Template",
+      categoryKey: "test.category",
+      recipe: minimalRecipe as any
+    });
+    await service.activate("tmpl_1", 1);
+
+    const handler = makePromptTestHandler({
+      service,
+      planner,
+      jobRepository: new FakeJobRepository(),
+      recordAuditEvent: vi.fn().mockRejectedValue(new Error("audit_unavailable"))
+    });
+
+    const response = await handler(
+      promptTestRequest({ outputCount: 2 }),
+      { params: Promise.resolve({ templateId: "tmpl_1" }) }
+    );
+
+    expect(response.status).toBe(200);
+    expect(planner.calls).toHaveLength(1);
+    expect((await response.json()).prompts).toHaveLength(2);
   });
 
   it("returns 400 for invalid request body", async () => {

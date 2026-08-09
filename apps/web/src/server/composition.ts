@@ -10,6 +10,7 @@ import { JobRepository } from "../../../../packages/db/src/repositories/job-repo
 import { LocalCaptureRepository } from "../../../../packages/db/src/repositories/local-capture-repository.js";
 import { ApprovalRepository, schema } from "@tk/db";
 import { ImageGenerationRepository } from "../../../../packages/db/src/repositories/image-generation-repository.js";
+import { AuditRepository } from "../../../../packages/db/src/repositories/audit-repository.js";
 import { RuntimeConfigurationRepository } from "../../../../packages/db/src/repositories/runtime-configuration-repository.js";
 import type { DbPool } from "../../../../packages/db/src/schema/index.js";
 
@@ -52,6 +53,13 @@ export interface ServerServices {
   imageGeneration: ImageGenerationService;
   loadImagePromptPlanner: ImagePromptPlannerLoader;
   loadImagePromptTestContext(productId: string): Promise<LoadPromptTestContextResult | null>;
+  recordImagePromptTestAudit(event: {
+    type: string;
+    templateId: string;
+    productId: string;
+    outputCount: number;
+    promptsCount: number;
+  }): Promise<void>;
 }
 
 interface RuntimeConfig {
@@ -458,6 +466,7 @@ export function createServerServices(input: {
   const automationRuns = new AutomationRunRepository(input.pool);
   const runtimeConfiguration = new RuntimeConfigurationRepository(input.pool);
   const imageGenerationRepository = new ImageGenerationRepository(input.pool);
+  const audit = new AuditRepository(input.pool);
   const secretCodec = input.config.configEncryptionKey
     ? createRuntimeSecretCodec(input.config.configEncryptionKey)
     : undefined;
@@ -553,6 +562,19 @@ export function createServerServices(input: {
     imageGenerationTemplates: new ImageGenerationTemplateService(new PgImageGenerationTemplateStore(input.pool)),
     loadImagePromptPlanner,
     loadImagePromptTestContext: (productId) => imageGenerationRepository.loadPromptTestContext(productId),
+    recordImagePromptTestAudit: async (event) => {
+      await audit.append({
+        actorType: "operator",
+        action: "image_template.prompt_test",
+        targetKind: "image_generation_template",
+        targetId: event.templateId,
+        payload: {
+          productId: event.productId,
+          outputCount: event.outputCount,
+          promptsCount: event.promptsCount
+        }
+      });
+    },
     imageGeneration: new ImageGenerationService({
       imageGenerationRepository,
       imageGenerationTemplates: new PgImageGenerationTemplateStore(input.pool)

@@ -1,9 +1,11 @@
+import { randomUUID } from "node:crypto";
 import { z } from "zod";
 
 import { rejectNonLoopback, rejectUnsafeBrowserMutation } from "../../../../../../server/auth/loopback";
 import type { ImageGenerationTemplateService } from "../../../../../../server/services/image-generation-template-service";
-import type { ImagePromptPlannerPort } from "@tk/contracts/ports";
+import type { ImagePromptPlannerPort, ResolvedImageReferenceV1 } from "@tk/contracts/ports";
 import { idempotencyKey } from "@tk/contracts/ids";
+import type { ImagePromptPlannerCommandContext } from "../../../../../../server/image-prompt-test-runtime";
 
 const PromptTestBody = z.strictObject({
   productId: z.string().trim().min(1),
@@ -11,37 +13,20 @@ const PromptTestBody = z.strictObject({
   version: z.number().int().positive()
 });
 
-// Extend ServerServices to include imagePromptPlanner
-declare module "../../../../../../server/composition" {
-  interface ServerServices {
-    imagePromptPlanner?: ImagePromptPlannerPort;
-  }
-}
-
-// Get the planner from the adapter bundle
-async function getPlanner(): Promise<ImagePromptPlannerPort> {
-  const { createAdapterBundle } = await import("@tk/adapters");
-  const { loadConfig } = await import("@tk/config");
-  const config = loadConfig();
-  const bundle = createAdapterBundle({
-    externalAdapterMode: config.externalAdapterMode ?? "mock",
-    nodeEnv: process.env.NODE_ENV ?? "development",
-    assetRoot: config.assetRoot ?? "/tmp",
-    processKind: "app"
-  });
-  return bundle.imagePlanner;
-}
-
 export function createPostHandler(dependencies: {
   service: ImageGenerationTemplateService;
-  planner?: ImagePromptPlannerPort;
+  loadPlanner: (context: ImagePromptPlannerCommandContext) => Promise<ImagePromptPlannerPort>;
+  loadProductContext: (productId: string) => Promise<{
+    productFacts: Record<string, unknown>;
+    references: ResolvedImageReferenceV1[];
+  } | null>;
   recordAuditEvent: (event: {
     type: string;
     templateId: string;
     productId: string;
     outputCount: number;
     promptsCount: number;
-  }) => void;
+  }) => void | Promise<void>;
 }) {
   return async function post(
     request: Request,
@@ -67,40 +52,62 @@ export function createPostHandler(dependencies: {
       return Response.json({ error: "template_not_found" }, { status: 404 });
     }
 
-    // Get planner from dependencies or create one
-    const planner = dependencies.planner ?? await getPlanner();
+    const productContext = await dependencies.loadProductContext(productId);
+    if (!productContext) {
+      return Response.json({ error: "product_not_found" }, { status: 404 });
+    }
 
-    // Call the planner (prompt-only, no batch/slot writes)
-    const plannerResult = await planner.plan({
-      productFacts: { productId },
-      references: [],
-      recipe: {
-        version: 1,
-        inputCount: template.recipe.inputCounts.default,
-        outputCount,
-        mustPreserve: [...template.recipe.mustPreserve],
-        visualDirection: template.recipe.visualDirection,
-        forbidden: [...template.recipe.forbidden],
-        roles: template.recipe.roles.map((role) => ({
-          key: role.key,
-          instruction: role.instruction
-        })),
-        providerParameters: {}
-      },
-      requestedOutputCount: outputCount,
-      idempotencyKey: idempotencyKey(`prompt-test-${templateId}-${Date.now()}`)
-    });
+    const plannerRequestKey = idempotencyKey(
+      `prompt-test:${templateId}:v${version}:${productId}:${randomUUID()}`
+    );
+    const commandContext: ImagePromptPlannerCommandContext = {
+      kind: "worker_command",
+      commandId: `prompt-test:${templateId}:v${version}`,
+      idempotencyKey: plannerRequestKey
+    };
 
-    // Record redacted audit event (no batch/slot writes)
-    dependencies.recordAuditEvent({
-      type: "prompt_test",
-      templateId,
-      productId,
-      outputCount,
-      promptsCount: plannerResult.prompts.length
-    });
+    try {
+      const planner = await dependencies.loadPlanner(commandContext);
+      const plannerResult = await planner.plan({
+        productFacts: productContext.productFacts,
+        references: productContext.references,
+        recipe: {
+          version: 1,
+          inputCount: template.recipe.inputCounts.default,
+          outputCount,
+          mustPreserve: [...template.recipe.mustPreserve],
+          visualDirection: template.recipe.visualDirection,
+          forbidden: [...template.recipe.forbidden],
+          roles: template.recipe.roles.map((role) => ({
+            key: role.key,
+            instruction: role.instruction
+          })),
+          providerParameters: {}
+        },
+        requestedOutputCount: outputCount,
+        idempotencyKey: plannerRequestKey
+      });
 
-    return Response.json({ prompts: plannerResult.prompts });
+      try {
+        await dependencies.recordAuditEvent({
+          type: "prompt_test",
+          templateId,
+          productId,
+          outputCount,
+          promptsCount: plannerResult.prompts.length
+        });
+      } catch {
+        // The paid planner call already succeeded. Returning its result avoids
+        // encouraging an unnecessary paid retry when audit storage is down.
+      }
+
+      return Response.json({ prompts: plannerResult.prompts });
+    } catch (error) {
+      if (error instanceof Error && error.message === "runtime_configuration_unavailable") {
+        return Response.json({ error: "runtime_configuration_unavailable" }, { status: 503 });
+      }
+      return Response.json({ error: "prompt_planner_unavailable" }, { status: 502 });
+    }
   };
 }
 
@@ -112,10 +119,8 @@ export async function POST(
   const services = await getServerServices();
   return createPostHandler({
     service: services.imageGenerationTemplates,
-    planner: services.imagePromptPlanner,
-    recordAuditEvent: (event) => {
-      // TODO: inject real audit logger
-      console.log("[audit] prompt_test", event);
-    }
+    loadPlanner: services.loadImagePromptPlanner,
+    loadProductContext: services.loadImagePromptTestContext,
+    recordAuditEvent: services.recordImagePromptTestAudit
   })(request, { params });
 }
