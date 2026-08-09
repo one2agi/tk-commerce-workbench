@@ -33,10 +33,12 @@ node scripts/local-production-config.mjs /mnt/d/project/TKcaiji/TKskill/env.txt
 - 从 secrets 文件只读取键名，不评估其值。
 - 写入运行时 storage env（`wx` 创建，权限 `0600`）。
 - 创建 `data/runtime/`、`data/assets/` 等目录（权限 `0700`）。
-- 生成随机的 `EXTENSION_TOKEN`（如 secrets 文件未提供）。
+- 生成随机的 `CONFIG_ENCRYPTION_KEY` 和一次性兼容用的 `EXTENSION_TOKEN`。
 - 强制 `EXTERNAL_ADAPTER_MODE=mock`、`ALLOW_LAN=false`，不覆盖用户原值。
 
 写入后请手工核对键名、文件权限（storage `.env` 必须 `0600`、数据目录必须 `0700`）。**不要**把 secrets 文件内容 `cat` 或 `source` 到 shell；初始化完成后建议 `shred -u /mnt/d/project/TKcaiji/TKskill/env.txt`（或同等安全删除）以免明文留在磁盘上。
+
+启动后打开 `http://127.0.0.1:3000/settings`。生图、Canvas、LLM、汇率、妙手、S3 和浏览器扩展 Token 都在页面维护；保存后 Worker 会在下一个处理周期自动应用，不需要重启。旧 `.env` 中的 Provider 值仅用于首次加密导入，确认页面显示“已配置”后可以移除。
 
 ## 构建扩展（首次或升级后）
 
@@ -121,7 +123,7 @@ node scripts/local-production-runtime.mjs stop
 
 full-live 只用于本机真实验收。它会真实调用 Canvas、LLM、汇率和妙手，因此必须通过 `LOCAL_PRODUCTION_LIVE_ACK=full-live-local-mvp` 显式确认。即使 full-live，Web 与摄取 API 仍只允许 loopback，且最终妙手写回仍需要用户在详情页点击“确认写回妙手”。
 
-推荐从项目根 `.env` 同步到运行时 storage env：
+推荐直接在设置页选择“生产模式”，填写所用服务并保存。旧部署如果尚未导入，可最后一次从项目根 `.env` 同步到运行时 storage env：
 
 ```bash
 node scripts/local-production-config.mjs sync-live .env
@@ -149,24 +151,26 @@ node scripts/local-production-runtime.mjs status
 
 前端点击验收路径：
 
-1. 在 `/products` 中选择商品，点击“开始处理”或“批量重试”。
-2. 等待商品从“自动处理中”进入“待确认”。
-3. 进入详情页，确认最终图为 `5/5`、目标标题和自动定价已生成。
-4. 点击“确认写回妙手”。
-5. 在 `/write-records` 查看同一 canonical 妙手详情 ID 的写回记录。
+1. 在 `/settings` 确认“已保存版本”和“Worker 已应用版本”一致。
+2. 在 `/products` 中选择商品，点击“开始处理”或“批量重试”。
+3. 等待商品从“自动处理中”进入“待确认”。
+4. 进入详情页，确认最终图为 `5/5`、目标标题和自动定价已生成。
+5. 点击“确认写回妙手”。
+6. 在 `/write-records` 查看同一 canonical 妙手详情 ID 的写回记录。
 
 ## 用户可见入口
 
 - Web（工作台）：`http://127.0.0.1:3000`（loopback only；保持 `ALLOW_LAN=false`）。
 - 扩展：Chrome / Edge 加载 `apps/extension/dist`。
-- 扩展调用本机摄取 API 时使用 `EXTENSION_TOKEN`（Bearer auth，服务端只存 SHA-256 摘要）。
+- 扩展调用本机摄取 API 时使用设置页中的扩展 Token（Bearer auth；页面不会回显已有值）。
 
 ## 备份范围
 
-同一时间点的两样东西必须一起备份，否则重放会不一致：
+同一时间点的三样东西必须一起备份，否则重放会不一致或无法解密：
 
 1. PostgreSQL 数据库（任务、租约、approval 快照、外部远端 ID）。
 2. `ASSET_ROOT`（默认 `./data/assets`，原始图与生成图）。
+3. 与数据库匹配的 `CONFIG_ENCRYPTION_KEY`（单独保管，不写入备份清单明文）。
 
 `data/runtime/processes.json` 不属于业务事实来源，可以从启动记录重建，不要纳入备份。
 

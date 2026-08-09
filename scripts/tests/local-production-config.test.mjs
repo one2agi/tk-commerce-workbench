@@ -49,6 +49,7 @@ test("creates a private mock-only env and runtime directories", async () => {
   assert.match(env, /^ALLOW_LAN=false$/m);
   assert.match(env, /^MIAOSHOU_APP_KEY=demo-id$/m);
   assert.match(env, /^EXTENSION_TOKEN=[A-Za-z0-9_-]{43}$/m);
+  assert.match(env, /^CONFIG_ENCRYPTION_KEY=[A-Za-z0-9+/]{43}=$/m);
   const assetDirectory = await stat(join(storageDir, "data/assets"));
   const runtimeDirectory = await stat(join(storageDir, "data/runtime"));
   assert.equal(assetDirectory.isDirectory(), true);
@@ -84,6 +85,7 @@ test("sync-live copies only allowed runtime keys, preserves loopback safety, and
     "DATABASE_URL=postgresql://user:pass@127.0.0.1:5432/tk_workbench",
     "TEST_DATABASE_URL=postgresql://user:pass@127.0.0.1:5432/tk_workbench_test",
     "LOCAL_OPERATOR_ID=local-operator",
+    "CONFIG_ENCRYPTION_KEY=AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=",
     "EXTENSION_TOKEN=extension-secret",
     "NO_PROXY=127.0.0.1,localhost",
     "no_proxy=127.0.0.1,localhost",
@@ -116,6 +118,7 @@ test("sync-live copies only allowed runtime keys, preserves loopback safety, and
 
   assert.match(env, /^EXTERNAL_ADAPTER_MODE=live$/m);
   assert.match(env, /^LOCAL_PRODUCTION_LIVE_ACK=full-live-local-mvp$/m);
+  assert.match(env, /^CONFIG_ENCRYPTION_KEY=AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=$/m);
   assert.match(env, /^ALLOW_LAN=false$/m);
   assert.match(env, /^NO_PROXY=127\.0\.0\.1,localhost$/m);
   assert.match(env, /^no_proxy=127\.0\.0\.1,localhost$/m);

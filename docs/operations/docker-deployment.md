@@ -17,6 +17,18 @@
 
 镜像、源码、数据库和素材相互独立。升级镜像不会删除数据库或素材；`down` 命令也禁止携带 `--volumes`。
 
+## 配置现在放在哪里
+
+日常业务配置统一在 `http://127.0.0.1:3000/settings` 维护，包括生图路径、Planner、图片 Provider、Canvas、LLM、汇率、妙手、S3 和浏览器扩展 Token。密钥会用 AES-256-GCM 加密后保存在 PostgreSQL，页面只显示“已配置/未配置”，不会回显明文。
+
+部署 `.env` 仍保留数据库地址、素材路径等基础设施变量，以及唯一的 `CONFIG_ENCRYPTION_KEY`。新环境可用以下命令生成主密钥：
+
+```bash
+node -e "console.log(require('node:crypto').randomBytes(32).toString('base64'))"
+```
+
+不要在已有环境中重新生成或自动轮换这个值。数据库备份必须与当时的 `CONFIG_ENCRYPTION_KEY` 成对保存，否则恢复后无法解密服务凭据。旧版本的 Provider 环境变量会在首次启动时一次性导入；确认设置页状态和 Worker 已应用版本后即可从 `.env` 删除。
+
 ## 本机开发
 
 ### 前置条件
@@ -120,7 +132,7 @@ tar -xzf /绝对路径/备份批次/assets.tar.gz \
   -C ~/.local/share/tk-commerce-workbench/data/assets
 ```
 
-恢复后重新启动对应环境，并抽查商品数、任务状态和素材可访问性。
+恢复顺序必须是：先恢复 PostgreSQL volume/数据库和素材，再把备份时匹配的 `CONFIG_ENCRYPTION_KEY` 写回目标机器 `.env`，最后启动 Web 与 Worker。恢复后抽查商品数、任务状态、素材可访问性，并在设置页确认密钥状态与 Worker 应用版本；不要先启动应用再补主密钥。
 
 ## 构建生产镜像
 
@@ -158,9 +170,9 @@ install -d -o 1000 -g 1000 -m 700 /srv/tk-workbench/data/assets
 chmod 700 /srv/tk-workbench /srv/tk-workbench/data
 ```
 
-4. 把运行时 `.env` 放到 `/srv/tk-workbench/.env`，权限设为 `0600`。不要把它提交到 Git、复制进镜像或打印到日志。
+4. 把运行时 `.env` 放到 `/srv/tk-workbench/.env`，权限设为 `0600`。至少提供数据库基础配置、`LOCAL_OPERATOR_ID` 和原机器相同的 `CONFIG_ENCRYPTION_KEY`；不要把它提交到 Git、复制进镜像或打印到日志。
 
-生产环境中 Compose 会把数据库地址和素材容器路径固定为 Docker 内部地址；其余业务配置继续从目标机器的 `.env` 注入。
+生产环境中 Compose 会把数据库地址和素材容器路径固定为 Docker 内部地址；业务服务配置从 PostgreSQL 读取并由 Worker 自动应用。
 
 Compose 会在应用容器内把 `ALLOW_LAN` 覆盖为 `true`，仅用于允许访问 Docker 私有网络里的 `postgres` 服务名。它不决定 Web 的监听范围；宿主机是否对外开放仍只由 `TK_WEB_BIND_IP` 控制，默认值是 `127.0.0.1`。
 

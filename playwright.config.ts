@@ -27,6 +27,7 @@ export default defineConfig({
       TEST_DATABASE_URL: process.env.TEST_DATABASE_URL ?? "",
       LOCAL_OPERATOR_ID: process.env.LOCAL_OPERATOR_ID ?? "playwright-e2e-operator",
       EXTENSION_TOKEN: process.env.EXTENSION_TOKEN ?? "playwright-e2e-extension-token",
+      CONFIG_ENCRYPTION_KEY: process.env.CONFIG_ENCRYPTION_KEY ?? "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=",
       ALLOW_LAN: "false",
       EXTERNAL_ADAPTER_MODE: "mock",
       ASSET_ROOT: process.env.ASSET_ROOT ?? "./data/e2e-assets",

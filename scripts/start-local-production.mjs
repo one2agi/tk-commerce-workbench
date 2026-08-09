@@ -115,7 +115,7 @@ async function loadRuntimeEnv() {
     throw new Error(`missing env file: ${envFilePath}`);
   }
   const envFile = readEnvFile(await readFile(envFilePath, "utf8"));
-  for (const key of ["DATABASE_URL", "TEST_DATABASE_URL", "LOCAL_OPERATOR_ID", "EXTENSION_TOKEN"]) {
+  for (const key of ["DATABASE_URL", "TEST_DATABASE_URL", "LOCAL_OPERATOR_ID", "CONFIG_ENCRYPTION_KEY"]) {
     if (!envFile[key]) throw new Error(`required env ${key} is missing in ${envFilePath}`);
   }
   return { envFilePath, envFile };

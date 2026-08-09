@@ -14,6 +14,7 @@ async function renderCompose(mode, environment = {}) {
     envFile,
     [
       "LOCAL_OPERATOR_ID=test-operator",
+      "CONFIG_ENCRYPTION_KEY=AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=",
       "EXTENSION_TOKEN=test-token",
       "EXTERNAL_ADAPTER_MODE=mock",
       "ALLOW_LAN=false"
@@ -67,9 +68,11 @@ test("development Compose renders hot reload and protected local persistence", a
   assert.equal(web.environment.TK_WEB_BIND_HOST, "0.0.0.0");
   assert.equal(web.environment.ALLOW_LAN, "true");
   assert.equal(web.environment.TK_RUNTIME_LAUNCH_ID, "docker-dev");
+  assert.equal(web.environment.CONFIG_ENCRYPTION_KEY, "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=");
   assert.equal(web.environment.WATCHPACK_POLLING, "true");
   assert.equal(worker.environment.CHOKIDAR_USEPOLLING, "true");
   assert.equal(worker.environment.TK_WORKER_READY_PATH, "/tmp/tk-worker-ready.json");
+  assert.equal(worker.environment.CONFIG_ENCRYPTION_KEY, "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=");
   assert.match(worker.command.join(" "), /rm -f \/tmp\/tk-worker-ready\.json/);
   assert.equal(config.volumes.postgres_data.external, true);
   assert.equal(config.volumes.postgres_data.name, "tk-commerce-workbench_postgres_data");
@@ -85,6 +88,8 @@ test("production Compose uses immutable images without source or database ports"
   assert.equal(config.services.worker.image, "tk-commerce-workbench-worker:test-image-tag");
   assert.equal(config.services.web.environment.ALLOW_LAN, "true");
   assert.equal(config.services.web.environment.TK_RUNTIME_LAUNCH_ID, "docker-test-image-tag");
+  assert.equal(config.services.web.environment.CONFIG_ENCRYPTION_KEY, "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=");
+  assert.equal(config.services.worker.environment.CONFIG_ENCRYPTION_KEY, "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=");
   assert.equal(config.services.worker.environment.TK_WORKER_READY_PATH, "/tmp/tk-worker-ready.json");
   assert.match(config.services.worker.command.join(" "), /rm -f \/tmp\/tk-worker-ready\.json/);
   assert.equal(config.services["assets-check"].image, "tk-commerce-workbench-worker:test-image-tag");

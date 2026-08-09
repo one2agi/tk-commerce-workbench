@@ -13,30 +13,19 @@ Headless 图片生成绕过 Canvas 工作流界面，通过直接调用图像生
 
 ## 路由切换
 
-```bash
-# 使用 Headless 直接 API（需要显式开启）
-IMAGE_GENERATION_PATH=headless
-
-# 使用 Canvas 工作流（当前默认，兼容现有部署）
-IMAGE_GENERATION_PATH=canvas  # 需要 CANVAS_BASE_URL
-```
-
-**未指定时保持 `IMAGE_GENERATION_PATH=canvas`，避免现有部署升级后突然切换链路。** 完成 Headless 的 Planner 和图片 Provider 配置后，再显式改为 `headless`。
+打开 `http://127.0.0.1:3000/settings`，在“生图路径”选择 `Headless API` 或 `Canvas 兼容`。在“外部服务 → 图片生成”填写当前路径所需的地址、模型和 API Key，然后保存。Worker 会在当前任务结束后自动应用，不需要修改 env 或重启容器。
 
 在 `IMAGE_GENERATION_PATH=headless` 模式下，Canvas 服务可以完全关闭。
 
-## 必需的环境变量
+## 必需的页面配置
 
-| 变量 | 说明 | 示例 |
+| 字段 | 说明 | 示例 |
 |---|---|---|
-| `IMAGE_GENERATION_PATH` | 路由模式：`canvas` 或 `headless` | `headless` |
-| `IMAGE_GENERATION_BASE_URL` | 图像生成 API 基础 URL | `https://api.openai.com/v1` |
-| `IMAGE_GENERATION_API_KEY` | API 密钥 | `sk-...` |
-| `IMAGE_GENERATION_MODEL` | 模型名称 | `dall-e-3` 或提供商模型名 |
-| `IMAGE_GENERATION_INPUT_MAX` | 最大输入图片数 | `6` |
-| `IMAGE_GENERATION_OUTPUT_MAX` | 最大输出图片数 | `8` |
+| 生图路径 | 路由模式：Canvas 或 Headless API | `Headless API` |
+| Planner API 地址 / 模型 / Key | 分析商品并生成提示词 | OpenAI-compatible API |
+| 图片 API 地址 / 模型 / Key | 实际生成图片 | `gpt-image-2` 等提供商模型 |
 
-Canvas 相关变量（`CANVAS_BASE_URL` 等）仅在 `IMAGE_GENERATION_PATH=canvas` 时使用。
+Canvas 地址、ID、工作流和 Key 只在选择 `Canvas 兼容` 时使用。
 
 ## 状态检查
 
@@ -103,10 +92,10 @@ curl -X PATCH "http://127.0.0.1:3000/api/v1/products/<productId>/image-generatio
 
 | 现象 | 可能原因 | 下一步 |
 |---|---|---|
-| 所有槽都失败 | `IMAGE_GENERATION_API_KEY` 未设置或无效 | 检查环境变量和 API 额度 |
-| 槽一直pending | 网络问题或 API 响应超时（默认30s） | 检查 `IMAGE_GENERATION_BASE_URL` 连通性 |
+| 所有槽都失败 | 图片 API Key 未设置或无效 | 检查设置页状态和 API 额度 |
+| 槽一直pending | 网络问题或 API 响应超时（默认30s） | 检查设置页中的图片 API 地址连通性 |
 | 槽状态为 failed 但 error 为空 | 存档验证失败（尺寸为零或格式不支持） | 检查生成的图片是否符合要求 |
-| 规划阶段卡住 | `IMAGE_GENERATION_MODEL` 不支持结构化输出 | 切换到支持 JSON 的模型 |
+| 规划阶段卡住 | Planner 模型不支持结构化输出 | 在设置页切换到支持 JSON 的模型 |
 
 ## 确认图片已存档
 
