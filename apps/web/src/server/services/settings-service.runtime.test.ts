@@ -55,6 +55,8 @@ function baseRecord(): WorkspaceSettingsRecord {
       imagePlannerApiKey: "old-planner-secret",
       imageProviderApiKey: "old-provider-secret",
       llmApiKey: "listing-secret",
+      miaoshouAppKey: "miaoshou-key",
+      miaoshouAppSecret: "miaoshou-secret",
       extensionToken: "extension-secret"
     }, "workspace_settings:1")
   };

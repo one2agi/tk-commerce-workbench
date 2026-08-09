@@ -213,13 +213,38 @@ function validateRuntimeConfiguration(
   config: PublicServiceConfigurationV1,
   secrets: RuntimeSecretsV1
 ): void {
-  if (mode !== "live" || config.imageGenerationPath !== "headless") return;
-  if (!config.imagePlannerBaseUrl.trim()) throw new SettingsValidationError("image_planner_base_url_required", "imagePlannerBaseUrl");
-  if (!config.imagePlannerModel.trim()) throw new SettingsValidationError("image_planner_model_required", "imagePlannerModel");
-  if (!secrets.imagePlannerApiKey?.trim()) throw new SettingsValidationError("image_planner_api_key_required", "imagePlannerApiKey");
-  if (!config.imageProviderBaseUrl.trim()) throw new SettingsValidationError("image_provider_base_url_required", "imageProviderBaseUrl");
-  if (!config.imageProviderModel.trim()) throw new SettingsValidationError("image_provider_model_required", "imageProviderModel");
-  if (!secrets.imageProviderApiKey?.trim()) throw new SettingsValidationError("image_provider_api_key_required", "imageProviderApiKey");
+  if (mode !== "live") return;
+  if (config.imageGenerationPath === "headless") {
+    if (!config.imagePlannerBaseUrl.trim()) throw new SettingsValidationError("image_planner_base_url_required", "imagePlannerBaseUrl");
+    if (!config.imagePlannerModel.trim()) throw new SettingsValidationError("image_planner_model_required", "imagePlannerModel");
+    if (!secrets.imagePlannerApiKey?.trim()) throw new SettingsValidationError("image_planner_api_key_required", "imagePlannerApiKey");
+    if (!config.imageProviderBaseUrl.trim()) throw new SettingsValidationError("image_provider_base_url_required", "imageProviderBaseUrl");
+    if (!config.imageProviderModel.trim()) throw new SettingsValidationError("image_provider_model_required", "imageProviderModel");
+    if (!secrets.imageProviderApiKey?.trim()) throw new SettingsValidationError("image_provider_api_key_required", "imageProviderApiKey");
+  } else {
+    if (!config.canvasBaseUrl.trim()) throw new SettingsValidationError("canvas_base_url_required", "canvasBaseUrl");
+    if (!config.canvasWorkflowName.trim()) throw new SettingsValidationError("canvas_workflow_required", "canvasWorkflowName");
+  }
+  if (!config.llmBaseUrl.trim()) throw new SettingsValidationError("llm_base_url_required", "llmBaseUrl");
+  if (!config.llmModel.trim()) throw new SettingsValidationError("llm_model_required", "llmModel");
+  if (!secrets.llmApiKey?.trim()) throw new SettingsValidationError("llm_api_key_required", "llmApiKey");
+  if (!config.exchangeRateBaseUrl.trim()) throw new SettingsValidationError("exchange_rate_base_url_required", "exchangeRateBaseUrl");
+  if (!secrets.miaoshouAppKey?.trim()) throw new SettingsValidationError("miaoshou_app_key_required", "miaoshouAppKey");
+  if (!secrets.miaoshouAppSecret?.trim()) throw new SettingsValidationError("miaoshou_app_secret_required", "miaoshouAppSecret");
+
+  const s3Started = Boolean(
+    config.assetPublishS3Endpoint.trim() || config.assetPublishS3Region.trim() ||
+    config.assetPublishS3Bucket.trim() || config.assetPublishPublicBaseUrl.trim() ||
+    secrets.assetPublishS3AccessKeyId?.trim() || secrets.assetPublishS3SecretAccessKey?.trim()
+  );
+  if (s3Started) {
+    if (!config.assetPublishS3Endpoint.trim()) throw new SettingsValidationError("asset_s3_endpoint_required", "assetPublishS3Endpoint");
+    if (!config.assetPublishS3Region.trim()) throw new SettingsValidationError("asset_s3_region_required", "assetPublishS3Region");
+    if (!config.assetPublishS3Bucket.trim()) throw new SettingsValidationError("asset_s3_bucket_required", "assetPublishS3Bucket");
+    if (!config.assetPublishPublicBaseUrl.trim()) throw new SettingsValidationError("asset_public_base_url_required", "assetPublishPublicBaseUrl");
+    if (!secrets.assetPublishS3AccessKeyId?.trim()) throw new SettingsValidationError("asset_s3_access_key_required", "assetPublishS3AccessKeyId");
+    if (!secrets.assetPublishS3SecretAccessKey?.trim()) throw new SettingsValidationError("asset_s3_secret_key_required", "assetPublishS3SecretAccessKey");
+  }
 }
 
 function defaultServiceConfiguration(provider: ProviderOptions): PublicServiceConfigurationV1 {
