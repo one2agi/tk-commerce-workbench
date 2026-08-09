@@ -1,6 +1,8 @@
 import { randomUUID } from "node:crypto";
 
 import { loadConfig } from "../../../../packages/config/src/env.js";
+import { createRuntimeSecretCodec } from "../../../../packages/config/src/runtime-secrets.js";
+import type { PublicServiceConfigurationV1, RuntimeSecretsV1 } from "../../../../packages/contracts/src/runtime-configuration.js";
 import pg from "pg";
 
 import { AutomationRunRepository } from "../../../../packages/db/src/repositories/automation-run-repository.js";
@@ -8,6 +10,7 @@ import { JobRepository } from "../../../../packages/db/src/repositories/job-repo
 import { LocalCaptureRepository } from "../../../../packages/db/src/repositories/local-capture-repository.js";
 import { ApprovalRepository, schema } from "@tk/db";
 import { ImageGenerationRepository } from "../../../../packages/db/src/repositories/image-generation-repository.js";
+import { RuntimeConfigurationRepository } from "../../../../packages/db/src/repositories/runtime-configuration-repository.js";
 import type { DbPool } from "../../../../packages/db/src/schema/index.js";
 
 import { createExtensionTokenVerifier, type ExtensionTokenVerifier } from "./auth/extension-token";
@@ -59,10 +62,45 @@ interface RuntimeConfig {
   imageProviderModel?: string;
   imageGenerationConfigured?: boolean;
   canvasWorkflow?: string;
+  configEncryptionKey?: string;
+  serviceConfiguration?: PublicServiceConfigurationV1;
+  initialSecrets?: RuntimeSecretsV1;
 }
 
 export function loadRuntimeConfig(env: NodeJS.ProcessEnv = process.env): RuntimeConfig & { databaseUrl: string } {
   const config = loadConfig(env);
+  const serviceConfiguration: PublicServiceConfigurationV1 = {
+    imageGenerationPath: config.imageGenerationPath,
+    imagePlannerBaseUrl: config.imagePlannerBaseUrl,
+    imagePlannerModel: config.imagePlannerModel,
+    imageProviderBaseUrl: config.imageProviderBaseUrl,
+    imageProviderModel: config.imageProviderModel,
+    canvasBaseUrl: config.canvasBaseUrl,
+    canvasId: config.canvasId,
+    canvasWorkflowName: config.canvasWorkflowName,
+    llmBaseUrl: config.llmBaseUrl,
+    llmModel: config.llmModel,
+    exchangeRateBaseUrl: config.exchangeRateBaseUrl,
+    miaoshouBaseUrl: env.MIAOSHOU_BASE_URL?.trim() ?? "",
+    miaoshouAccountId: env.MIAOSHOU_ACCOUNT_ID?.trim() ?? "",
+    assetPublishS3Endpoint: config.assetPublishS3Endpoint,
+    assetPublishS3Region: config.assetPublishS3Region,
+    assetPublishS3Bucket: config.assetPublishS3Bucket,
+    assetPublishPublicBaseUrl: config.assetPublishPublicBaseUrl
+  };
+  const initialSecrets: RuntimeSecretsV1 = Object.fromEntries(Object.entries({
+    imagePlannerApiKey: config.imagePlannerApiKey,
+    imageProviderApiKey: config.imageProviderApiKey,
+    canvasApiKey: config.canvasApiKey,
+    llmApiKey: config.llmApiKey,
+    miaoshouAppKey: env.MIAOSHOU_APP_KEY?.trim() ?? "",
+    miaoshouAppSecret: env.MIAOSHOU_APP_SECRET?.trim() ?? "",
+    miaoshouAuthorization: env.MIAOSHOU_AUTHORIZATION?.trim() ?? "",
+    miaoshouCookie: env.MIAOSHOU_COOKIE?.trim() ?? "",
+    assetPublishS3AccessKeyId: config.assetPublishS3AccessKeyId,
+    assetPublishS3SecretAccessKey: config.assetPublishS3SecretAccessKey,
+    extensionToken: config.extensionToken
+  }).filter(([, value]) => value)) as RuntimeSecretsV1;
   return {
     databaseUrl: config.databaseUrl,
     extensionToken: config.extensionToken,
@@ -78,7 +116,10 @@ export function loadRuntimeConfig(env: NodeJS.ProcessEnv = process.env): Runtime
     imagePlannerModel: config.imagePlannerModel,
     imageProviderModel: config.imageProviderModel,
     imageGenerationConfigured: config.imageGenerationConfigured,
-    canvasWorkflow: config.canvasWorkflowName
+    canvasWorkflow: config.canvasWorkflowName,
+    configEncryptionKey: config.configEncryptionKey,
+    serviceConfiguration,
+    initialSecrets
   };
 }
 
@@ -406,6 +447,13 @@ export function createServerServices(input: {
   const database = queryPort(input.pool);
   const jobs = new JobRepository(input.pool);
   const automationRuns = new AutomationRunRepository(input.pool);
+  const runtimeConfiguration = new RuntimeConfigurationRepository(input.pool);
+  const secretCodec = input.config.configEncryptionKey
+    ? createRuntimeSecretCodec(input.config.configEncryptionKey)
+    : undefined;
+  const encryptedSecrets = secretCodec
+    ? secretCodec.seal(input.config.initialSecrets ?? {}, "workspace_settings:1")
+    : null;
   const products = new ProductService(database);
   const reruns = createPgRerunPort(
     createPgApprovalInvalidationPort(() => input.pool),
@@ -451,9 +499,13 @@ export function createServerServices(input: {
           imagePlannerModel,
           imageProviderModel
         },
-        retryPolicy: { maxAttempts: 3, initialDelaySeconds: 30 }
+        retryPolicy: { maxAttempts: 3, initialDelaySeconds: 30 },
+        serviceConfiguration: input.config.serviceConfiguration,
+        encryptedSecrets
       },
       secretStatus,
+      secretCodec,
+      loadApplyStatus: () => runtimeConfiguration.loadApplyStatus(),
       activeRuntime: {
         externalAdapterMode: input.config.externalAdapterMode,
         workerConcurrency: input.config.workerConcurrency,

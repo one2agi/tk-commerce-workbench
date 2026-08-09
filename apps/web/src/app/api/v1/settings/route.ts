@@ -1,10 +1,14 @@
 import { z } from "zod";
 
 import type { SettingsService } from "../../../../server/services/settings-service";
-import { SettingsConflictError } from "../../../../server/services/settings-service";
+import { SettingsConflictError, SettingsValidationError } from "../../../../server/services/settings-service";
 import { rejectNonLoopback, rejectUnsafeBrowserMutation } from "../../../../server/auth/loopback";
 
 const decimal = z.string().regex(/^\d+(?:\.\d+)?$/).max(30);
+const secretMutation = z.discriminatedUnion("action", [
+  z.strictObject({ action: z.literal("replace"), value: z.string().trim().min(1).max(20_000) }),
+  z.strictObject({ action: z.literal("clear") })
+]);
 const SettingsUpdateBody = z.strictObject({
   expectedVersion: z.number().int().positive(),
   defaultLocale: z.string().trim().min(2).max(35).optional(),
@@ -38,9 +42,28 @@ const SettingsUpdateBody = z.strictObject({
       context.addIssue({ code: "custom", path: ["imageProviderModel"], message: "图片模型不能为空" });
     }
   }).optional(),
+  serviceConfiguration: z.strictObject({
+    imageGenerationPath: z.enum(["headless", "canvas"]),
+    imagePlannerBaseUrl: z.string().trim().max(500), imagePlannerModel: z.string().trim().max(160),
+    imageProviderBaseUrl: z.string().trim().max(500), imageProviderModel: z.string().trim().max(160),
+    canvasBaseUrl: z.string().trim().max(500), canvasId: z.string().trim().max(160),
+    canvasWorkflowName: z.string().trim().max(160), llmBaseUrl: z.string().trim().max(500),
+    llmModel: z.string().trim().max(160), exchangeRateBaseUrl: z.string().trim().max(500),
+    miaoshouBaseUrl: z.string().trim().max(500), miaoshouAccountId: z.string().trim().max(160),
+    assetPublishS3Endpoint: z.string().trim().max(500), assetPublishS3Region: z.string().trim().max(160),
+    assetPublishS3Bucket: z.string().trim().max(160), assetPublishPublicBaseUrl: z.string().trim().max(500)
+  }).optional(),
   retryPolicy: z.strictObject({
     maxAttempts: z.number().int().min(1).max(20),
     initialDelaySeconds: z.number().int().min(1).max(86_400)
+  }).optional(),
+  secretMutations: z.strictObject({
+    imagePlannerApiKey: secretMutation.optional(), imageProviderApiKey: secretMutation.optional(),
+    canvasApiKey: secretMutation.optional(), llmApiKey: secretMutation.optional(),
+    miaoshouAppKey: secretMutation.optional(), miaoshouAppSecret: secretMutation.optional(),
+    miaoshouAuthorization: secretMutation.optional(), miaoshouCookie: secretMutation.optional(),
+    assetPublishS3AccessKeyId: secretMutation.optional(), assetPublishS3SecretAccessKey: secretMutation.optional(),
+    extensionToken: secretMutation.optional()
   }).optional()
 });
 
@@ -63,6 +86,9 @@ export function createPatchHandler(dependencies: { service: SettingsService }) {
     try {
       return Response.json(await dependencies.service.update(parsed.data));
     } catch (error) {
+      if (error instanceof SettingsValidationError) {
+        return Response.json({ error: error.code, field: error.field }, { status: 400 });
+      }
       if (error instanceof SettingsConflictError || hasActualVersion(error)) {
         return Response.json({
           error: "settings_version_conflict",
