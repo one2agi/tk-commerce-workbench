@@ -258,4 +258,33 @@ describe("adapter bundle factory cost boundary", () => {
       { kind: "worker_command", commandId: "command_123", idempotencyKey: "stable:key:123" }
     )).toThrow("live adapter configuration is incomplete");
   });
+
+  it("starts a Canvas-only live deployment without headless provider settings", () => {
+    const bundle = createAdapterBundle({
+      externalAdapterMode: "live", nodeEnv: "production", assetRoot: "./data/assets",
+      imageGenerationPath: "canvas", canvasBaseUrl: "https://canvas.test",
+      llmBaseUrl: "https://llm.test/v1", llmApiKey: "llm-secret", llmModel: "model-1",
+      exchangeRateBaseUrl: "https://rates.test"
+    }, { kind: "worker_command", commandId: "command_123", idempotencyKey: "stable:key:123" }, {
+      createLiveFetch: () => vi.fn() as unknown as typeof fetch
+    });
+
+    expect(bundle.mode).toBe("live");
+  });
+
+  it("starts a Headless-only live deployment without Canvas settings", async () => {
+    const bundle = createAdapterBundle({
+      externalAdapterMode: "live", nodeEnv: "production", assetRoot: "./data/assets",
+      imageGenerationPath: "headless",
+      llmBaseUrl: "https://llm.test/v1", llmApiKey: "llm-secret", llmModel: "model-1",
+      exchangeRateBaseUrl: "https://rates.test",
+      imagePlannerBaseUrl: "https://planner.test", imagePlannerApiKey: "planner-key", imagePlannerModel: "gpt-4o",
+      imageProviderBaseUrl: "https://images.test", imageProviderApiKey: "provider-key", imageProviderModel: "gpt-image-1"
+    }, { kind: "worker_command", commandId: "command_123", idempotencyKey: "stable:key:123" }, {
+      createLiveFetch: () => vi.fn() as unknown as typeof fetch
+    });
+
+    expect(bundle.mode).toBe("live");
+    await expect(bundle.canvas.readWorkflowCapacity("unused")).rejects.toThrow(/not active/i);
+  });
 });

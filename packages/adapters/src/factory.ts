@@ -32,7 +32,7 @@ export interface LiveCommandContext {
 }
 
 export type AdapterFactoryConfig = Partial<Pick<AppConfig,
-  "canvasBaseUrl" | "canvasId" | "canvasWorkflowName" | "canvasApiKey" | "llmBaseUrl" | "llmApiKey" | "llmModel" | "exchangeRateBaseUrl" |
+  "imageGenerationPath" | "canvasBaseUrl" | "canvasId" | "canvasWorkflowName" | "canvasApiKey" | "llmBaseUrl" | "llmApiKey" | "llmModel" | "exchangeRateBaseUrl" |
   "imagePlannerBaseUrl" | "imagePlannerApiKey" | "imagePlannerModel" |
   "imageProviderBaseUrl" | "imageProviderApiKey" | "imageProviderModel" |
   "assetPublishS3Endpoint" | "assetPublishS3Region" | "assetPublishS3Bucket" | "assetPublishS3AccessKeyId" | "assetPublishS3SecretAccessKey" | "assetPublishPublicBaseUrl"
@@ -62,28 +62,33 @@ export function createAdapterBundle(config: AdapterFactoryConfig, commandContext
 }
 
 function constructLiveAdapters(config: AdapterFactoryConfig, _context: LiveCommandContext, createLiveFetch: () => typeof fetch): AdapterBundle {
-  if (!config.canvasBaseUrl || !config.llmBaseUrl || !config.llmApiKey || !config.llmModel || !config.exchangeRateBaseUrl) {
+  const imageGenerationPath = config.imageGenerationPath ?? "canvas";
+  if (!config.llmBaseUrl || !config.llmApiKey || !config.llmModel || !config.exchangeRateBaseUrl) {
     throw new Error("adapter factory: live adapter configuration is incomplete");
   }
-  if (!config.imagePlannerBaseUrl || !config.imagePlannerApiKey || !config.imagePlannerModel ||
-      !config.imageProviderBaseUrl || !config.imageProviderApiKey || !config.imageProviderModel) {
+  if (imageGenerationPath === "canvas" && !config.canvasBaseUrl) {
+    throw new Error("adapter factory: live adapter configuration is incomplete");
+  }
+  if (imageGenerationPath === "headless" && (!config.imagePlannerBaseUrl || !config.imagePlannerApiKey || !config.imagePlannerModel ||
+      !config.imageProviderBaseUrl || !config.imageProviderApiKey || !config.imageProviderModel)) {
     throw new Error("adapter factory: live adapter configuration is incomplete");
   }
   const fetchImpl = createLiveFetch();
+  const canvasBaseUrl = config.canvasBaseUrl;
   return {
     mode: "live",
-    canvas: createCanvasAdapter({
-      baseUrl: config.canvasBaseUrl,
+    canvas: imageGenerationPath === "canvas" ? createCanvasAdapter({
+      baseUrl: canvasBaseUrl!,
       apiKey: config.canvasApiKey,
       canvasId: config.canvasId ?? "0f91cb2d8f2846c091829af30ea2d18d",
       workflowName: config.canvasWorkflowName ?? "TK工作流",
       fetchImpl,
-      downloadImage: createCanvasOutputDownloader(fetchImpl, config.canvasBaseUrl)
-    }),
+      downloadImage: createCanvasOutputDownloader(fetchImpl, canvasBaseUrl!)
+    }) : createInactiveCanvasAdapter(),
     llm: createOpenAiCompatibleAdapter({ baseUrl: config.llmBaseUrl, apiKey: config.llmApiKey, model: config.llmModel, fetchImpl }),
     exchangeRate: createExchangeRateAdapter({ baseUrl: config.exchangeRateBaseUrl, fetchImpl }),
-    assetStaging: createAssetStagingAdapter({
-      uploadUrl: `${config.canvasBaseUrl.replace(/\/+$/, "")}/api/automation/upload`,
+    assetStaging: imageGenerationPath === "canvas" ? createAssetStagingAdapter({
+      uploadUrl: `${canvasBaseUrl!.replace(/\/+$/, "")}/api/automation/upload`,
       apiKey: config.canvasApiKey,
       fetchImpl,
       resolveLocalAsset: async (localAssetId) => {
@@ -94,19 +99,19 @@ function constructLiveAdapters(config: AdapterFactoryConfig, _context: LiveComma
         if (extension !== ".png" && extension !== ".jpg" && extension !== ".jpeg") throw new Error("asset staging: unsupported local image type");
         return { bytes: await readFile(filePath), fileName: localAssetId.split(/[\\/]/).at(-1) ?? "asset", contentType: extension === ".png" ? "image/png" : "image/jpeg" };
       }
-    }),
-    imagePlanner: createOpenAiImagePlanner({
-      baseUrl: config.imagePlannerBaseUrl,
-      apiKey: config.imagePlannerApiKey,
-      model: config.imagePlannerModel,
+    }) : createInactiveAssetStagingAdapter(),
+    imagePlanner: imageGenerationPath === "headless" ? createOpenAiImagePlanner({
+      baseUrl: config.imagePlannerBaseUrl!,
+      apiKey: config.imagePlannerApiKey!,
+      model: config.imagePlannerModel!,
       fetchImpl
-    }),
-    imageGeneration: createOpenAiCompatibleImageProvider({
-      baseUrl: config.imageProviderBaseUrl,
-      apiKey: config.imageProviderApiKey,
-      model: config.imageProviderModel,
+    }) : createInactiveImagePlanner(),
+    imageGeneration: imageGenerationPath === "headless" ? createOpenAiCompatibleImageProvider({
+      baseUrl: config.imageProviderBaseUrl!,
+      apiKey: config.imageProviderApiKey!,
+      model: config.imageProviderModel!,
       fetchImpl
-    }),
+    }) : createInactiveImageGenerationAdapter(),
     assetPublishing: config.assetPublishS3Endpoint && config.assetPublishS3Region && config.assetPublishS3Bucket && config.assetPublishS3AccessKeyId && config.assetPublishS3SecretAccessKey && config.assetPublishPublicBaseUrl
       ? createAssetPublishingAdapter({
           s3Endpoint: config.assetPublishS3Endpoint,
@@ -120,6 +125,36 @@ function constructLiveAdapters(config: AdapterFactoryConfig, _context: LiveComma
         })
       : createStubAssetPublishingAdapter(),
     counters: () => Object.freeze({ canvas: 0, llm: 0, exchangeRate: 0, assetStaging: 0, assetPublishing: 0, imagePlanner: 0, imageGeneration: 0 })
+  };
+}
+
+function inactivePathError(): Error {
+  return new Error("adapter factory: adapter is not active for the configured image generation path");
+}
+
+function createInactiveCanvasAdapter(): CanvasPort {
+  return {
+    async readWorkflowCapacity() { throw inactivePathError(); },
+    async submit() { throw inactivePathError(); },
+    async fetchOutputs() { throw inactivePathError(); }
+  };
+}
+
+function createInactiveAssetStagingAdapter(): AssetStagingPort {
+  return {
+    async stage() { throw inactivePathError(); },
+    async release() { throw inactivePathError(); }
+  };
+}
+
+function createInactiveImagePlanner(): ImagePromptPlannerPort {
+  return { async plan() { throw inactivePathError(); } };
+}
+
+function createInactiveImageGenerationAdapter(): ImageGenerationPort {
+  return {
+    async submit() { throw inactivePathError(); },
+    async fetch() { throw inactivePathError(); }
   };
 }
 

@@ -14,14 +14,14 @@ Headless 图片生成绕过 Canvas 工作流界面，通过直接调用图像生
 ## 路由切换
 
 ```bash
-# 使用 Headless 直接 API（默认，新安装和未指定环境）
+# 使用 Headless 直接 API（需要显式开启）
 IMAGE_GENERATION_PATH=headless
 
-# 使用 Canvas 工作流（legacy，仅用于旧任务兼容）
+# 使用 Canvas 工作流（当前默认，兼容现有部署）
 IMAGE_GENERATION_PATH=canvas  # 需要 CANVAS_BASE_URL
 ```
 
-**新安装和未指定环境使用 `IMAGE_GENERATION_PATH=headless`（默认）。** `IMAGE_GENERATION_PATH=canvas` 仅作为旧任务兼容和临时回滚使用；如需在新生产工作中使用 Canvas，必须有明确的证据证明 headless 不满足需求。
+**未指定时保持 `IMAGE_GENERATION_PATH=canvas`，避免现有部署升级后突然切换链路。** 完成 Headless 的 Planner 和图片 Provider 配置后，再显式改为 `headless`。
 
 在 `IMAGE_GENERATION_PATH=headless` 模式下，Canvas 服务可以完全关闭。
 
