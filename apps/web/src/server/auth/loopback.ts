@@ -1,14 +1,30 @@
 export function rejectNonLoopback(request: Request): Response | null {
-  const hostname = new URL(request.url).hostname.replace(/^\[|\]$/g, "").toLowerCase();
+  const urlHostname = new URL(request.url).hostname.replace(/^\[|\]$/g, "").toLowerCase();
+  const hostname = isUnspecifiedBindAddress(urlHostname)
+    ? hostnameFromHostHeader(request.headers.get("host"))
+    : urlHostname;
   const allowed = hostname === "localhost" || hostname === "::1" || hostname === "127.0.0.1";
   return allowed ? null : Response.json({ error: "loopback_only" }, { status: 403 });
 }
 
 const LOOPBACK_HOSTNAMES = new Set(["127.0.0.1", "localhost", "::1"]);
 
+function isUnspecifiedBindAddress(hostname: string): boolean {
+  return hostname === "0.0.0.0" || hostname === "::";
+}
+
+function hostnameFromHostHeader(value: string | null): string {
+  if (!value) return "";
+  try {
+    return new URL(`http://${value}`).hostname.replace(/^\[|\]$/g, "").toLowerCase();
+  } catch {
+    return "";
+  }
+}
+
 function loopbackAlias(hostname: string): string {
   const normalized = hostname.replace(/^\[|\]$/g, "").toLowerCase();
-  return LOOPBACK_HOSTNAMES.has(normalized) ? "loopback" : normalized;
+  return LOOPBACK_HOSTNAMES.has(normalized) || isUnspecifiedBindAddress(normalized) ? "loopback" : normalized;
 }
 
 function isSameLoopbackOrigin(requestUrl: string, originHeader: string): boolean {

@@ -1,12 +1,29 @@
 import { describe, it, expect } from "vitest";
 
-import { rejectUnsafeBrowserMutation } from "./loopback";
+import { rejectNonLoopback, rejectUnsafeBrowserMutation } from "./loopback";
 
 function makeRequest(url: string, headers: Record<string, string> = {}): Request {
   return new Request(url, { method: "POST", headers });
 }
 
 describe("rejectUnsafeBrowserMutation loopback alias", () => {
+  it("accepts Docker's unspecified bind URL when the original host is loopback", () => {
+    const request = makeRequest("http://0.0.0.0:3000/api/v1/settings", {
+      host: "127.0.0.1:3000",
+      "content-type": "application/json",
+      origin: "http://127.0.0.1:3000"
+    });
+    expect(rejectNonLoopback(request)).toBeNull();
+    expect(rejectUnsafeBrowserMutation(request)).toBeNull();
+  });
+
+  it("rejects Docker's unspecified bind URL when the original host is remote", () => {
+    const request = makeRequest("http://0.0.0.0:3000/api/v1/settings", {
+      host: "192.168.1.8:3000"
+    });
+    expect(rejectNonLoopback(request)?.status).toBe(403);
+  });
+
   it("accepts 127.0.0.1 origin against localhost request URL", () => {
     const req = makeRequest("http://localhost:3000/api/v1/automation-runs", {
       "content-type": "application/json",
