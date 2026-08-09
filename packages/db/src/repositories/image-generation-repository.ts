@@ -42,6 +42,22 @@ export interface LoadGenerationStartContextResult {
   productFacts: Record<string, unknown>;
 }
 
+export interface LoadPromptTestContextResult {
+  productFacts: Record<string, unknown>;
+  references: ResolvedImageReferenceV1[];
+}
+
+function productFacts(sourceTitle: string | null, sourcePayload: Record<string, unknown>): Record<string, unknown> {
+  const title = sourceTitle ?? (typeof sourcePayload.title === "string" ? sourcePayload.title : "");
+  const category = typeof sourcePayload.category === "string" ? sourcePayload.category : null;
+  const attributes = Array.isArray(sourcePayload.attributes)
+    ? sourcePayload.attributes
+    : Array.isArray(sourcePayload.sourceAttributes)
+      ? sourcePayload.sourceAttributes
+      : [];
+  return Object.freeze({ title, category, attributes });
+}
+
 function commandError(code: string): Error & { code: string } {
   return Object.assign(new Error(code), { code });
 }
@@ -155,17 +171,49 @@ export class ImageGenerationRepository {
       if (asset.state !== "ready") throw commandError("asset_not_ready");
     }
 
-    const source = revisionRow.source_payload ?? {};
-    const title = revisionRow.source_title ?? (typeof source.title === "string" ? source.title : "");
-    const category = typeof source.category === "string" ? source.category : null;
-    const attributes = Array.isArray(source.attributes)
-      ? source.attributes
-      : Array.isArray(source.sourceAttributes)
-        ? source.sourceAttributes
-        : [];
+    return {
+      productFacts: productFacts(revisionRow.source_title, revisionRow.source_payload ?? {})
+    };
+  }
+
+  async loadPromptTestContext(productId: string): Promise<LoadPromptTestContextResult | null> {
+    const revision = await this.pool.query<{
+      id: string;
+      source_title: string | null;
+      source_payload: Record<string, unknown>;
+    }>(
+      `SELECT id, source_title, source_payload
+       FROM ${schema.productRevisions}
+       WHERE product_id = $1
+       ORDER BY draft_version DESC, created_at DESC
+       LIMIT 1`,
+      [productId]
+    );
+    const revisionRow = revision.rows[0];
+    if (!revisionRow) return null;
+
+    const assets = await this.pool.query<{
+      id: string;
+      local_path: string;
+      extension: "png" | "jpg" | "jpeg";
+    }>(
+      `SELECT id, local_path, lower(extension) AS extension
+       FROM ${schema.assets}
+       WHERE product_id = $1 AND revision_id = $2 AND state = 'ready'
+         AND local_path IS NOT NULL AND lower(extension) IN ('png', 'jpg', 'jpeg')
+       ORDER BY CASE WHEN kind = 'main' THEN 0 WHEN kind = 'detail' THEN 1 ELSE 2 END,
+                created_at ASC, id ASC
+       LIMIT 6`,
+      [productId, revisionRow.id]
+    );
 
     return {
-      productFacts: Object.freeze({ title, category, attributes })
+      productFacts: productFacts(revisionRow.source_title, revisionRow.source_payload ?? {}),
+      references: assets.rows.map((asset) => ({
+        assetId: asset.id,
+        localPath: asset.local_path,
+        extension: asset.extension
+      }))
     };
   }
 

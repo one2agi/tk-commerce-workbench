@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 
-import { loadConfig } from "../../../../packages/config/src/env.js";
+import { loadConfig, type AppConfig } from "../../../../packages/config/src/env.js";
 import { createRuntimeSecretCodec } from "../../../../packages/config/src/runtime-secrets.js";
 import type { PublicServiceConfigurationV1, RuntimeSecretsV1 } from "../../../../packages/contracts/src/runtime-configuration.js";
 import pg from "pg";
@@ -31,6 +31,11 @@ import {
   type ImageGenerationTemplateVersion
 } from "./services/image-generation-template-service";
 import { ImageGenerationService } from "./services/image-generation-service";
+import {
+  createImagePromptPlannerLoader,
+  type ImagePromptPlannerLoader
+} from "./image-prompt-test-runtime";
+import type { LoadPromptTestContextResult } from "../../../../packages/db/src/repositories/image-generation-repository.js";
 
 export interface ServerServices {
   verifyExtensionToken: ExtensionTokenVerifier;
@@ -45,9 +50,12 @@ export interface ServerServices {
   productReruns: ProductRerunService;
   imageGenerationTemplates: ImageGenerationTemplateService;
   imageGeneration: ImageGenerationService;
+  loadImagePromptPlanner: ImagePromptPlannerLoader;
+  loadImagePromptTestContext(productId: string): Promise<LoadPromptTestContextResult | null>;
 }
 
 interface RuntimeConfig {
+  bootstrapConfig?: AppConfig;
   extensionToken: string;
   externalAdapterMode: "mock" | "live";
   assetRoot: string;
@@ -102,6 +110,7 @@ export function loadRuntimeConfig(env: NodeJS.ProcessEnv = process.env): Runtime
     extensionToken: config.extensionToken
   }).filter(([, value]) => value)) as RuntimeSecretsV1;
   return {
+    bootstrapConfig: config,
     databaseUrl: config.databaseUrl,
     extensionToken: config.extensionToken,
     externalAdapterMode: config.externalAdapterMode,
@@ -448,6 +457,7 @@ export function createServerServices(input: {
   const jobs = new JobRepository(input.pool);
   const automationRuns = new AutomationRunRepository(input.pool);
   const runtimeConfiguration = new RuntimeConfigurationRepository(input.pool);
+  const imageGenerationRepository = new ImageGenerationRepository(input.pool);
   const secretCodec = input.config.configEncryptionKey
     ? createRuntimeSecretCodec(input.config.configEncryptionKey)
     : undefined;
@@ -461,6 +471,13 @@ export function createServerServices(input: {
     return secretCodec.open(candidate.encryptedSecrets, "workspace_settings:1").extensionToken ?? "";
   };
   const products = new ProductService(database);
+  const loadImagePromptPlanner = createImagePromptPlannerLoader({
+    bootstrapConfig: () => input.config.bootstrapConfig ?? loadConfig(),
+    loadAppliedCandidate: () => runtimeConfiguration.loadAppliedCandidate(),
+    openSecrets: secretCodec
+      ? (candidate) => secretCodec.open(candidate.encryptedSecrets, "workspace_settings:1")
+      : undefined
+  });
   const reruns = createPgRerunPort(
     createPgApprovalInvalidationPort(() => input.pool),
     () => input.pool
@@ -534,8 +551,10 @@ export function createServerServices(input: {
     syncs: new MiaoshouSyncService(database),
     productReruns: new ProductRerunService(products, reruns),
     imageGenerationTemplates: new ImageGenerationTemplateService(new PgImageGenerationTemplateStore(input.pool)),
+    loadImagePromptPlanner,
+    loadImagePromptTestContext: (productId) => imageGenerationRepository.loadPromptTestContext(productId),
     imageGeneration: new ImageGenerationService({
-      imageGenerationRepository: new ImageGenerationRepository(input.pool),
+      imageGenerationRepository,
       imageGenerationTemplates: new PgImageGenerationTemplateStore(input.pool)
     })
   };

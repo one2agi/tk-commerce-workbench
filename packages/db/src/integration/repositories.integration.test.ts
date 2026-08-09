@@ -2114,6 +2114,33 @@ describe("integration: image generation repository", () => {
     return fence;
   }
 
+  test("loads the latest product facts and ready local references for prompt testing", async () => {
+    const input = await fixtureStart();
+    await handle.pool.query(
+      `UPDATE product_revisions
+       SET source_payload = $2::jsonb
+       WHERE id = $1`,
+      [input.revisionId, JSON.stringify({
+        category: "饰品 > 手表",
+        sourceAttributes: [{ name: "材质", value: "不锈钢" }]
+      })]
+    );
+
+    const context = await imageGen.loadPromptTestContext(input.productId);
+
+    expect(context?.productFacts).toEqual({
+      title: "Image Gen Product",
+      category: "饰品 > 手表",
+      attributes: [{ name: "材质", value: "不锈钢" }]
+    });
+    expect(context?.references).toHaveLength(3);
+    expect(context?.references[0]).toMatchObject({
+      assetId: input.selectedAssetIds[0],
+      localPath: "/assets/asset.png",
+      extension: "png"
+    });
+  });
+
   test("creates batch, planner job, and requested slots atomically and idempotently", async () => {
     const input = await fixtureStart({ idempotencyKey: `start:rev_1:abc${newId("idem")}`, outputCount: 3 });
     const first = await imageGen.createBatch(input);
