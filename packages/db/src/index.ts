@@ -13,5 +13,6 @@ export * from "./repositories/canvas-quota-repository.js";
 export * from "./repositories/pipeline-repository.js";
 export * from "./repositories/local-capture-repository.js";
 export * from "./repositories/image-generation-repository.js";
+export * from "./repositories/runtime-configuration-repository.js";
 export { bootTestDb, type TestDbHandle } from "./integration/runner.js";
 export { approveTestDatabaseUrl } from "./integration/guard.js";

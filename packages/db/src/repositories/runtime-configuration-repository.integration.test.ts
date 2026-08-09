@@ -1,0 +1,101 @@
+import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
+
+import type {
+  EncryptedSecretEnvelopeV1,
+  PublicServiceConfigurationV1
+} from "../../../contracts/src/runtime-configuration.js";
+
+import { bootTestDb, type TestDbHandle } from "../integration/runner.js";
+import { INITIAL_SQL } from "../migrations/0000_initial.js";
+import { RuntimeConfigurationRepository } from "./runtime-configuration-repository.js";
+
+const PUBLIC_CONFIG: PublicServiceConfigurationV1 = {
+  imageGenerationPath: "headless",
+  imagePlannerBaseUrl: "https://planner.test/v1",
+  imagePlannerModel: "planner-v1",
+  imageProviderBaseUrl: "https://images.test/v1",
+  imageProviderModel: "image-v1",
+  canvasBaseUrl: "",
+  canvasId: "canvas-1",
+  canvasWorkflowName: "TK工作流",
+  llmBaseUrl: "https://llm.test/v1",
+  llmModel: "listing-v1",
+  exchangeRateBaseUrl: "https://rates.test",
+  miaoshouBaseUrl: "https://miaoshou.test",
+  miaoshouAccountId: "account-1",
+  assetPublishS3Endpoint: "https://s3.test",
+  assetPublishS3Region: "auto",
+  assetPublishS3Bucket: "assets",
+  assetPublishPublicBaseUrl: "https://cdn.test"
+};
+
+const ENVELOPE: EncryptedSecretEnvelopeV1 = {
+  version: 1,
+  nonce: "bm9uY2U=",
+  tag: "dGFn",
+  ciphertext: "Y2lwaGVydGV4dA=="
+};
+
+let handle: TestDbHandle;
+let repository: RuntimeConfigurationRepository;
+
+beforeAll(async () => {
+  handle = await bootTestDb();
+  repository = new RuntimeConfigurationRepository(handle.pool);
+});
+
+beforeEach(async () => {
+  await handle.reset();
+  await handle.migrate(INITIAL_SQL);
+});
+
+afterAll(async () => {
+  await handle?.close();
+});
+
+describe("RuntimeConfigurationRepository", () => {
+  it("returns no candidate before the first runtime configuration is seeded", async () => {
+    await expect(repository.loadCandidate()).resolves.toBeUndefined();
+  });
+
+  it("seeds once and never overwrites the encrypted first-run configuration", async () => {
+    await repository.seedIfMissing({
+      publicConfig: PUBLIC_CONFIG,
+      encryptedSecrets: ENVELOPE
+    });
+    await repository.seedIfMissing({
+      publicConfig: { ...PUBLIC_CONFIG, imagePlannerModel: "must-not-replace" },
+      encryptedSecrets: { ...ENVELOPE, ciphertext: "b3RoZXI=" }
+    });
+
+    await expect(repository.loadCandidate()).resolves.toEqual({
+      version: 1,
+      publicConfig: PUBLIC_CONFIG,
+      encryptedSecrets: ENVELOPE
+    });
+  });
+
+  it("records a rejected candidate without replacing the last applied version", async () => {
+    await repository.markApplied(3);
+    await repository.markRejected(4, "image_provider_required");
+
+    await expect(repository.loadApplyStatus()).resolves.toEqual({
+      appliedVersion: 3,
+      candidateVersion: 4,
+      state: "error",
+      errorCode: "image_provider_required"
+    });
+  });
+
+  it("clears an old error when a newer version is applied", async () => {
+    await repository.markRejected(4, "image_provider_required");
+    await repository.markApplied(5);
+
+    await expect(repository.loadApplyStatus()).resolves.toEqual({
+      appliedVersion: 5,
+      candidateVersion: 5,
+      state: "applied",
+      errorCode: null
+    });
+  });
+});

@@ -77,6 +77,7 @@ describe("integration: bootstrap", () => {
     expect(names).toContain("jobs");
     expect(names).toContain("exchange_rate_snapshots");
     expect(names).toContain("automation_runs");
+    expect(names).toContain("runtime_configuration_status");
   });
 
   test("upgrades legacy settings and templates without overwriting saved values", async () => {
@@ -113,14 +114,17 @@ describe("integration: bootstrap", () => {
     });
     const settings = await handle.pool.query(
       `SELECT default_locale, worker_concurrency, asset_root, version,
-              pricing_defaults, provider_options, retry_policy
+              pricing_defaults, provider_options, retry_policy,
+              service_configuration, encrypted_secrets
        FROM workspace_settings WHERE id = 1`
     );
     expect(settings.rows[0]).toMatchObject({
       default_locale: "vi-VN", worker_concurrency: 7, asset_root: "./legacy-assets", version: "1",
       pricing_defaults: { targetProfitRate: "0.30" },
       provider_options: { canvasWorkflow: "TK工作流" },
-      retry_policy: { maxAttempts: 3 }
+      retry_policy: { maxAttempts: 3 },
+      service_configuration: {},
+      encrypted_secrets: null
     });
   });
 

@@ -443,6 +443,17 @@ ALTER TABLE workspace_settings ADD COLUMN IF NOT EXISTS provider_options JSONB N
 ALTER TABLE workspace_settings ADD COLUMN IF NOT EXISTS retry_policy JSONB NOT NULL DEFAULT
   '{"maxAttempts":3,"initialDelaySeconds":30}'::jsonb;
 ALTER TABLE workspace_settings ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ NOT NULL DEFAULT now();
+ALTER TABLE workspace_settings ADD COLUMN IF NOT EXISTS service_configuration JSONB NOT NULL DEFAULT '{}'::jsonb;
+ALTER TABLE workspace_settings ADD COLUMN IF NOT EXISTS encrypted_secrets JSONB;
+
+CREATE TABLE IF NOT EXISTS runtime_configuration_status (
+  id                INTEGER PRIMARY KEY CHECK (id = 1),
+  applied_version   BIGINT,
+  candidate_version BIGINT,
+  state             TEXT NOT NULL DEFAULT 'pending',
+  error_code        TEXT,
+  updated_at        TIMESTAMPTZ NOT NULL DEFAULT now()
+);
 
 -- Image generation templates (with versioned drafts) --------------------------------
 CREATE TABLE IF NOT EXISTS image_generation_templates (
