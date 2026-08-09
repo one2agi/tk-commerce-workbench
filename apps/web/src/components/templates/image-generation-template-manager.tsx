@@ -23,6 +23,20 @@ function lines(value: string): string[] {
   return value.split("\n").map((item) => item.trim()).filter(Boolean);
 }
 
+function lifecycleRank(state: LifecycleState): number {
+  return state === "active" ? 0 : state === "draft" ? 1 : 2;
+}
+
+function createErrorMessage(error: unknown): string {
+  if (error instanceof Error && error.message === "category_key_exists") {
+    return "这个类目标识已经有模板，请编辑现有模板或换一个标识。";
+  }
+  if (error instanceof Error && error.message === "invalid_request") {
+    return "类目标识格式不正确，请使用小写英文、数字、点、短横线或下划线。";
+  }
+  return "模板创建失败，请检查名称和类目标识后重试。";
+}
+
 function TemplateItem({ template, onRefresh }: {
   template: ImageGenerationTemplateViewV1;
   onRefresh: () => void;
@@ -181,6 +195,11 @@ export function ImageGenerationTemplateManager({ items }: { items: ImageGenerati
   const router = useRouter();
   const [message, setMessage] = useState<{ text: string; error: boolean } | null>(null);
   const [creating, setCreating] = useState(false);
+  const categoryKeys = [...new Set(items.map((item) => item.categoryKey))].sort();
+  const sortedItems = [...items].sort((left, right) =>
+    lifecycleRank(left.lifecycleState) - lifecycleRank(right.lifecycleState) ||
+    right.createdAt.localeCompare(left.createdAt)
+  );
 
   async function handleCreate(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -198,12 +217,13 @@ export function ImageGenerationTemplateManager({ items }: { items: ImageGenerati
         method: "POST", headers: { "content-type": "application/json" },
         body: JSON.stringify({ name: data.get("name"), categoryKey: data.get("categoryKey"), recipe })
       });
-      if (!response.ok) throw new Error("create_failed");
+      const result = await response.json().catch(() => ({})) as { error?: unknown };
+      if (!response.ok) throw new Error(typeof result.error === "string" ? result.error : "create_failed");
       setMessage({ text: "模板草稿已创建，可在高级设置中调整并启用。", error: false });
       form.reset();
       router.refresh();
-    } catch {
-      setMessage({ text: "模板创建失败，请检查名称和类目后重试。", error: true });
+    } catch (error) {
+      setMessage({ text: createErrorMessage(error), error: true });
     } finally {
       setCreating(false);
     }
@@ -211,20 +231,40 @@ export function ImageGenerationTemplateManager({ items }: { items: ImageGenerati
 
   return (
     <div className="tk-template-manager">
+      <header className="tk-page-heading">
+        <div>
+          <p>Headless image generation</p>
+          <h1>生图模板</h1>
+        </div>
+      </header>
+      <p className="tk-template-intro">为不同商品类目设置图片数量、视觉方向和图片角色。只有已启用模板会进入生图流程。</p>
       <section className="tk-panel">
         <h2>新建模板</h2>
         <form onSubmit={(event) => void handleCreate(event)}>
           <div className="tk-form-row">
             <label>模板名称<input name="name" required /></label>
-            <label>类目键值<input name="categoryKey" placeholder="例如 women.hat" required /></label>
+            <label>类目标识
+              <input
+                name="categoryKey"
+                list="image-template-category-keys"
+                pattern="[a-z0-9]+(?:[._-][a-z0-9]+)*"
+                placeholder="例如 women.hat"
+                aria-describedby="image-template-category-help"
+                required
+              />
+            </label>
+            <datalist id="image-template-category-keys">
+              {categoryKeys.map((categoryKey) => <option key={categoryKey} value={categoryKey} />)}
+            </datalist>
           </div>
+          <p id="image-template-category-help" className="tk-field-help">使用稳定的小写标识，例如 women.hat；商品生图时会按已启用模板选择。</p>
           <button type="submit" disabled={creating}>{creating ? "正在创建…" : "新建模板"}</button>
           {message ? <output className={message.error ? "tk-template-message is-error" : "tk-template-message"}>{message.text}</output> : null}
         </form>
       </section>
       <section className="tk-template-list">
         <h2>模板列表</h2>
-        {items.length === 0 ? <p className="tk-empty">暂无模板</p> : items.map((template) => (
+        {sortedItems.length === 0 ? <p className="tk-empty">尚未创建模板。创建并启用后，Headless 生图才能按类目生成图片。</p> : sortedItems.map((template) => (
           <TemplateItem key={`${template.templateId}:${template.version}:${template.lifecycleState}`} template={template} onRefresh={() => router.refresh()} />
         ))}
       </section>

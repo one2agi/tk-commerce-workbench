@@ -2,13 +2,14 @@ import { z } from "zod";
 
 import { rejectNonLoopback, rejectUnsafeBrowserMutation } from "../../../../server/auth/loopback";
 import {
+  CategoryKeySchema,
   RecipeSchema,
   type ImageGenerationTemplateService
 } from "../../../../server/services/image-generation-template-service";
 
 const CreateBody = z.strictObject({
   name: z.string().trim().min(1).max(120),
-  categoryKey: z.string().trim().min(1).max(120),
+  categoryKey: CategoryKeySchema,
   parentCategoryKey: z.string().trim().max(120).optional(),
   recipe: RecipeSchema
 });
@@ -31,8 +32,15 @@ export function createPostHandler(dependencies: { service: ImageGenerationTempla
     if (!parsed.success) {
       return Response.json({ error: "invalid_request", detail: parsed.error.format() }, { status: 400 });
     }
-    const result = await dependencies.service.createDraft(parsed.data);
-    return Response.json(result, { status: 201 });
+    try {
+      const result = await dependencies.service.createDraft(parsed.data);
+      return Response.json(result, { status: 201 });
+    } catch (error) {
+      if (error instanceof Error && error.message === "category_key_exists") {
+        return Response.json({ error: "category_key_exists" }, { status: 409 });
+      }
+      throw error;
+    }
   };
 }
 

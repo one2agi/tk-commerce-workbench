@@ -10,6 +10,8 @@
 //   - "duplicate" creates a brand-new template family at version 1 (draft).
 
 import { z } from "zod";
+import { templateId as contractTemplateId } from "@tk/contracts/ids";
+import type { ImageGenerationTemplateViewV1 } from "@tk/contracts/read-models";
 
 // ---------------------------------------------------------------------------
 // Recipe schema (strict validation for all mutation inputs)
@@ -20,6 +22,11 @@ const Counts = z.strictObject({
   min: z.number().int(),
   max: z.number().int()
 });
+
+export const CategoryKeySchema = z.string().trim().min(1).max(120).regex(
+  /^[a-z0-9]+(?:[._-][a-z0-9]+)*$/,
+  "categoryKey must use lowercase letters, numbers, dots, underscores, or hyphens"
+);
 
 export const RecipeSchema = z.strictObject({
   inputCounts: Counts.refine(
@@ -74,17 +81,7 @@ export type ImageGenerationTemplate = Readonly<{
   updatedAt: Date;
 }>;
 
-export type ImageGenerationTemplateViewV1 = Readonly<{
-  templateId: string;
-  name: string;
-  categoryKey: string;
-  parentCategoryKey: string | null;
-  version: number;
-  lifecycleState: LifecycleState;
-  recipe: ValidatedRecipe;
-  activatedAt: string | null;
-  createdAt: string;
-}>;
+export type { ImageGenerationTemplateViewV1 } from "@tk/contracts/read-models";
 
 export type CategoryTemplateResolution = Readonly<{
   templateId: string;
@@ -148,9 +145,13 @@ export class ImageGenerationTemplateService {
     parentCategoryKey?: string;
     recipe: ValidatedRecipe;
   }): Promise<ImageGenerationTemplateViewV1> {
+    const categoryKey = CategoryKeySchema.parse(input.categoryKey);
+    if (await this.store.getTemplateByCategoryKey(categoryKey)) {
+      throw new Error("category_key_exists");
+    }
     const template = await this.store.createTemplate({
       name: input.name,
-      categoryKey: input.categoryKey,
+      categoryKey,
       parentCategoryKey: input.parentCategoryKey
     });
     const version = await this.store.createVersion({
@@ -351,7 +352,7 @@ function toView(
   version: ImageGenerationTemplateVersion
 ): ImageGenerationTemplateViewV1 {
   return Object.freeze({
-    templateId: template.id,
+    templateId: contractTemplateId(template.id),
     name: template.name,
     categoryKey: template.categoryKey,
     parentCategoryKey: template.parentCategoryKey,

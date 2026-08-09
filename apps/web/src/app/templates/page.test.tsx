@@ -9,6 +9,13 @@ vi.mock("next/navigation", () => ({
 }));
 
 describe("templates page", () => {
+  it("explains how to create the first usable template", () => {
+    const html = renderToStaticMarkup(renderTemplatesPage({ items: [] }));
+
+    expect(html).toContain("创建并启用后");
+    expect(html).toContain("women.hat");
+  });
+
   it("renders persisted templates instead of the empty state", () => {
     const html = renderToStaticMarkup(renderTemplatesPage({
       items: [{
@@ -33,5 +40,7 @@ describe("templates page", () => {
 
     expect(html).toContain("女帽主图");
     expect(html).not.toContain("暂无模板");
+    expect(html).toContain('list="image-template-category-keys"');
+    expect(html).toContain('<option value="women.hat"></option>');
   });
 });

@@ -138,6 +138,23 @@ const minimalRecipe: ValidatedRecipe = {
 };
 
 describe("ImageGenerationTemplateService lifecycle", () => {
+  it("rejects a duplicate category key before creating another template family", async () => {
+    const store = createInMemoryStore();
+    const service = new ImageGenerationTemplateService({
+      createTemplate: store.createTemplate.bind(store), createVersion: store.createVersion.bind(store),
+      getVersionsByTemplate: store.getVersionsByTemplate.bind(store), getVersion: store.getVersion.bind(store),
+      getTemplate: store.getTemplate.bind(store), updateVersionArchived: store.updateVersionArchived.bind(store),
+      updateTemplateActiveVersion: store.updateTemplateActiveVersion.bind(store), listTemplates: store.listTemplates.bind(store),
+      resolveActiveByCategory: store.resolveActiveByCategory.bind(store), getTemplateByCategoryKey: store.getTemplateByCategoryKey.bind(store)
+    });
+
+    await service.createDraft({ name: "Hat A", categoryKey: "women.hat", recipe: minimalRecipe });
+
+    await expect(service.createDraft({ name: "Hat B", categoryKey: "women.hat", recipe: minimalRecipe }))
+      .rejects.toThrow("category_key_exists");
+    expect(await store.listTemplates()).toHaveLength(1);
+  });
+
   it("editing an active version appends a draft and leaves active unchanged", async () => {
     const store = createInMemoryStore();
     const service = new ImageGenerationTemplateService({

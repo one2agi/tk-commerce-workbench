@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { z } from "zod";
 import type { ImageGenerationTemplateService } from "../../../../server/services/image-generation-template-service";
+import { createPostHandler as createProductionPostHandler } from "./route";
 
 // Re-declare RecipeSchema inline (same definition as production)
 const Counts = z.strictObject({
@@ -122,6 +123,42 @@ describe("image-generation-templates route", () => {
   });
 
   describe("POST /api/v1/image-generation-templates", () => {
+    it("rejects category keys that cannot be matched reliably", async () => {
+      const handler = createProductionPostHandler({
+        service: {
+          createDraft: async () => { throw new Error("must_not_create"); }
+        } as unknown as ImageGenerationTemplateService
+      });
+      const response = await handler(
+        new Request("http://127.0.0.1/api/v1/image-generation-templates", {
+          method: "POST",
+          headers: { origin: "http://127.0.0.1", "content-type": "application/json" },
+          body: JSON.stringify({ name: "测试", categoryKey: "随便 写", recipe: minimalRecipe })
+        })
+      );
+
+      expect(response.status).toBe(400);
+      expect(await response.json()).toMatchObject({ error: "invalid_request" });
+    });
+
+    it("returns a conflict when the category key already exists", async () => {
+      const handler = createProductionPostHandler({
+        service: {
+          createDraft: async () => { throw new Error("category_key_exists"); }
+        } as unknown as ImageGenerationTemplateService
+      });
+      const response = await handler(
+        new Request("http://127.0.0.1/api/v1/image-generation-templates", {
+          method: "POST",
+          headers: { origin: "http://127.0.0.1", "content-type": "application/json" },
+          body: JSON.stringify({ name: "重复女帽", categoryKey: "women.hat", recipe: minimalRecipe })
+        })
+      );
+
+      expect(response.status).toBe(409);
+      expect(await response.json()).toEqual({ error: "category_key_exists" });
+    });
+
     it("creates a draft template with valid recipe", async () => {
       const { service } = makeService();
       const handler = makePostHandler(service);
