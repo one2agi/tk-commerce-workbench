@@ -7,6 +7,7 @@ const ITEMS: ReadonlyArray<SidebarItem> = [
   { href: "/", label: "商品", ariaLabel: "商品处理台" },
   { href: "/processing-rules", label: "处理规则", ariaLabel: "处理规则" },
   { href: "/write-records", label: "写入记录", ariaLabel: "妙手写入记录" },
+  { href: "/templates", label: "生图模板", ariaLabel: "生图模板" },
   { href: "/settings", label: "设置", ariaLabel: "工作区设置" }
 ];
 

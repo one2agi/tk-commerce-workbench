@@ -4,7 +4,7 @@ import "./globals.css";
 
 export default function RootLayout({ children }: { children: ReactNode }) {
   return (
-    <html lang="th-TH">
+    <html lang="zh-CN">
       <body>
         <div className="tk-app">
           <Sidebar />
