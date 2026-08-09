@@ -2,6 +2,11 @@
 // be serialized or logged. `getSecretStatus()` is the only safe view and returns booleans.
 // In test / integration / e2e, `EXTERNAL_ADAPTER_MODE=live` aborts startup.
 
+import type {
+  PublicServiceConfigurationV1,
+  RuntimeSecretsV1
+} from "../../contracts/src/runtime-configuration.js";
+
 export type ExternalAdapterMode = "mock" | "live";
 
 export interface SecretStatus {
@@ -15,6 +20,12 @@ export interface SecretStatus {
 }
 
 export type ImageGenerationPath = "headless" | "canvas";
+
+export type StoredWorkerRuntimeConfiguration = Readonly<{
+  externalAdapterMode: ExternalAdapterMode;
+  workerConcurrency: number;
+  maxCanvasRunsPerDay: number;
+}>;
 
 export interface AppConfig {
   readonly databaseUrl: string;
@@ -56,6 +67,12 @@ export interface AppConfig {
   readonly assetPublishS3AccessKeyId: string;
   readonly assetPublishS3SecretAccessKey: string;
   readonly assetPublishPublicBaseUrl: string;
+  readonly miaoshouBaseUrl: string;
+  readonly miaoshouAppKey: string;
+  readonly miaoshouAppSecret: string;
+  readonly miaoshouAccountId: string;
+  readonly miaoshouAuthorization: string;
+  readonly miaoshouCookie: string;
 }
 
 const LOOPBACK_HOST_PATTERN = /^(127\.0\.0\.1|localhost|\[::1\]|::1)$/i;
@@ -158,7 +175,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
     databaseUrl,
     testDatabaseUrl,
     localOperatorId: require_(env, "LOCAL_OPERATOR_ID"),
-    extensionToken: require_(env, "EXTENSION_TOKEN"),
+    extensionToken: read(env, "EXTENSION_TOKEN") ?? "",
     allowLan,
     externalAdapterMode,
     assetRoot: read(env, "ASSET_ROOT") ?? "./data/assets",
@@ -200,8 +217,78 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
     assetPublishS3Bucket: read(env, "ASSET_PUBLISH_S3_BUCKET") ?? "",
     assetPublishS3AccessKeyId: read(env, "ASSET_PUBLISH_S3_ACCESS_KEY_ID") ?? "",
     assetPublishS3SecretAccessKey: read(env, "ASSET_PUBLISH_S3_SECRET_ACCESS_KEY") ?? "",
-    assetPublishPublicBaseUrl: read(env, "ASSET_PUBLISH_PUBLIC_BASE_URL") ?? ""
+    assetPublishPublicBaseUrl: read(env, "ASSET_PUBLISH_PUBLIC_BASE_URL") ?? "",
+    miaoshouBaseUrl: read(env, "MIAOSHOU_BASE_URL") ?? "",
+    miaoshouAppKey: read(env, "MIAOSHOU_APP_KEY") ?? "",
+    miaoshouAppSecret: read(env, "MIAOSHOU_APP_SECRET") ?? "",
+    miaoshouAccountId: read(env, "MIAOSHOU_ACCOUNT_ID") ?? "",
+    miaoshouAuthorization: read(env, "MIAOSHOU_AUTHORIZATION") ?? "",
+    miaoshouCookie: read(env, "MIAOSHOU_COOKIE") ?? ""
   };
+}
+
+export function resolveRuntimeAppConfig(
+  bootstrap: AppConfig,
+  publicConfig: PublicServiceConfigurationV1,
+  secrets: RuntimeSecretsV1,
+  runtimeConfig?: StoredWorkerRuntimeConfiguration
+): AppConfig {
+  const imagePlannerApiKey = secrets.imagePlannerApiKey?.trim() ?? "";
+  const imageProviderApiKey = secrets.imageProviderApiKey?.trim() ?? "";
+  const canvasApiKey = secrets.canvasApiKey?.trim() ?? "";
+  const llmApiKey = secrets.llmApiKey?.trim() ?? "";
+  const miaoshouAppKey = secrets.miaoshouAppKey?.trim() ?? "";
+  const miaoshouAppSecret = secrets.miaoshouAppSecret?.trim() ?? "";
+  const assetPublishS3AccessKeyId = secrets.assetPublishS3AccessKeyId?.trim() ?? "";
+  const assetPublishS3SecretAccessKey = secrets.assetPublishS3SecretAccessKey?.trim() ?? "";
+
+  return Object.freeze({
+    ...bootstrap,
+    externalAdapterMode: runtimeConfig?.externalAdapterMode ?? bootstrap.externalAdapterMode,
+    workerConcurrency: runtimeConfig?.workerConcurrency ?? bootstrap.workerConcurrency,
+    maxCanvasRunsPerDay: runtimeConfig?.maxCanvasRunsPerDay ?? bootstrap.maxCanvasRunsPerDay,
+    extensionToken: secrets.extensionToken?.trim() ?? "",
+    imageGenerationPath: publicConfig.imageGenerationPath,
+    imagePlannerBaseUrl: publicConfig.imagePlannerBaseUrl.trim(),
+    imagePlannerModel: publicConfig.imagePlannerModel.trim(),
+    imagePlannerApiKey,
+    imageProviderBaseUrl: publicConfig.imageProviderBaseUrl.trim(),
+    imageProviderModel: publicConfig.imageProviderModel.trim(),
+    imageProviderApiKey,
+    canvasBaseUrl: publicConfig.canvasBaseUrl.trim(),
+    canvasId: publicConfig.canvasId.trim(),
+    canvasWorkflowName: publicConfig.canvasWorkflowName.trim(),
+    canvasApiKey,
+    llmBaseUrl: publicConfig.llmBaseUrl.trim(),
+    llmModel: publicConfig.llmModel.trim(),
+    llmApiKey,
+    exchangeRateBaseUrl: publicConfig.exchangeRateBaseUrl.trim(),
+    miaoshouBaseUrl: publicConfig.miaoshouBaseUrl.trim(),
+    miaoshouAccountId: publicConfig.miaoshouAccountId.trim(),
+    miaoshouAppKey,
+    miaoshouAppSecret,
+    miaoshouAuthorization: secrets.miaoshouAuthorization?.trim() ?? "",
+    miaoshouCookie: secrets.miaoshouCookie?.trim() ?? "",
+    assetPublishS3Endpoint: publicConfig.assetPublishS3Endpoint.trim(),
+    assetPublishS3Region: publicConfig.assetPublishS3Region.trim(),
+    assetPublishS3Bucket: publicConfig.assetPublishS3Bucket.trim(),
+    assetPublishS3AccessKeyId,
+    assetPublishS3SecretAccessKey,
+    assetPublishPublicBaseUrl: publicConfig.assetPublishPublicBaseUrl.trim(),
+    miaoshouConfigured: Boolean(miaoshouAppKey && miaoshouAppSecret),
+    canvasConfigured: Boolean(publicConfig.canvasBaseUrl.trim()),
+    llmConfigured: Boolean(publicConfig.llmBaseUrl.trim() && llmApiKey),
+    exchangeRateConfigured: Boolean(publicConfig.exchangeRateBaseUrl.trim()),
+    imageGenerationConfigured: Boolean(
+      publicConfig.imagePlannerBaseUrl.trim() && imagePlannerApiKey && publicConfig.imagePlannerModel.trim() &&
+      publicConfig.imageProviderBaseUrl.trim() && imageProviderApiKey && publicConfig.imageProviderModel.trim()
+    ),
+    assetPublishingConfigured: Boolean(
+      publicConfig.assetPublishS3Endpoint.trim() && publicConfig.assetPublishS3Region.trim() &&
+      publicConfig.assetPublishS3Bucket.trim() && assetPublishS3AccessKeyId &&
+      assetPublishS3SecretAccessKey && publicConfig.assetPublishPublicBaseUrl.trim()
+    )
+  });
 }
 
 export function getSecretStatus(cfg: AppConfig): SecretStatus {

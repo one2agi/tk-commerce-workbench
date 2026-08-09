@@ -36,6 +36,12 @@ const ENVELOPE: EncryptedSecretEnvelopeV1 = {
   ciphertext: "Y2lwaGVydGV4dA=="
 };
 
+const RUNTIME_CONFIG = {
+  externalAdapterMode: "live" as const,
+  workerConcurrency: 4,
+  maxCanvasRunsPerDay: 75
+};
+
 let handle: TestDbHandle;
 let repository: RuntimeConfigurationRepository;
 
@@ -61,17 +67,41 @@ describe("RuntimeConfigurationRepository", () => {
   it("seeds once and never overwrites the encrypted first-run configuration", async () => {
     await repository.seedIfMissing({
       publicConfig: PUBLIC_CONFIG,
-      encryptedSecrets: ENVELOPE
+      encryptedSecrets: ENVELOPE,
+      runtimeConfig: RUNTIME_CONFIG
     });
     await repository.seedIfMissing({
       publicConfig: { ...PUBLIC_CONFIG, imagePlannerModel: "must-not-replace" },
-      encryptedSecrets: { ...ENVELOPE, ciphertext: "b3RoZXI=" }
+      encryptedSecrets: { ...ENVELOPE, ciphertext: "b3RoZXI=" },
+      runtimeConfig: { externalAdapterMode: "mock", workerConcurrency: 1, maxCanvasRunsPerDay: 1 }
     });
 
     await expect(repository.loadCandidate()).resolves.toEqual({
       version: 1,
       publicConfig: PUBLIC_CONFIG,
-      encryptedSecrets: ENVELOPE
+      encryptedSecrets: ENVELOPE,
+      runtimeConfig: RUNTIME_CONFIG
+    });
+  });
+
+  it("preserves existing workspace runtime values while adding the first encrypted configuration", async () => {
+    await handle.pool.query(
+      `INSERT INTO workspace_settings
+         (id, external_adapter_mode, worker_concurrency, max_canvas_runs_per_day)
+       VALUES (1, 'live', 6, 125)`
+    );
+
+    await repository.seedIfMissing({
+      publicConfig: PUBLIC_CONFIG,
+      encryptedSecrets: ENVELOPE,
+      runtimeConfig: { externalAdapterMode: "mock", workerConcurrency: 2, maxCanvasRunsPerDay: 50 }
+    });
+
+    await expect(repository.loadCandidate()).resolves.toEqual({
+      version: 1,
+      publicConfig: PUBLIC_CONFIG,
+      encryptedSecrets: ENVELOPE,
+      runtimeConfig: { externalAdapterMode: "live", workerConcurrency: 6, maxCanvasRunsPerDay: 125 }
     });
   });
 

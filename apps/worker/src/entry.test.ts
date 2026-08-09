@@ -1,5 +1,8 @@
 import { describe, expect, it, vi } from "vitest";
 
+import { createAdapterBundle as createDefaultAdapterBundle } from "@tk/adapters";
+import { loadConfig } from "../../../packages/config/src/index.js";
+
 import { createCanvasOutputAssetFetch, createWorkerApplication, LIVE_MIAOSHOU_MIN_INTERVAL_MS } from "./entry.js";
 
 const testEnv = {
@@ -87,6 +90,77 @@ describe("worker entry", () => {
     expect(createPool).not.toHaveBeenCalled();
     expect(createAdapterBundle).not.toHaveBeenCalled();
     expect(createMiaoshou).not.toHaveBeenCalled();
+  });
+
+  it("builds one worker generation from the resolved database configuration", async () => {
+    const resolvedConfig = loadConfig({
+      ...testEnv,
+      EXTERNAL_ADAPTER_MODE: "mock",
+      DATABASE_URL: "postgres://postgres:postgres@127.0.0.1:5432/runtime_saved",
+      CANVAS_BASE_URL: "https://canvas.saved"
+    });
+    const end = vi.fn(async () => undefined);
+    const createPool = vi.fn(() => ({ query: vi.fn(), connect: vi.fn(), end, on: vi.fn() }) as never);
+    const createAdapterBundle = vi.fn((config, context) => createDefaultAdapterBundle(config, context));
+
+    const application = createWorkerApplication({
+      env: testEnv,
+      resolvedConfig,
+      dependencies: { createPool, createAdapterBundle }
+    });
+
+    expect(createPool).toHaveBeenCalledWith("postgres://postgres:postgres@127.0.0.1:5432/runtime_saved");
+    expect(createAdapterBundle).toHaveBeenCalledWith(
+      expect.objectContaining({ canvasBaseUrl: "https://canvas.saved" }),
+      undefined
+    );
+    await application.close();
+    expect(end).toHaveBeenCalledOnce();
+  });
+
+  it("builds a Headless generation without requiring a Canvas endpoint", async () => {
+    const resolvedConfig = loadConfig({
+      ...testEnv,
+      NODE_ENV: "production",
+      EXTERNAL_ADAPTER_MODE: "live",
+      IMAGE_GENERATION_PATH: "headless",
+      CANVAS_BASE_URL: "",
+      LLM_BASE_URL: "https://llm.saved/v1",
+      LLM_API_KEY: "llm-key",
+      LLM_MODEL: "llm-model",
+      EXCHANGE_RATE_BASE_URL: "https://rates.saved",
+      IMAGE_PLANNER_BASE_URL: "https://planner.saved/v1",
+      IMAGE_PLANNER_API_KEY: "planner-key",
+      IMAGE_PLANNER_MODEL: "planner-model",
+      IMAGE_PROVIDER_BASE_URL: "https://images.saved/v1",
+      IMAGE_PROVIDER_API_KEY: "provider-key",
+      IMAGE_PROVIDER_MODEL: "provider-model",
+      MIAOSHOU_APP_KEY: "miaoshou-key",
+      MIAOSHOU_APP_SECRET: "miaoshou-secret"
+    });
+    const end = vi.fn(async () => undefined);
+    const closeFetch = vi.fn(async () => undefined);
+
+    const application = createWorkerApplication({
+      env: {},
+      resolvedConfig,
+      processKind: "app",
+      commandContext: {
+        kind: "worker_command",
+        commandId: "command_123",
+        idempotencyKey: "stable:key:123"
+      },
+      dependencies: {
+        createPool: vi.fn(() => ({ query: vi.fn(), connect: vi.fn(), end, on: vi.fn() }) as never),
+        createLiveFetch: vi.fn(() => Object.assign(vi.fn(), { close: closeFetch }) as never),
+        createMiaoshou: vi.fn(() => ({ fetchItem: vi.fn() }) as never),
+        createMiaoshouEdit: vi.fn(() => ({ applyEdit: vi.fn(), reconcile: vi.fn() }) as never)
+      }
+    });
+
+    await application.close();
+    expect(end).toHaveBeenCalledOnce();
+    expect(closeFetch).toHaveBeenCalledOnce();
   });
 
   it("shares one env-aware fetch across every live adapter and closes it with the worker", async () => {

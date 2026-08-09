@@ -1,5 +1,9 @@
 import { describe, expect, it } from "vitest";
-import { getSecretStatus, loadConfig } from "./env.js";
+import { getSecretStatus, loadConfig, resolveRuntimeAppConfig } from "./env.js";
+import type {
+  PublicServiceConfigurationV1,
+  RuntimeSecretsV1
+} from "../../contracts/src/runtime-configuration.js";
 
 const BASE_ENV: NodeJS.ProcessEnv = {
   DATABASE_URL: "postgres://postgres:postgres@127.0.0.1:5432/tk_workbench",
@@ -172,5 +176,76 @@ describe("config env", () => {
   it("rejects unknown IMAGE_GENERATION_PATH values", () => {
     expect(() => loadConfig({ ...BASE_ENV, IMAGE_GENERATION_PATH: "unknown" }))
       .toThrow(/IMAGE_GENERATION_PATH/);
+  });
+
+  it("allows legacy provider secrets to be absent after database seeding", () => {
+    const { EXTENSION_TOKEN: _extensionToken, ...deploymentEnv } = BASE_ENV;
+    expect(loadConfig(deploymentEnv).extensionToken).toBe("");
+  });
+
+  it("resolves stored service values into AppConfig and recomputes configured flags", () => {
+    const bootstrap = loadConfig(BASE_ENV);
+    const publicConfig: PublicServiceConfigurationV1 = {
+      imageGenerationPath: "headless",
+      imagePlannerBaseUrl: "https://planner.saved/v1",
+      imagePlannerModel: "planner-saved",
+      imageProviderBaseUrl: "https://images.saved/v1",
+      imageProviderModel: "image-saved",
+      canvasBaseUrl: "",
+      canvasId: "canvas-saved",
+      canvasWorkflowName: "workflow-saved",
+      llmBaseUrl: "https://llm.saved/v1",
+      llmModel: "llm-saved",
+      exchangeRateBaseUrl: "https://rates.saved",
+      miaoshouBaseUrl: "https://miaoshou.saved",
+      miaoshouAccountId: "account-saved",
+      assetPublishS3Endpoint: "https://s3.saved",
+      assetPublishS3Region: "saved-region",
+      assetPublishS3Bucket: "saved-bucket",
+      assetPublishPublicBaseUrl: "https://cdn.saved"
+    };
+    const secrets: RuntimeSecretsV1 = {
+      imagePlannerApiKey: "planner-secret",
+      imageProviderApiKey: "provider-secret",
+      llmApiKey: "llm-secret",
+      miaoshouAppKey: "miaoshou-key",
+      miaoshouAppSecret: "miaoshou-secret",
+      miaoshouAuthorization: "authorization-secret",
+      miaoshouCookie: "cookie-secret",
+      assetPublishS3AccessKeyId: "s3-key",
+      assetPublishS3SecretAccessKey: "s3-secret",
+      extensionToken: "extension-secret"
+    };
+
+    const resolved = resolveRuntimeAppConfig(bootstrap, publicConfig, secrets);
+
+    expect(resolved).toMatchObject({
+      databaseUrl: bootstrap.databaseUrl,
+      testDatabaseUrl: bootstrap.testDatabaseUrl,
+      assetRoot: bootstrap.assetRoot,
+      localOperatorId: bootstrap.localOperatorId,
+      workerLeaseMs: bootstrap.workerLeaseMs,
+      nodeEnv: bootstrap.nodeEnv,
+      configEncryptionKey: bootstrap.configEncryptionKey,
+      imageGenerationPath: "headless",
+      imagePlannerBaseUrl: "https://planner.saved/v1",
+      imagePlannerApiKey: "planner-secret",
+      imageProviderApiKey: "provider-secret",
+      canvasBaseUrl: "",
+      canvasApiKey: "",
+      llmApiKey: "llm-secret",
+      miaoshouBaseUrl: "https://miaoshou.saved",
+      miaoshouAppKey: "miaoshou-key",
+      miaoshouAppSecret: "miaoshou-secret",
+      miaoshouAuthorization: "authorization-secret",
+      miaoshouCookie: "cookie-secret",
+      extensionToken: "extension-secret",
+      miaoshouConfigured: true,
+      canvasConfigured: false,
+      llmConfigured: true,
+      exchangeRateConfigured: true,
+      imageGenerationConfigured: true,
+      assetPublishingConfigured: true
+    });
   });
 });

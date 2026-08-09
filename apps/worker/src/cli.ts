@@ -2,9 +2,32 @@ import { pathToFileURL } from "node:url";
 import { rename, unlink, writeFile } from "node:fs/promises";
 
 import type { LiveCommandContext } from "@tk/adapters";
+import {
+  createRuntimeSecretCodec,
+  loadConfig,
+  resolveRuntimeAppConfig,
+  type RuntimeSecretCodec
+} from "../../../packages/config/src/index.js";
+import type {
+  PublicServiceConfigurationV1,
+  RuntimeSecretsV1
+} from "../../../packages/contracts/src/runtime-configuration.js";
+import {
+  RuntimeConfigurationRepository,
+  type RuntimeConfigurationCandidate
+} from "../../../packages/db/src/repositories/runtime-configuration-repository.js";
+import pg from "pg";
 
-import { createWorkerApplication, type WorkerApplication } from "./entry.js";
+import {
+  createWorkerApplication,
+  type ClosableDbPool,
+  type WorkerApplication
+} from "./entry.js";
 import { log } from "./log.js";
+import {
+  createReloadableWorkerApplication,
+  type ResolvedRuntimeCandidate
+} from "./runtime/reloadable-worker-application.js";
 
 export interface RunWorkerProcessInput {
   application?: WorkerApplication;
@@ -13,6 +36,123 @@ export interface RunWorkerProcessInput {
   pollIntervalMs?: number;
   maxJobsPerCycle?: number;
   maxCycles?: number;
+}
+
+type RuntimeConfigurationLoader = Pick<RuntimeConfigurationRepository,
+  "seedIfMissing" | "loadCandidate" | "markApplied" | "markRejected"
+>;
+
+export interface RuntimeConfiguredWorkerDependencies {
+  createPool?(connectionString: string): ClosableDbPool;
+  createRepository?(pool: ClosableDbPool): RuntimeConfigurationLoader;
+  createSecretCodec?(masterKeyBase64: string): RuntimeSecretCodec;
+  build?(candidate: ResolvedRuntimeCandidate): Promise<WorkerApplication>;
+}
+
+export interface CreateRuntimeConfiguredWorkerApplicationInput {
+  env?: NodeJS.ProcessEnv;
+  dependencies?: RuntimeConfiguredWorkerDependencies;
+}
+
+function publicConfigurationFromBootstrap(config: ReturnType<typeof loadConfig>): PublicServiceConfigurationV1 {
+  return {
+    imageGenerationPath: config.imageGenerationPath,
+    imagePlannerBaseUrl: config.imagePlannerBaseUrl,
+    imagePlannerModel: config.imagePlannerModel,
+    imageProviderBaseUrl: config.imageProviderBaseUrl,
+    imageProviderModel: config.imageProviderModel,
+    canvasBaseUrl: config.canvasBaseUrl,
+    canvasId: config.canvasId,
+    canvasWorkflowName: config.canvasWorkflowName,
+    llmBaseUrl: config.llmBaseUrl,
+    llmModel: config.llmModel,
+    exchangeRateBaseUrl: config.exchangeRateBaseUrl,
+    miaoshouBaseUrl: config.miaoshouBaseUrl,
+    miaoshouAccountId: config.miaoshouAccountId,
+    assetPublishS3Endpoint: config.assetPublishS3Endpoint,
+    assetPublishS3Region: config.assetPublishS3Region,
+    assetPublishS3Bucket: config.assetPublishS3Bucket,
+    assetPublishPublicBaseUrl: config.assetPublishPublicBaseUrl
+  };
+}
+
+function secretsFromBootstrap(config: ReturnType<typeof loadConfig>): RuntimeSecretsV1 {
+  return Object.fromEntries(Object.entries({
+    imagePlannerApiKey: config.imagePlannerApiKey,
+    imageProviderApiKey: config.imageProviderApiKey,
+    canvasApiKey: config.canvasApiKey,
+    llmApiKey: config.llmApiKey,
+    miaoshouAppKey: config.miaoshouAppKey,
+    miaoshouAppSecret: config.miaoshouAppSecret,
+    miaoshouAuthorization: config.miaoshouAuthorization,
+    miaoshouCookie: config.miaoshouCookie,
+    assetPublishS3AccessKeyId: config.assetPublishS3AccessKeyId,
+    assetPublishS3SecretAccessKey: config.assetPublishS3SecretAccessKey,
+    extensionToken: config.extensionToken
+  }).filter(([, value]) => Boolean(value))) as RuntimeSecretsV1;
+}
+
+function resolveCandidate(
+  bootstrap: ReturnType<typeof loadConfig>,
+  codec: RuntimeSecretCodec,
+  candidate: RuntimeConfigurationCandidate
+): ResolvedRuntimeCandidate {
+  let secrets: RuntimeSecretsV1;
+  try {
+    secrets = codec.open(candidate.encryptedSecrets, "workspace_settings:1");
+  } catch {
+    throw Object.assign(new Error("runtime configuration secrets could not be decrypted"), {
+      candidateVersion: candidate.version,
+      code: "runtime_configuration_secrets_invalid"
+    });
+  }
+  return {
+    version: candidate.version,
+    config: resolveRuntimeAppConfig(bootstrap, candidate.publicConfig, secrets, candidate.runtimeConfig)
+  };
+}
+
+export function createRuntimeConfiguredWorkerApplication(
+  input: CreateRuntimeConfiguredWorkerApplicationInput = {}
+): WorkerApplication {
+  const env = input.env ?? process.env;
+  const dependencies = input.dependencies ?? {};
+  const bootstrap = loadConfig(env);
+  const codec = (dependencies.createSecretCodec ?? createRuntimeSecretCodec)(bootstrap.configEncryptionKey);
+  const pool = (dependencies.createPool ?? ((connectionString) => new pg.Pool({ connectionString })))(bootstrap.databaseUrl);
+  pool.on("error", () => log.error("runtime configuration pool error"));
+  const repository = (dependencies.createRepository ?? ((value) => new RuntimeConfigurationRepository(value)))(pool);
+  const seed = {
+    publicConfig: publicConfigurationFromBootstrap(bootstrap),
+    encryptedSecrets: codec.seal(secretsFromBootstrap(bootstrap), "workspace_settings:1"),
+    runtimeConfig: {
+      externalAdapterMode: bootstrap.externalAdapterMode,
+      workerConcurrency: bootstrap.workerConcurrency,
+      maxCanvasRunsPerDay: bootstrap.maxCanvasRunsPerDay
+    }
+  };
+  let seeded = false;
+  const build = dependencies.build ?? (async (candidate: ResolvedRuntimeCandidate) => createWorkerApplication({
+    env,
+    resolvedConfig: candidate.config,
+    processKind: "app",
+    commandContext: liveCommandContext(env)
+  }));
+
+  return createReloadableWorkerApplication({
+    async loadCandidate() {
+      if (!seeded) {
+        await repository.seedIfMissing(seed);
+        seeded = true;
+      }
+      const candidate = await repository.loadCandidate();
+      return candidate ? resolveCandidate(bootstrap, codec, candidate) : undefined;
+    },
+    build,
+    markApplied: (version) => repository.markApplied(version),
+    markRejected: (version, errorCode) => repository.markRejected(version, errorCode),
+    closeLoader: () => pool.end()
+  });
 }
 
 async function writeReadyProof(env: NodeJS.ProcessEnv): Promise<void> {
@@ -63,11 +203,7 @@ function waitForNextPoll(milliseconds: number, signal?: AbortSignal): Promise<vo
 
 export async function runWorkerProcess(input: RunWorkerProcessInput = {}): Promise<void> {
   const env = input.env ?? process.env;
-  const application = input.application ?? createWorkerApplication({
-    env,
-    processKind: "app",
-    commandContext: liveCommandContext(env)
-  });
+  const application = input.application ?? createRuntimeConfiguredWorkerApplication({ env });
   const pollIntervalMs = input.pollIntervalMs ?? 1_000;
   const maxJobsPerCycle = input.maxJobsPerCycle ?? 100;
   const maxCycles = input.maxCycles ?? Number.POSITIVE_INFINITY;

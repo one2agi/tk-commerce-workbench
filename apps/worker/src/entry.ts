@@ -12,7 +12,6 @@ import {
   createEnvAwareFetch,
   fingerprintApprovalSnapshot,
   stableDigest,
-  createAdapterBundle as createDefaultAdapterBundle,
   createLiveMiaoshouSourceAdapter,
   type AdapterBundle,
   type AdapterFactoryConfig,
@@ -20,7 +19,8 @@ import {
   type MiaoshouConfig,
   type MiaoshouEditExpectationResolver
 } from "@tk/adapters";
-import { loadConfig } from "@tk/config";
+import { createAdapterBundle as createDefaultAdapterBundle } from "../../../packages/adapters/src/factory.js";
+import { loadConfig, type AppConfig } from "../../../packages/config/src/index.js";
 import { createFakePorts } from "@tk/contracts/testing";
 import type { MiaoshouEditPort, MiaoshouSourcePort } from "@tk/contracts";
 import {
@@ -64,6 +64,7 @@ export interface WorkerEntryDependencies {
 
 export interface CreateWorkerApplicationInput {
   env?: NodeJS.ProcessEnv;
+  resolvedConfig?: AppConfig;
   processKind?: WorkerProcessKind;
   commandContext?: LiveCommandContext;
   miaoshou?: MiaoshouSourcePort;
@@ -110,20 +111,21 @@ export function createCanvasOutputAssetFetch(input: {
   };
 }
 
-function requiredSecret(env: NodeJS.ProcessEnv, key: string): string {
-  const value = env[key]?.trim();
-  if (!value) throw new Error(`worker entry: ${key} is required for live Miaoshou`);
+function requiredMiaoshouValue(value: string, code: string): string {
+  if (!value) {
+    throw Object.assign(new Error("worker entry: live Miaoshou configuration is incomplete"), { code });
+  }
   return value;
 }
 
-function miaoshouConfig(env: NodeJS.ProcessEnv): MiaoshouConfig {
+function miaoshouConfig(config: AppConfig): MiaoshouConfig {
   return {
-    baseUrl: env.MIAOSHOU_BASE_URL?.trim() || MIAOSHOU_DEFAULT_BASE_URL,
-    appKey: requiredSecret(env, "MIAOSHOU_APP_KEY"),
-    appSecret: requiredSecret(env, "MIAOSHOU_APP_SECRET"),
-    ...(env.MIAOSHOU_ACCOUNT_ID?.trim() ? { accountId: env.MIAOSHOU_ACCOUNT_ID.trim() } : {}),
-    ...(env.MIAOSHOU_AUTHORIZATION?.trim() ? { authorization: env.MIAOSHOU_AUTHORIZATION.trim() } : {}),
-    ...(env.MIAOSHOU_COOKIE?.trim() ? { cookie: env.MIAOSHOU_COOKIE.trim() } : {})
+    baseUrl: config.miaoshouBaseUrl || MIAOSHOU_DEFAULT_BASE_URL,
+    appKey: requiredMiaoshouValue(config.miaoshouAppKey, "miaoshou_app_key_required"),
+    appSecret: requiredMiaoshouValue(config.miaoshouAppSecret, "miaoshou_app_secret_required"),
+    ...(config.miaoshouAccountId ? { accountId: config.miaoshouAccountId } : {}),
+    ...(config.miaoshouAuthorization ? { authorization: config.miaoshouAuthorization } : {}),
+    ...(config.miaoshouCookie ? { cookie: config.miaoshouCookie } : {})
   };
 }
 
@@ -208,7 +210,7 @@ export function createWorkerApplication(input: CreateWorkerApplicationInput = {}
 
   // Keep this order deliberate: config and adapter-mode guards execute before
   // a database socket, Miaoshou client, or asset HTTP transport is constructed.
-  const config = loadConfig(env);
+  const config = input.resolvedConfig ?? loadConfig(env);
   let liveFetch: EnvAwareFetch | undefined;
   const getLiveFetch = (): EnvAwareFetch => {
     liveFetch ??= (dependencies.createLiveFetch ?? createEnvAwareFetch)(env);
@@ -243,7 +245,7 @@ export function createWorkerApplication(input: CreateWorkerApplicationInput = {}
   let miaoshou = input.miaoshou;
   if (!miaoshou) {
     if (adapters.mode === "mock") miaoshou = createFakePorts().miaoshouSource;
-    else miaoshou = (dependencies.createMiaoshou ?? createLiveMiaoshouSourceAdapter)(miaoshouConfig(env), getLiveFetch());
+    else miaoshou = (dependencies.createMiaoshou ?? createLiveMiaoshouSourceAdapter)(miaoshouConfig(config), getLiveFetch());
   }
 
   const resolveHost = dependencies.resolveHost ?? (async (hostname: string) =>
@@ -251,7 +253,7 @@ export function createWorkerApplication(input: CreateWorkerApplicationInput = {}
   const fallbackAssetFetch = createNodePinnedAssetFetch();
   const store = new ContentAddressedStore({
     assetRoot: config.assetRoot,
-    fetch: adapters.mode === "live"
+    fetch: adapters.mode === "live" && config.imageGenerationPath === "canvas"
       ? createCanvasOutputAssetFetch({
         baseUrl: config.canvasBaseUrl,
         liveFetch: getLiveFetch(),
@@ -279,7 +281,7 @@ export function createWorkerApplication(input: CreateWorkerApplicationInput = {}
       ? createFakePorts().miaoshouEdit
       : (dependencies.createMiaoshouEdit ?? ((liveConfig, resolver, fetchImpl) => createMiaoshouEditAdapter({
         http: createMiaoshouHttp(liveConfig, fetchImpl), expectationResolver: resolver
-      })))(miaoshouConfig(env), expectationResolver, getLiveFetch());
+      })))(miaoshouConfig(config), expectationResolver, getLiveFetch());
   }
   const assertStagedUrlReachable = createSafeUrlReachability({
     resolveHost: async (hostname) => (await resolveHost(hostname)).map((address) => ({

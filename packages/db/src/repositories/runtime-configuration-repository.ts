@@ -9,6 +9,13 @@ export type RuntimeConfigurationCandidate = Readonly<{
   version: number;
   publicConfig: PublicServiceConfigurationV1;
   encryptedSecrets: EncryptedSecretEnvelopeV1;
+  runtimeConfig: RuntimeWorkerConfiguration;
+}>;
+
+export type RuntimeWorkerConfiguration = Readonly<{
+  externalAdapterMode: "mock" | "live";
+  workerConcurrency: number;
+  maxCanvasRunsPerDay: number;
 }>;
 
 export type RuntimeConfigurationApplyStatus = Readonly<{
@@ -61,22 +68,52 @@ function decodePublicConfiguration(value: unknown): PublicServiceConfigurationV1
   return config as PublicServiceConfigurationV1;
 }
 
+function decodeRuntimeConfiguration(value: {
+  externalAdapterMode: unknown;
+  workerConcurrency: unknown;
+  maxCanvasRunsPerDay: unknown;
+}): RuntimeWorkerConfiguration {
+  const workerConcurrency = Number(value.workerConcurrency);
+  const maxCanvasRunsPerDay = Number(value.maxCanvasRunsPerDay);
+  if (
+    (value.externalAdapterMode !== "mock" && value.externalAdapterMode !== "live") ||
+    !Number.isInteger(workerConcurrency) || workerConcurrency < 1 || workerConcurrency > 32 ||
+    !Number.isInteger(maxCanvasRunsPerDay) || maxCanvasRunsPerDay < 0 || maxCanvasRunsPerDay > 10_000
+  ) {
+    throw new Error("runtime worker configuration is invalid");
+  }
+  return {
+    externalAdapterMode: value.externalAdapterMode,
+    workerConcurrency,
+    maxCanvasRunsPerDay
+  };
+}
+
 export class RuntimeConfigurationRepository {
   constructor(private readonly pool: DbPool) {}
 
   async seedIfMissing(input: Readonly<{
     publicConfig: PublicServiceConfigurationV1;
     encryptedSecrets: EncryptedSecretEnvelopeV1;
+    runtimeConfig: RuntimeWorkerConfiguration;
   }>): Promise<void> {
     await this.pool.query(
-      `INSERT INTO workspace_settings (id, service_configuration, encrypted_secrets)
-       VALUES (1, $1::jsonb, $2::jsonb)
+      `INSERT INTO workspace_settings
+         (id, service_configuration, encrypted_secrets, external_adapter_mode,
+          worker_concurrency, max_canvas_runs_per_day)
+       VALUES (1, $1::jsonb, $2::jsonb, $3, $4, $5)
        ON CONFLICT (id) DO UPDATE SET
          service_configuration = EXCLUDED.service_configuration,
          encrypted_secrets = EXCLUDED.encrypted_secrets,
          updated_at = now()
        WHERE workspace_settings.encrypted_secrets IS NULL`,
-      [JSON.stringify(input.publicConfig), JSON.stringify(input.encryptedSecrets)]
+      [
+        JSON.stringify(input.publicConfig),
+        JSON.stringify(input.encryptedSecrets),
+        input.runtimeConfig.externalAdapterMode,
+        input.runtimeConfig.workerConcurrency,
+        input.runtimeConfig.maxCanvasRunsPerDay
+      ]
     );
   }
 
@@ -85,8 +122,12 @@ export class RuntimeConfigurationRepository {
       version: string | number;
       service_configuration: unknown;
       encrypted_secrets: unknown;
+      external_adapter_mode: unknown;
+      worker_concurrency: unknown;
+      max_canvas_runs_per_day: unknown;
     }>(
-      `SELECT version, service_configuration, encrypted_secrets
+      `SELECT version, service_configuration, encrypted_secrets, external_adapter_mode,
+              worker_concurrency, max_canvas_runs_per_day
        FROM workspace_settings
        WHERE id = 1 AND encrypted_secrets IS NOT NULL`
     );
@@ -95,7 +136,12 @@ export class RuntimeConfigurationRepository {
     return {
       version: Number(row.version),
       publicConfig: decodePublicConfiguration(row.service_configuration),
-      encryptedSecrets: decodeEnvelope(row.encrypted_secrets)
+      encryptedSecrets: decodeEnvelope(row.encrypted_secrets),
+      runtimeConfig: decodeRuntimeConfiguration({
+        externalAdapterMode: row.external_adapter_mode,
+        workerConcurrency: row.worker_concurrency,
+        maxCanvasRunsPerDay: row.max_canvas_runs_per_day
+      })
     };
   }
 

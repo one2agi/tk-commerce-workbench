@@ -4,9 +4,149 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Writable } from "node:stream";
 
-import { runWorkerProcess } from "./cli.js";
+import type { PublicServiceConfigurationV1 } from "../../../packages/contracts/src/runtime-configuration.js";
+
+import { createRuntimeConfiguredWorkerApplication, runWorkerProcess } from "./cli.js";
+
+const SAVED_PUBLIC_CONFIG: PublicServiceConfigurationV1 = {
+  imageGenerationPath: "headless",
+  imagePlannerBaseUrl: "https://planner.saved/v1",
+  imagePlannerModel: "planner-saved",
+  imageProviderBaseUrl: "https://images.saved/v1",
+  imageProviderModel: "image-saved",
+  canvasBaseUrl: "",
+  canvasId: "canvas-saved",
+  canvasWorkflowName: "workflow-saved",
+  llmBaseUrl: "https://llm.saved/v1",
+  llmModel: "llm-saved",
+  exchangeRateBaseUrl: "https://rates.saved",
+  miaoshouBaseUrl: "https://miaoshou.saved",
+  miaoshouAccountId: "account-saved",
+  assetPublishS3Endpoint: "",
+  assetPublishS3Region: "",
+  assetPublishS3Bucket: "",
+  assetPublishPublicBaseUrl: ""
+};
 
 describe("worker executable", () => {
+  it("seeds once, builds from the saved candidate, and owns loader cleanup", async () => {
+    const envelope = { version: 1 as const, nonce: "nonce", tag: "tag", ciphertext: "ciphertext" };
+    const seedEnvelope = { version: 1 as const, nonce: "seed-nonce", tag: "seed-tag", ciphertext: "seed-ciphertext" };
+    const seedIfMissing = vi.fn(async () => undefined);
+    const loadCandidate = vi.fn(async () => ({
+      version: 7,
+      publicConfig: SAVED_PUBLIC_CONFIG,
+      encryptedSecrets: envelope,
+      runtimeConfig: {
+        externalAdapterMode: "mock" as "mock" | "live",
+        workerConcurrency: 4,
+        maxCanvasRunsPerDay: 75
+      }
+    }));
+    const markApplied = vi.fn(async () => undefined);
+    const markRejected = vi.fn(async () => undefined);
+    const loaderEnd = vi.fn(async () => undefined);
+    const generationCloses: Array<ReturnType<typeof vi.fn>> = [];
+    const build = vi.fn(async () => {
+      const close = vi.fn(async () => undefined);
+      generationCloses.push(close);
+      return {
+        run: vi.fn(async () => ({ processed: 1 })),
+        counters: () => ({ canvas: 0, llm: 0, exchangeRate: 0, assetStaging: 0, assetPublishing: 0, imagePlanner: 0, imageGeneration: 0 }),
+        close
+      };
+    });
+    const seal = vi.fn(() => seedEnvelope);
+    const open = vi.fn(() => ({
+      imagePlannerApiKey: "planner-secret",
+      imageProviderApiKey: "provider-secret",
+      llmApiKey: "llm-secret",
+      miaoshouAppKey: "miaoshou-key",
+      miaoshouAppSecret: "miaoshou-secret",
+      extensionToken: "saved-extension-token"
+    }));
+
+    const application = createRuntimeConfiguredWorkerApplication({
+      env: {
+        NODE_ENV: "production",
+        EXTERNAL_ADAPTER_MODE: "mock",
+        DATABASE_URL: "postgres://postgres:postgres@127.0.0.1:5432/tk_workbench",
+        TEST_DATABASE_URL: "postgres://postgres:postgres@127.0.0.1:5432/tk_workbench_test",
+        LOCAL_OPERATOR_ID: "local-operator",
+        EXTENSION_TOKEN: "legacy-extension-token",
+        CONFIG_ENCRYPTION_KEY: Buffer.alloc(32, 6).toString("base64"),
+        CANVAS_BASE_URL: "https://canvas.legacy"
+      },
+      dependencies: {
+        createPool: vi.fn(() => ({ query: vi.fn(), connect: vi.fn(), on: vi.fn(), end: loaderEnd }) as never),
+        createRepository: vi.fn(() => ({ seedIfMissing, loadCandidate, markApplied, markRejected })),
+        createSecretCodec: vi.fn(() => ({ seal, open })),
+        build
+      }
+    });
+
+    await expect(application.run({ maxJobs: 1 })).resolves.toEqual({ processed: 1 });
+    await expect(application.run({ maxJobs: 1 })).resolves.toEqual({ processed: 1 });
+
+    expect(seedIfMissing).toHaveBeenCalledOnce();
+    expect(seedIfMissing).toHaveBeenCalledWith(expect.objectContaining({
+      publicConfig: expect.objectContaining({ imageGenerationPath: "canvas", canvasBaseUrl: "https://canvas.legacy" }),
+      encryptedSecrets: seedEnvelope,
+      runtimeConfig: { externalAdapterMode: "mock", workerConcurrency: 2, maxCanvasRunsPerDay: 50 }
+    }));
+    expect(seal).toHaveBeenCalledWith(expect.objectContaining({ extensionToken: "legacy-extension-token" }), "workspace_settings:1");
+    expect(open).toHaveBeenCalledWith(envelope, "workspace_settings:1");
+    expect(build).toHaveBeenCalledOnce();
+    expect(build).toHaveBeenCalledWith(expect.objectContaining({
+      version: 7,
+      config: expect.objectContaining({
+        imageGenerationPath: "headless",
+        imagePlannerApiKey: "planner-secret",
+        imageProviderApiKey: "provider-secret",
+        extensionToken: "saved-extension-token",
+        externalAdapterMode: "mock",
+        workerConcurrency: 4,
+        maxCanvasRunsPerDay: 75
+      })
+    }));
+    expect(markApplied).toHaveBeenCalledWith(7);
+
+    loadCandidate.mockResolvedValue({
+      version: 8,
+      publicConfig: SAVED_PUBLIC_CONFIG,
+      encryptedSecrets: envelope,
+      runtimeConfig: { externalAdapterMode: "live", workerConcurrency: 8, maxCanvasRunsPerDay: 120 }
+    });
+    await expect(application.run({ maxJobs: 1 })).resolves.toEqual({ processed: 1 });
+    expect(build).toHaveBeenLastCalledWith(expect.objectContaining({
+      version: 8,
+      config: expect.objectContaining({
+        externalAdapterMode: "live",
+        workerConcurrency: 8,
+        maxCanvasRunsPerDay: 120
+      })
+    }));
+
+    loadCandidate.mockResolvedValue({
+      version: 9,
+      publicConfig: SAVED_PUBLIC_CONFIG,
+      encryptedSecrets: envelope,
+      runtimeConfig: { externalAdapterMode: "live", workerConcurrency: 9, maxCanvasRunsPerDay: 121 }
+    });
+    open.mockImplementationOnce(() => {
+      throw new Error("runtime configuration secrets could not be decrypted");
+    });
+    await expect(application.run({ maxJobs: 1 })).resolves.toEqual({ processed: 1 });
+    expect(markRejected).toHaveBeenCalledWith(9, "runtime_configuration_secrets_invalid");
+
+    await application.close();
+    await application.close();
+    expect(generationCloses).toHaveLength(2);
+    expect(generationCloses[0]).toHaveBeenCalledOnce();
+    expect(generationCloses[1]).toHaveBeenCalledOnce();
+    expect(loaderEnd).toHaveBeenCalledOnce();
+  });
+
   it("starts the composed application, consumes queued work, and closes cleanly", async () => {
     const run = vi.fn(async () => ({ processed: 1 }));
     const close = vi.fn(async () => undefined);
