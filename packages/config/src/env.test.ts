@@ -6,6 +6,7 @@ const BASE_ENV: NodeJS.ProcessEnv = {
   TEST_DATABASE_URL: "postgres://postgres:postgres@127.0.0.1:5432/tk_workbench_test",
   LOCAL_OPERATOR_ID: "operator_local_01",
   EXTENSION_TOKEN: "test-token-do-not-log",
+  CONFIG_ENCRYPTION_KEY: Buffer.alloc(32, 9).toString("base64"),
   ALLOW_LAN: "false",
   EXTERNAL_ADAPTER_MODE: "mock",
   ASSET_ROOT: "./data/assets",
@@ -21,6 +22,7 @@ describe("config env", () => {
     expect(cfg.localOperatorId).toBe("operator_local_01");
     expect(cfg.allowLan).toBe(false);
     expect(cfg.externalAdapterMode).toBe("mock");
+    expect(cfg.configEncryptionKey).toBe(BASE_ENV.CONFIG_ENCRYPTION_KEY);
   });
 
   it("accepts the explicit local PGlite test database sentinel", () => {

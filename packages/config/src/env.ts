@@ -28,6 +28,7 @@ export interface AppConfig {
   readonly workerLeaseMs: number;
   readonly maxCanvasRunsPerDay: number;
   readonly nodeEnv: "test" | "development" | "production";
+  readonly configEncryptionKey: string;
   readonly miaoshouConfigured: boolean;
   readonly canvasConfigured: boolean;
   readonly llmConfigured: boolean;
@@ -165,6 +166,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
     workerLeaseMs: parseIntStrict(env, "WORKER_LEASE_MS", 60_000),
     maxCanvasRunsPerDay: parseIntStrict(env, "MAX_CANVAS_RUNS_PER_DAY", 50),
     nodeEnv,
+    configEncryptionKey: read(env, "CONFIG_ENCRYPTION_KEY") ?? "",
     miaoshouConfigured: Boolean(read(env, "MIAOSHOU_APP_KEY") && read(env, "MIAOSHOU_APP_SECRET")),
     canvasConfigured: Boolean(read(env, "CANVAS_BASE_URL")),
     llmConfigured: Boolean(read(env, "LLM_BASE_URL") && read(env, "LLM_API_KEY")),
