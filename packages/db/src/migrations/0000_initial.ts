@@ -485,6 +485,10 @@ CREATE TABLE IF NOT EXISTS image_generation_template_versions (
   UNIQUE(template_id, version)
 );
 
+CREATE UNIQUE INDEX IF NOT EXISTS image_generation_unique_live_category
+  ON image_generation_templates(category_key)
+  WHERE archived_at IS NULL;
+
 CREATE UNIQUE INDEX IF NOT EXISTS image_generation_one_active_version
   ON image_generation_template_versions(template_id)
   WHERE lifecycle_state = 'active';

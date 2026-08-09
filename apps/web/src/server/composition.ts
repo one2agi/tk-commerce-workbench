@@ -313,6 +313,48 @@ class PgImageGenerationTemplateStore implements ImageGenerationTemplateStore {
     );
   }
 
+  async activateVersion(templateId: string, versionId: string): Promise<ImageGenerationTemplateVersion> {
+    const client = await this.pool.connect();
+    try {
+      await client.query("BEGIN");
+      await client.query(
+        `UPDATE ${schema.imageGenerationTemplateVersions}
+         SET lifecycle_state = 'archived'
+         WHERE template_id = $1 AND lifecycle_state = 'active' AND id <> $2`,
+        [templateId, versionId]
+      );
+      const activated = await client.query(
+        `UPDATE ${schema.imageGenerationTemplateVersions}
+         SET lifecycle_state = 'active', activated_at = now()
+         WHERE id = $1 AND template_id = $2 AND lifecycle_state = 'draft'
+         RETURNING id, template_id, version, lifecycle_state, recipe, activated_at, created_at`,
+        [versionId, templateId]
+      );
+      const row = activated.rows[0];
+      if (!row) throw new Error("draft_version_not_found");
+      await client.query(
+        `UPDATE ${schema.imageGenerationTemplates}
+         SET active_version_id = $1, updated_at = now() WHERE id = $2`,
+        [versionId, templateId]
+      );
+      await client.query("COMMIT");
+      return {
+        id: String(row.id),
+        templateId: String(row.template_id),
+        version: Number(row.version),
+        lifecycleState: "active",
+        recipe: row.recipe,
+        activatedAt: new Date(row.activated_at),
+        createdAt: new Date(row.created_at)
+      };
+    } catch (error) {
+      await client.query("ROLLBACK").catch(() => undefined);
+      throw error;
+    } finally {
+      client.release();
+    }
+  }
+
   async updateTemplateActiveVersion(templateId: string, versionId: string): Promise<void> {
     await this.pool.query(
       `UPDATE ${schema.imageGenerationTemplates}

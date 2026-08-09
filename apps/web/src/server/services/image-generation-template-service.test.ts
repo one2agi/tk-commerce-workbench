@@ -60,6 +60,11 @@ function createInMemoryStore() {
       recipe: ValidatedRecipe;
       activatedAt?: Date;
     }): Promise<TemplateVersion> {
+      if (Array.from(versions.values()).some((item) =>
+        item.templateId === input.templateId && item.version === input.version
+      )) {
+        throw new Error("duplicate_template_version");
+      }
       const id = nextId("ver");
       const now = new Date();
       const v: TemplateVersion = {
@@ -99,6 +104,24 @@ function createInMemoryStore() {
 
     async updateVersionArchived(prev: TemplateVersion): Promise<void> {
       versions.set(prev.id, { ...prev, lifecycleState: "archived" });
+    },
+
+    async activateVersion(templateId: string, versionId: string): Promise<TemplateVersion> {
+      const now = new Date();
+      for (const [id, version] of versions) {
+        if (version.templateId === templateId && version.lifecycleState === "active" && id !== versionId) {
+          versions.set(id, { ...version, lifecycleState: "archived" });
+        }
+      }
+      const target = versions.get(versionId);
+      if (!target || target.templateId !== templateId || target.lifecycleState !== "draft") {
+        throw new Error("draft_version_not_found");
+      }
+      const active = { ...target, lifecycleState: "active" as const, activatedAt: now };
+      versions.set(versionId, active);
+      const template = templates.get(templateId)!;
+      templates.set(templateId, { ...template, activeVersionId: versionId, updatedAt: now });
+      return active;
     },
 
     async updateTemplateActiveVersion(templateId: string, versionId: string): Promise<void> {
@@ -144,6 +167,7 @@ describe("ImageGenerationTemplateService lifecycle", () => {
       createTemplate: store.createTemplate.bind(store), createVersion: store.createVersion.bind(store),
       getVersionsByTemplate: store.getVersionsByTemplate.bind(store), getVersion: store.getVersion.bind(store),
       getTemplate: store.getTemplate.bind(store), updateVersionArchived: store.updateVersionArchived.bind(store),
+      activateVersion: store.activateVersion.bind(store),
       updateTemplateActiveVersion: store.updateTemplateActiveVersion.bind(store), listTemplates: store.listTemplates.bind(store),
       resolveActiveByCategory: store.resolveActiveByCategory.bind(store), getTemplateByCategoryKey: store.getTemplateByCategoryKey.bind(store)
     });
@@ -155,6 +179,22 @@ describe("ImageGenerationTemplateService lifecycle", () => {
     expect(await store.listTemplates()).toHaveLength(1);
   });
 
+  it("maps a concurrent database category conflict to the public service error", async () => {
+    const store = createInMemoryStore();
+    const conflict = Object.assign(new Error("duplicate key"), {
+      code: "23505",
+      constraint: "image_generation_unique_live_category"
+    });
+    const service = new ImageGenerationTemplateService({
+      ...store,
+      getTemplateByCategoryKey: async () => null,
+      createTemplate: async () => { throw conflict; }
+    });
+
+    await expect(service.createDraft({ name: "Hat", categoryKey: "women.hat", recipe: minimalRecipe }))
+      .rejects.toThrow("category_key_exists");
+  });
+
   it("editing an active version appends a draft and leaves active unchanged", async () => {
     const store = createInMemoryStore();
     const service = new ImageGenerationTemplateService({
@@ -164,6 +204,7 @@ describe("ImageGenerationTemplateService lifecycle", () => {
       getVersion: store.getVersion.bind(store),
       getTemplate: store.getTemplate.bind(store),
       updateVersionArchived: store.updateVersionArchived.bind(store),
+      activateVersion: store.activateVersion.bind(store),
       updateTemplateActiveVersion: store.updateTemplateActiveVersion.bind(store),
       listTemplates: store.listTemplates.bind(store),
       resolveActiveByCategory: store.resolveActiveByCategory.bind(store),
@@ -189,12 +230,28 @@ describe("ImageGenerationTemplateService lifecycle", () => {
     expect(active!.lifecycleState).toBe("active");
   });
 
+  it("promotes the existing draft row instead of inserting the same version twice", async () => {
+    const store = createInMemoryStore();
+    const service = new ImageGenerationTemplateService(store);
+    const draft = await service.createDraft({ name: "Hat", categoryKey: "women.hat", recipe: minimalRecipe });
+
+    const active = await service.activate(draft.templateId, draft.version);
+
+    expect(active).toMatchObject({
+      templateId: draft.templateId,
+      version: 1,
+      lifecycleState: "active"
+    });
+    expect(await store.getVersionsByTemplate(draft.templateId)).toHaveLength(1);
+  });
+
   it("lists a newly created draft and appends edits without mutating it", async () => {
     const store = createInMemoryStore();
     const service = new ImageGenerationTemplateService({
       createTemplate: store.createTemplate.bind(store), createVersion: store.createVersion.bind(store),
       getVersionsByTemplate: store.getVersionsByTemplate.bind(store), getVersion: store.getVersion.bind(store),
       getTemplate: store.getTemplate.bind(store), updateVersionArchived: store.updateVersionArchived.bind(store),
+      activateVersion: store.activateVersion.bind(store),
       updateTemplateActiveVersion: store.updateTemplateActiveVersion.bind(store), listTemplates: store.listTemplates.bind(store),
       resolveActiveByCategory: store.resolveActiveByCategory.bind(store), getTemplateByCategoryKey: store.getTemplateByCategoryKey.bind(store)
     });
@@ -220,6 +277,7 @@ describe("ImageGenerationTemplateService lifecycle", () => {
       getVersion: store.getVersion.bind(store),
       getTemplate: store.getTemplate.bind(store),
       updateVersionArchived: store.updateVersionArchived.bind(store),
+      activateVersion: store.activateVersion.bind(store),
       updateTemplateActiveVersion: store.updateTemplateActiveVersion.bind(store),
       listTemplates: store.listTemplates.bind(store),
       resolveActiveByCategory: store.resolveActiveByCategory.bind(store),
@@ -248,6 +306,7 @@ describe("ImageGenerationTemplateService lifecycle", () => {
       getVersion: store.getVersion.bind(store),
       getTemplate: store.getTemplate.bind(store),
       updateVersionArchived: store.updateVersionArchived.bind(store),
+      activateVersion: store.activateVersion.bind(store),
       updateTemplateActiveVersion: store.updateTemplateActiveVersion.bind(store),
       listTemplates: store.listTemplates.bind(store),
       resolveActiveByCategory: store.resolveActiveByCategory.bind(store),
@@ -261,11 +320,12 @@ describe("ImageGenerationTemplateService lifecycle", () => {
     });
     await store.updateTemplateActiveVersion(tmpl.id, v1.id);
 
-    const copy = await service.duplicate("women.hat", 1);
+    const copy = await service.duplicate(tmpl.id, 1, "women.hat.copy");
 
     expect(copy.lifecycleState).toBe("draft");
     expect(copy.version).toBe(1);
     expect(copy.name).toBe("Women's hat 副本");
+    expect(copy.categoryKey).toBe("women.hat.copy");
     expect(copy.templateId).not.toBe(tmpl.id);
 
     const original = await store.resolveActiveByCategory("women.hat");

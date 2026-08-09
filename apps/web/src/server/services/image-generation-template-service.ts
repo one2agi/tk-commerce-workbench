@@ -119,6 +119,8 @@ export interface ImageGenerationTemplateStore {
 
   updateVersionArchived(version: ImageGenerationTemplateVersion): Promise<void>;
 
+  activateVersion(templateId: string, versionId: string): Promise<ImageGenerationTemplateVersion>;
+
   updateTemplateActiveVersion(templateId: string, versionId: string): Promise<void>;
 
   listTemplates(): Promise<ImageGenerationTemplate[]>;
@@ -127,6 +129,12 @@ export interface ImageGenerationTemplateStore {
     template: ImageGenerationTemplate;
     version: ImageGenerationTemplateVersion;
   } | null>;
+}
+
+function isCategoryUniqueViolation(error: unknown): boolean {
+  if (!error || typeof error !== "object") return false;
+  const candidate = error as { code?: unknown; constraint?: unknown };
+  return candidate.code === "23505" && candidate.constraint === "image_generation_unique_live_category";
 }
 
 // ---------------------------------------------------------------------------
@@ -149,11 +157,17 @@ export class ImageGenerationTemplateService {
     if (await this.store.getTemplateByCategoryKey(categoryKey)) {
       throw new Error("category_key_exists");
     }
-    const template = await this.store.createTemplate({
-      name: input.name,
-      categoryKey,
-      parentCategoryKey: input.parentCategoryKey
-    });
+    let template: ImageGenerationTemplate;
+    try {
+      template = await this.store.createTemplate({
+        name: input.name,
+        categoryKey,
+        parentCategoryKey: input.parentCategoryKey
+      });
+    } catch (error) {
+      if (isCategoryUniqueViolation(error)) throw new Error("category_key_exists");
+      throw error;
+    }
     const version = await this.store.createVersion({
       templateId: template.id,
       version: 1,
@@ -214,21 +228,7 @@ export class ImageGenerationTemplateService {
     const toActivate = versions.find((v) => v.version === version && v.lifecycleState === "draft");
     if (!toActivate) throw new Error("draft_version_not_found");
 
-    const currentActive = versions.find((v) => v.lifecycleState === "active");
-    if (currentActive) {
-      await this.store.updateVersionArchived(currentActive);
-    }
-
-    // Re-create the version as "active" (immutable — create new row)
-    const activatedVersion = await this.store.createVersion({
-      templateId,
-      version: toActivate.version,
-      lifecycleState: "active",
-      recipe: toActivate.recipe,
-      activatedAt: new Date()
-    });
-
-    await this.store.updateTemplateActiveVersion(templateId, activatedVersion.id);
+    const activatedVersion = await this.store.activateVersion(templateId, toActivate.id);
 
     const template = await this.store.getTemplate(templateId);
     return toView(template!, activatedVersion);
@@ -282,19 +282,27 @@ export class ImageGenerationTemplateService {
    * Duplicate a template family as a new draft family at version 1.
    * The source template is unchanged.
    */
-  async duplicate(categoryKey: string, version: number): Promise<ImageGenerationTemplateViewV1> {
-    const resolved = await this.store.resolveActiveByCategory(categoryKey);
-    if (!resolved) throw new Error("template_not_found");
+  async duplicate(templateId: string, version: number, targetCategoryKey: string): Promise<ImageGenerationTemplateViewV1> {
+    const sourceTemplate = await this.store.getTemplate(templateId);
+    if (!sourceTemplate) throw new Error("template_not_found");
+    const categoryKey = CategoryKeySchema.parse(targetCategoryKey);
+    if (await this.store.getTemplateByCategoryKey(categoryKey)) throw new Error("category_key_exists");
 
-    const sourceVersions = await this.store.getVersionsByTemplate(resolved.template.id);
+    const sourceVersions = await this.store.getVersionsByTemplate(templateId);
     const sourceVersion = sourceVersions.find((v) => v.version === version);
     if (!sourceVersion) throw new Error("version_not_found");
 
-    const newTemplate = await this.store.createTemplate({
-      name: `${resolved.template.name} 副本`,
-      categoryKey: resolved.template.categoryKey,
-      parentCategoryKey: resolved.template.parentCategoryKey ?? undefined
-    });
+    let newTemplate: ImageGenerationTemplate;
+    try {
+      newTemplate = await this.store.createTemplate({
+        name: `${sourceTemplate.name} 副本`,
+        categoryKey,
+        parentCategoryKey: sourceTemplate.parentCategoryKey ?? undefined
+      });
+    } catch (error) {
+      if (isCategoryUniqueViolation(error)) throw new Error("category_key_exists");
+      throw error;
+    }
 
     const newVersion = await this.store.createVersion({
       templateId: newTemplate.id,

@@ -35,21 +35,25 @@ export function createImagePromptPlannerLoader(input: Readonly<{
       ? input.bootstrapConfig()
       : input.bootstrapConfig;
     const applied = await input.loadAppliedCandidate();
-    let resolved = bootstrapConfig;
+    if (!applied || !input.openSecrets) throw runtimeUnavailable();
 
-    if (applied) {
-      if (!input.openSecrets) throw runtimeUnavailable();
-      try {
-        resolved = resolveRuntimeAppConfig(
-          bootstrapConfig,
-          applied.publicConfig,
-          input.openSecrets(applied),
-          applied.runtimeConfig
-        );
-      } catch {
-        throw runtimeUnavailable();
-      }
+    let resolved: AppConfig;
+    try {
+      resolved = resolveRuntimeAppConfig(
+        bootstrapConfig,
+        applied.publicConfig,
+        input.openSecrets(applied),
+        applied.runtimeConfig
+      );
+    } catch {
+      throw runtimeUnavailable();
     }
+
+    if (
+      resolved.externalAdapterMode !== "live" ||
+      resolved.imageGenerationPath !== "headless" ||
+      !resolved.imageGenerationConfigured
+    ) throw runtimeUnavailable();
 
     try {
       const createAdapters = input.createAdapters ?? (async (config, commandContext) => {

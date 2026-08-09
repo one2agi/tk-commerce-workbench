@@ -152,6 +152,7 @@ function makePromptTestHandler(deps: {
   planner: FakeImagePlanner;
   jobRepository: FakeJobRepository;
   recordAuditEvent: typeof fakeRecordAuditEvent;
+  reportAuditFailure?: () => void;
 }) {
   const references: ResolvedImageReferenceV1[] = [
     { assetId: "asset_main", localPath: "/assets/main.jpg", extension: "jpg" },
@@ -164,7 +165,8 @@ function makePromptTestHandler(deps: {
     loadProductContext: async (productId: string) => productId === "prod_missing"
       ? null
       : { productFacts: { title: "真实商品", category: "test.category" }, references },
-    recordAuditEvent: deps.recordAuditEvent
+    recordAuditEvent: deps.recordAuditEvent,
+    reportAuditFailure: deps.reportAuditFailure
   } as never);
 }
 
@@ -314,11 +316,13 @@ describe("prompt-test route", () => {
     });
     await service.activate("tmpl_1", 1);
 
+    const reportAuditFailure = vi.fn();
     const handler = makePromptTestHandler({
       service,
       planner,
       jobRepository: new FakeJobRepository(),
-      recordAuditEvent: vi.fn().mockRejectedValue(new Error("audit_unavailable"))
+      recordAuditEvent: vi.fn().mockRejectedValue(new Error("audit_unavailable")),
+      reportAuditFailure
     });
 
     const response = await handler(
@@ -329,6 +333,7 @@ describe("prompt-test route", () => {
     expect(response.status).toBe(200);
     expect(planner.calls).toHaveLength(1);
     expect((await response.json()).prompts).toHaveLength(2);
+    expect(reportAuditFailure).toHaveBeenCalledTimes(1);
   });
 
   it("returns 400 for invalid request body", async () => {

@@ -1,7 +1,9 @@
 # 生图模板生产可用性验收记录
 
-日期：2026-08-09  
-页面：`http://localhost:3000/templates`  
+日期：2026-08-09
+
+页面：`http://localhost:3000/templates`
+
 验收环境：本地 Docker 开发环境，Chrome DevTools MCP AutoConnect，桌面视口
 
 ## 结论
@@ -14,6 +16,8 @@
 - 类型检查：`pnpm typecheck` 通过（8 个 workspace 项目）。
 - 代码规范：`pnpm lint` 通过，零 warning。
 - 模板相关单测：7 个文件、26 个测试全部通过。
+- 合并审查修复：Planner/模板生命周期/duplicate 相关 4 个文件、21 个测试全部通过。
+- PostgreSQL 生命周期：草稿原位提升为 active，版本表保持 1 行；同一未归档类目唯一索引冲突符合预期。
 - 环境权限复测：内容寻址、Next loopback 和设置安全边界共 3 个文件，50 个测试通过、4 个 PostgreSQL 用例按配置跳过。
 - 数据库集成：`loadPromptTestContext` 聚焦用例通过，确认读取最新商品事实和最多 6 张就绪本地参考图。
 - Playwright 用例已新增到 `e2e/templates.spec.ts`。本机缺少 Playwright 专用 Chromium，未能执行该 runner；同一真实页面流程已由 Chrome DevTools MCP 完成。
@@ -41,3 +45,11 @@
 - 未调用图片 Provider。
 
 这些操作会改动业务状态或产生模型费用，当前验收由路由单测、数据库集成测试和只读浏览器检查覆盖。
+
+## 独立代码审查后的修复
+
+- 启用模板不再插入相同版本号的新记录；PostgreSQL 事务会归档旧 active、原位提升目标 draft，并同步 `active_version_id`。
+- 没有 Worker 已应用的 UI 配置、已应用配置仍为 mock、非 Headless 路径或模型配置不完整时，提示词测试统一返回运行配置不可用，不回退环境变量或 fake Planner。
+- 未归档模板的 `category_key` 已增加数据库唯一索引，本地主库迁移已成功应用；迁移前检查没有重复类目。
+- duplicate 路由改用路径中的源模板 ID，并要求显式提供新的 `targetCategoryKey`，避免创建两个同类目模板。
+- Planner 成功但审计写入失败时仍返回已付费结果，同时发出不含业务数据或密钥的服务端告警码 `IMAGE_PROMPT_TEST_AUDIT_FAILED`。

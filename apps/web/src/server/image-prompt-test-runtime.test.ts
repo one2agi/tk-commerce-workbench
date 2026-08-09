@@ -99,4 +99,58 @@ describe("image prompt test runtime", () => {
     await expect(loader({ kind: "worker_command", commandId: "prompt-test:tmpl_1:v1", idempotencyKey: "prompt-test:idem_2" }))
       .rejects.toThrow("runtime_configuration_unavailable");
   });
+
+  it("does not fall back to bootstrap configuration when no UI configuration is applied", async () => {
+    const createAdapters = vi.fn();
+    const loader = createImagePromptPlannerLoader({
+      bootstrapConfig: loadConfig({
+        NODE_ENV: "production",
+        DATABASE_URL: "postgres://postgres:postgres@127.0.0.1:5432/tk_workbench",
+        TEST_DATABASE_URL: "postgres://postgres:postgres@127.0.0.1:5432/tk_workbench_test",
+        LOCAL_OPERATOR_ID: "local-operator",
+        EXTERNAL_ADAPTER_MODE: "mock",
+        ASSET_ROOT: "/tmp/assets"
+      }),
+      loadAppliedCandidate: async () => undefined,
+      createAdapters
+    });
+
+    await expect(loader({ kind: "worker_command", commandId: "prompt-test:tmpl_1:v1", idempotencyKey: "prompt-test:idem_3" }))
+      .rejects.toThrow("runtime_configuration_unavailable");
+    expect(createAdapters).not.toHaveBeenCalled();
+  });
+
+  it("rejects an applied mock runtime before constructing adapters", async () => {
+    const createAdapters = vi.fn();
+    const loader = createImagePromptPlannerLoader({
+      bootstrapConfig: loadConfig({
+        NODE_ENV: "production",
+        DATABASE_URL: "postgres://postgres:postgres@127.0.0.1:5432/tk_workbench",
+        TEST_DATABASE_URL: "postgres://postgres:postgres@127.0.0.1:5432/tk_workbench_test",
+        LOCAL_OPERATOR_ID: "local-operator",
+        EXTERNAL_ADAPTER_MODE: "mock",
+        ASSET_ROOT: "/tmp/assets"
+      }),
+      loadAppliedCandidate: async () => ({
+        version: 9,
+        publicConfig: PUBLIC_CONFIG,
+        encryptedSecrets: { version: 1, nonce: "nonce", tag: "tag", ciphertext: "ciphertext" },
+        runtimeConfig: {
+          externalAdapterMode: "mock",
+          workerConcurrency: 2,
+          maxCanvasRunsPerDay: 50,
+          retryPolicy: { maxAttempts: 3, initialDelaySeconds: 30 }
+        }
+      }),
+      openSecrets: () => ({
+        imagePlannerApiKey: "planner-secret",
+        imageProviderApiKey: "provider-secret"
+      }),
+      createAdapters
+    });
+
+    await expect(loader({ kind: "worker_command", commandId: "prompt-test:tmpl_1:v1", idempotencyKey: "prompt-test:idem_4" }))
+      .rejects.toThrow("runtime_configuration_unavailable");
+    expect(createAdapters).not.toHaveBeenCalled();
+  });
 });

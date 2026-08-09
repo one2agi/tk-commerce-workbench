@@ -498,6 +498,67 @@ describe("v1 API integration", () => {
 const pgTestUrl = process.env.TEST_DATABASE_URL;
 
 describe.runIf(Boolean(pgTestUrl))("v1 API PostgreSQL integration", () => {
+  it("promotes one persisted image template draft without duplicating its version", async () => {
+    const pool = new pg.Pool({ connectionString: pgTestUrl });
+    try {
+      await pool.query("DROP SCHEMA IF EXISTS public CASCADE");
+      await pool.query("CREATE SCHEMA public");
+      await pool.query(INITIAL_SQL);
+      const services = createServerServices({
+        pool,
+        config: {
+          extensionToken: "extension-secret",
+          externalAdapterMode: "mock",
+          assetRoot: "./data/assets",
+          workerConcurrency: 2,
+          maxCanvasRunsPerDay: 50,
+          miaoshouConfigured: false,
+          canvasConfigured: false,
+          llmConfigured: false,
+          exchangeRateConfigured: false,
+          imageGenerationConfigured: false,
+          imageGenerationPath: "headless"
+        }
+      });
+      const draft = await services.imageGenerationTemplates.createDraft({
+        name: "女帽主图",
+        categoryKey: "women.hat",
+        recipe: {
+          inputCounts: { default: 2, min: 1, max: 6 },
+          outputCounts: { default: 4, min: 1, max: 8 },
+          mustPreserve: ["帽檐结构"],
+          visualDirection: "干净商品主图",
+          forbidden: ["改变颜色"],
+          roles: [{ key: "hero", instruction: "商品主体主图" }]
+        }
+      });
+
+      const active = await services.imageGenerationTemplates.activate(draft.templateId, draft.version);
+      expect(active).toMatchObject({ version: 1, lifecycleState: "active" });
+      const versions = await pool.query<{ id: string; lifecycle_state: string }>(
+        "SELECT id, lifecycle_state FROM image_generation_template_versions WHERE template_id = $1",
+        [draft.templateId]
+      );
+      expect(versions.rows).toHaveLength(1);
+      expect(versions.rows[0]?.lifecycle_state).toBe("active");
+      const template = await pool.query<{ active_version_id: string }>(
+        "SELECT active_version_id FROM image_generation_templates WHERE id = $1",
+        [draft.templateId]
+      );
+      expect(template.rows[0]?.active_version_id).toBe(versions.rows[0]?.id);
+
+      await expect(pool.query(
+        `INSERT INTO image_generation_templates (id, name, category_key)
+         VALUES ('template-conflict', '冲突模板', 'women.hat')`
+      )).rejects.toMatchObject({
+        code: "23505",
+        constraint: "image_generation_unique_live_category"
+      });
+    } finally {
+      await pool.end();
+    }
+  }, 60_000);
+
   it("rerun preserves the original Chinese revision and local asset snapshot while creating downstream work", async () => {
     const pool = new pg.Pool({ connectionString: pgTestUrl });
     try {

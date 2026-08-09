@@ -27,6 +27,7 @@ export function createPostHandler(dependencies: {
     outputCount: number;
     promptsCount: number;
   }) => void | Promise<void>;
+  reportAuditFailure?: () => void;
 }) {
   return async function post(
     request: Request,
@@ -99,6 +100,7 @@ export function createPostHandler(dependencies: {
       } catch {
         // The paid planner call already succeeded. Returning its result avoids
         // encouraging an unnecessary paid retry when audit storage is down.
+        dependencies.reportAuditFailure?.();
       }
 
       return Response.json({ prompts: plannerResult.prompts });
@@ -121,6 +123,10 @@ export async function POST(
     service: services.imageGenerationTemplates,
     loadPlanner: services.loadImagePromptPlanner,
     loadProductContext: services.loadImagePromptTestContext,
-    recordAuditEvent: services.recordImagePromptTestAudit
+    recordAuditEvent: services.recordImagePromptTestAudit,
+    reportAuditFailure: () => process.emitWarning(
+      "Image prompt-test audit write failed after successful planning",
+      { code: "IMAGE_PROMPT_TEST_AUDIT_FAILED" }
+    )
   })(request, { params });
 }
