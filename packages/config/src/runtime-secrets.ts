@@ -21,6 +21,14 @@ function additionalData(recordId: string): Buffer {
   return Buffer.from(`runtime-config:v${ENVELOPE_VERSION}:${recordId}`, "utf8");
 }
 
+function decodeStrictBase64(value: string): Buffer | undefined {
+  if (value.length === 0 || value.length % 4 !== 0 || !/^[A-Za-z0-9+/]*={0,2}$/.test(value)) {
+    return undefined;
+  }
+  const decoded = Buffer.from(value, "base64");
+  return decoded.toString("base64") === value ? decoded : undefined;
+}
+
 function decodeSecrets(value: string): RuntimeSecretsV1 {
   const parsed: unknown = JSON.parse(value);
   if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
@@ -38,7 +46,10 @@ function decodeSecrets(value: string): RuntimeSecretsV1 {
 }
 
 export function createRuntimeSecretCodec(masterKeyBase64: string): RuntimeSecretCodec {
-  const key = Buffer.from(masterKeyBase64, "base64");
+  const key = decodeStrictBase64(masterKeyBase64);
+  if (!key) {
+    throw new Error("config: CONFIG_ENCRYPTION_KEY must be strict base64");
+  }
   if (key.byteLength !== 32) {
     throw new Error("config: CONFIG_ENCRYPTION_KEY must decode to 32 bytes");
   }
@@ -63,15 +74,21 @@ export function createRuntimeSecretCodec(masterKeyBase64: string): RuntimeSecret
     open(envelope, recordId) {
       try {
         if (envelope.version !== ENVELOPE_VERSION) throw new Error("unsupported envelope");
+        const nonce = decodeStrictBase64(envelope.nonce);
+        const tag = decodeStrictBase64(envelope.tag);
+        const ciphertext = decodeStrictBase64(envelope.ciphertext);
+        if (!nonce || nonce.byteLength !== NONCE_BYTES || !tag || tag.byteLength !== 16 || !ciphertext) {
+          throw new Error("invalid envelope encoding");
+        }
         const decipher = createDecipheriv(
           ALGORITHM,
           key,
-          Buffer.from(envelope.nonce, "base64")
+          nonce
         );
         decipher.setAAD(additionalData(recordId));
-        decipher.setAuthTag(Buffer.from(envelope.tag, "base64"));
+        decipher.setAuthTag(tag);
         const plaintext = Buffer.concat([
-          decipher.update(Buffer.from(envelope.ciphertext, "base64")),
+          decipher.update(ciphertext),
           decipher.final()
         ]).toString("utf8");
         return decodeSecrets(plaintext);

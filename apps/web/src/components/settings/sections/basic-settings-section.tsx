@@ -29,7 +29,7 @@ export function BasicSettingsSection({ draft, dirtyFields, onFieldChange }: Basi
           {MODES.map((m) => <option key={m} value={m}>{m}</option>)}
         </select>
       </Field>
-      <Field id="workerConcurrency" label="Worker 并发" help="同时处理的商品任务数；重启 Worker 后生效" isDirty={dirtyFields.has("workerConcurrency")}>
+      <Field id="workerConcurrency" label="Worker 并发" help="同时处理的商品任务数；保存后自动应用" isDirty={dirtyFields.has("workerConcurrency")}>
         <input
           id="workerConcurrency"
           name="workerConcurrency"

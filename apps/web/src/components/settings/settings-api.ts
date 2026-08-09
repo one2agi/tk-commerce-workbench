@@ -26,7 +26,6 @@ export async function saveSettings(
       defaultLocale: data.get("defaultLocale"),
       defaultCurrency: data.get("defaultCurrency"),
       externalAdapterMode: data.get("externalAdapterMode"),
-      assetRoot: data.get("assetRoot"),
       workerConcurrency: Number(data.get("workerConcurrency")),
       maxCanvasRunsPerDay: Number(data.get("maxCanvasRunsPerDay")),
       pricingDefaults: {
@@ -65,14 +64,17 @@ export async function patchSettings(
   _dirtyFields: ReadonlySet<string>,
   secretDrafts: SecretDraftMap = {}
 ): Promise<PatchResult> {
-  const secretMutations = Object.fromEntries(
-    Object.entries(secretDrafts).flatMap(([field, secretDraft]) => {
-      if (!secretDraft) return [];
-      if (secretDraft.clear) return [[field, { action: "clear" } satisfies SecretMutation]];
-      const value = secretDraft.value.trim();
-      return value ? [[field, { action: "replace", value } satisfies SecretMutation]] : [];
-    })
-  ) as Partial<Record<SecretFieldName, SecretMutation>>;
+  const secretMutations: Partial<Record<SecretFieldName, SecretMutation>> = {};
+  for (const [rawField, secretDraft] of Object.entries(secretDrafts)) {
+    if (!secretDraft) continue;
+    const field = rawField as SecretFieldName;
+    if (secretDraft.clear) {
+      secretMutations[field] = { action: "clear" };
+      continue;
+    }
+    const value = secretDraft.value.trim();
+    if (value) secretMutations[field] = { action: "replace", value };
+  }
   const response = await fetcher("/api/v1/settings", {
     method: "PATCH",
     headers: { "content-type": "application/json" },
@@ -81,7 +83,6 @@ export async function patchSettings(
       defaultLocale: draft.defaultLocale,
       defaultCurrency: draft.defaultCurrency,
       externalAdapterMode: draft.externalAdapterMode,
-      assetRoot: draft.assetRoot,
       workerConcurrency: draft.workerConcurrency,
       maxCanvasRunsPerDay: draft.maxCanvasRunsPerDay,
       pricingDefaults: draft.pricingDefaults,

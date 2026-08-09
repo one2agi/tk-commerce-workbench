@@ -2,6 +2,24 @@ import { describe, expect, it, vi } from "vitest";
 
 import { IngestService } from "./ingest-service";
 
+describe("IngestService link ingest", () => {
+  it("uses the saved retry limit for newly queued jobs", async () => {
+    const jobs = { enqueue: vi.fn(async () => "job-1") };
+    const service = new IngestService(jobs, undefined, async () => ({ maxAttempts: 7 }));
+
+    await service.ingest({
+      version: 1,
+      batchId: "batch-1",
+      items: [{
+        sourceUrl: "https://detail.1688.com/offer/892408514788.html",
+        idempotencyKey: "1688:892408514788:batch-1"
+      }]
+    });
+
+    expect(jobs.enqueue).toHaveBeenCalledWith(expect.objectContaining({ maxAttempts: 7 }));
+  });
+});
+
 const capture = {
   sourceItemId: "892408514788",
   sourceUrl: "https://detail.1688.com/offer/892408514788.html",

@@ -217,6 +217,64 @@ describe("durable worker recovery", () => {
     expect(jobs.rows.every((row) => row.status === "succeeded")).toBe(true);
   });
 
+  it("applies the configured default retry limit to downstream jobs unless a handler overrides it", async () => {
+    const jobs = new DurableMemoryJobs();
+    await jobs.enqueue({ kind: "source", businessKey: "source-1", payload: {} });
+
+    await runWorkerLoop({
+      jobs,
+      handlers: {
+        source: async () => ({
+          next: [
+            { kind: "default-child", businessKey: "child-default", payload: {} },
+            { kind: "explicit-child", businessKey: "child-explicit", payload: {}, maxAttempts: 30 }
+          ]
+        })
+      },
+      clock,
+      workerId: "worker",
+      leaseMs: 30_000,
+      maxJobs: 1,
+      defaultMaxAttempts: 7
+    });
+
+    expect(jobs.rows.find((row) => row.kind === "default-child")?.maxAttempts).toBe(7);
+    expect(jobs.rows.find((row) => row.kind === "explicit-child")?.maxAttempts).toBe(30);
+  });
+
+  it("applies the configured default retry limit to compensation jobs unless explicitly overridden", async () => {
+    const jobs = new DurableMemoryJobs();
+    await jobs.enqueue({ kind: "source", businessKey: "source-1", payload: {} });
+
+    await runWorkerLoop({
+      jobs,
+      handlers: {
+        source: async (_job, execution) => {
+          await execution.scheduleCompensation({
+            kind: "default-cleanup",
+            businessKey: "cleanup-default",
+            payload: {}
+          });
+          await execution.scheduleCompensation({
+            kind: "explicit-cleanup",
+            businessKey: "cleanup-explicit",
+            payload: {},
+            maxAttempts: 30
+          });
+          return { next: [] };
+        }
+      },
+      clock,
+      workerId: "worker",
+      leaseMs: 30_000,
+      maxJobs: 1,
+      defaultMaxAttempts: 7
+    });
+
+    expect(jobs.rows.find((row) => row.kind === "default-cleanup")?.maxAttempts).toBe(7);
+    expect(jobs.rows.find((row) => row.kind === "explicit-cleanup")?.maxAttempts).toBe(30);
+  });
+
   it("fails one product without stopping a sibling job", async () => {
     const jobs = new DurableMemoryJobs();
     await jobs.enqueue({ kind: "listing_generate", businessKey: "bad", payload: { revisionId: "bad" } });
@@ -349,6 +407,7 @@ describe("durable worker recovery", () => {
       clock,
       workerId: "worker",
       leaseMs: 30_000,
+      genericRetryDelayMs: 75_000,
       maxJobs: 1
     });
     expect(jobs.rows[0]).toMatchObject({
@@ -361,7 +420,7 @@ describe("durable worker recovery", () => {
     });
   });
 
-  it("retries a classified external failure after the default 30 second delay", async () => {
+  it("retries a classified external failure after the configured generic delay", async () => {
     const jobs = new DurableMemoryJobs();
     await jobs.enqueue({ kind: "canvas_generate", businessKey: "canvas-capacity-network", payload: {} });
     await runWorkerLoop({
@@ -374,6 +433,7 @@ describe("durable worker recovery", () => {
       clock,
       workerId: "worker",
       leaseMs: 30_000,
+      genericRetryDelayMs: 75_000,
       maxJobs: 1
     });
     expect(jobs.rows[0]).toMatchObject({
@@ -383,7 +443,7 @@ describe("durable worker recovery", () => {
         code: "canvas.network",
         safeMessage: "Canvas is temporarily unavailable"
       },
-      nextAttemptAt: new Date("2026-07-16T00:00:30Z")
+      nextAttemptAt: new Date("2026-07-16T00:01:15Z")
     });
   });
 

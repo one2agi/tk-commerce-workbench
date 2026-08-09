@@ -8,9 +8,10 @@ export type ResolvedRuntimeCandidate = Readonly<{
 }>;
 
 export interface ReloadableWorkerApplicationInput {
+  loadAppliedCandidate?(): Promise<ResolvedRuntimeCandidate | undefined>;
   loadCandidate(): Promise<ResolvedRuntimeCandidate | undefined>;
   build(candidate: ResolvedRuntimeCandidate): Promise<WorkerApplication>;
-  markApplied(version: number): Promise<void>;
+  markApplied(candidate: ResolvedRuntimeCandidate): Promise<void>;
   markRejected(version: number, errorCode: string): Promise<void>;
   closeLoader?(): Promise<void>;
 }
@@ -56,18 +57,29 @@ export function createReloadableWorkerApplication(
 ): WorkerApplication {
   let current: WorkerApplication | undefined;
   let currentVersion: number | undefined;
-  let lastAttemptedVersion: number | undefined;
+  let rejectedVersion: number | undefined;
+  let restorationAttempted = false;
+  const retainedForCleanup = new Set<WorkerApplication>();
   let closePromise: Promise<void> | undefined;
 
   return {
     async run(runInput) {
+      if (!restorationAttempted) {
+        restorationAttempted = true;
+        const applied = await input.loadAppliedCandidate?.();
+        if (applied) {
+          current = await input.build(applied);
+          currentVersion = applied.version;
+        }
+      }
+
       let candidate: ResolvedRuntimeCandidate | undefined;
       try {
         candidate = await input.loadCandidate();
       } catch (error) {
         const version = failedCandidateVersion(error);
-        if (version !== undefined && version !== lastAttemptedVersion) {
-          lastAttemptedVersion = version;
+        if (version !== undefined && version !== rejectedVersion) {
+          rejectedVersion = version;
           await input.markRejected(version, safeErrorCode(error));
         }
         if (!current) throw error;
@@ -81,14 +93,27 @@ export function createReloadableWorkerApplication(
 
       if (
         currentVersion === undefined ||
-        (candidate.version > currentVersion && candidate.version !== lastAttemptedVersion)
+        (candidate.version > currentVersion && candidate.version !== rejectedVersion)
       ) {
-        lastAttemptedVersion = candidate.version;
         let next: WorkerApplication;
         try {
           next = await input.build(candidate);
         } catch (error) {
+          rejectedVersion = candidate.version;
           await input.markRejected(candidate.version, safeErrorCode(error));
+          if (!current) throw error;
+          return current.run(runInput);
+        }
+
+        try {
+          await input.markApplied(candidate);
+        } catch (error) {
+          try {
+            await next.close();
+          } catch {
+            retainedForCleanup.add(next);
+            throw error;
+          }
           if (!current) throw error;
           return current.run(runInput);
         }
@@ -96,8 +121,16 @@ export function createReloadableWorkerApplication(
         const previous = current;
         current = next;
         currentVersion = candidate.version;
-        await input.markApplied(candidate.version);
-        await previous?.close();
+        rejectedVersion = undefined;
+        if (previous) {
+          retainedForCleanup.add(previous);
+          try {
+            await previous.close();
+            retainedForCleanup.delete(previous);
+          } catch (error) {
+            throw error;
+          }
+        }
       }
 
       if (!current) {
@@ -109,8 +142,10 @@ export function createReloadableWorkerApplication(
     },
     counters: () => current?.counters() ?? EMPTY_COUNTERS,
     close() {
+      const owned = new Set(retainedForCleanup);
+      if (current) owned.add(current);
       closePromise ??= closeAll([
-        current ? () => current!.close() : undefined,
+        ...[...owned].map((application) => () => application.close()),
         input.closeLoader
       ]);
       return closePromise;

@@ -33,6 +33,7 @@ describe("worker executable", () => {
     const envelope = { version: 1 as const, nonce: "nonce", tag: "tag", ciphertext: "ciphertext" };
     const seedEnvelope = { version: 1 as const, nonce: "seed-nonce", tag: "seed-tag", ciphertext: "seed-ciphertext" };
     const seedIfMissing = vi.fn(async () => undefined);
+    const loadAppliedCandidate = vi.fn(async () => undefined);
     const loadCandidate = vi.fn(async () => ({
       version: 7,
       publicConfig: SAVED_PUBLIC_CONFIG,
@@ -40,7 +41,8 @@ describe("worker executable", () => {
       runtimeConfig: {
         externalAdapterMode: "mock" as "mock" | "live",
         workerConcurrency: 4,
-        maxCanvasRunsPerDay: 75
+        maxCanvasRunsPerDay: 75,
+        retryPolicy: { maxAttempts: 5, initialDelaySeconds: 45 }
       }
     }));
     const markApplied = vi.fn(async () => undefined);
@@ -79,7 +81,7 @@ describe("worker executable", () => {
       },
       dependencies: {
         createPool: vi.fn(() => ({ query: vi.fn(), connect: vi.fn(), on: vi.fn(), end: loaderEnd }) as never),
-        createRepository: vi.fn(() => ({ seedIfMissing, loadCandidate, markApplied, markRejected })),
+        createRepository: vi.fn(() => ({ seedIfMissing, loadAppliedCandidate, loadCandidate, markApplied, markRejected })),
         createSecretCodec: vi.fn(() => ({ seal, open })),
         build
       }
@@ -92,7 +94,10 @@ describe("worker executable", () => {
     expect(seedIfMissing).toHaveBeenCalledWith(expect.objectContaining({
       publicConfig: expect.objectContaining({ imageGenerationPath: "canvas", canvasBaseUrl: "https://canvas.legacy" }),
       encryptedSecrets: seedEnvelope,
-      runtimeConfig: { externalAdapterMode: "mock", workerConcurrency: 2, maxCanvasRunsPerDay: 50 }
+      runtimeConfig: {
+        externalAdapterMode: "mock", workerConcurrency: 2, maxCanvasRunsPerDay: 50,
+        retryPolicy: { maxAttempts: 3, initialDelaySeconds: 30 }
+      }
     }));
     expect(seal).toHaveBeenCalledWith(expect.objectContaining({ extensionToken: "legacy-extension-token" }), "workspace_settings:1");
     expect(open).toHaveBeenCalledWith(envelope, "workspace_settings:1");
@@ -106,16 +111,24 @@ describe("worker executable", () => {
         extensionToken: "saved-extension-token",
         externalAdapterMode: "mock",
         workerConcurrency: 4,
-        maxCanvasRunsPerDay: 75
+        maxCanvasRunsPerDay: 75,
+        retryPolicy: { maxAttempts: 5, initialDelaySeconds: 45 }
       })
     }));
-    expect(markApplied).toHaveBeenCalledWith(7);
+    expect(markApplied).toHaveBeenCalledWith(expect.objectContaining({
+      version: 7,
+      encryptedSecrets: envelope,
+      runtimeConfig: expect.objectContaining({ retryPolicy: { maxAttempts: 5, initialDelaySeconds: 45 } })
+    }));
 
     loadCandidate.mockResolvedValue({
       version: 8,
       publicConfig: SAVED_PUBLIC_CONFIG,
       encryptedSecrets: envelope,
-      runtimeConfig: { externalAdapterMode: "live", workerConcurrency: 8, maxCanvasRunsPerDay: 120 }
+      runtimeConfig: {
+        externalAdapterMode: "live", workerConcurrency: 8, maxCanvasRunsPerDay: 120,
+        retryPolicy: { maxAttempts: 8, initialDelaySeconds: 80 }
+      }
     });
     await expect(application.run({ maxJobs: 1 })).resolves.toEqual({ processed: 1 });
     expect(build).toHaveBeenLastCalledWith(expect.objectContaining({
@@ -123,7 +136,8 @@ describe("worker executable", () => {
       config: expect.objectContaining({
         externalAdapterMode: "live",
         workerConcurrency: 8,
-        maxCanvasRunsPerDay: 120
+        maxCanvasRunsPerDay: 120,
+        retryPolicy: { maxAttempts: 8, initialDelaySeconds: 80 }
       })
     }));
 
@@ -131,7 +145,10 @@ describe("worker executable", () => {
       version: 9,
       publicConfig: SAVED_PUBLIC_CONFIG,
       encryptedSecrets: envelope,
-      runtimeConfig: { externalAdapterMode: "live", workerConcurrency: 9, maxCanvasRunsPerDay: 121 }
+      runtimeConfig: {
+        externalAdapterMode: "live", workerConcurrency: 9, maxCanvasRunsPerDay: 121,
+        retryPolicy: { maxAttempts: 9, initialDelaySeconds: 90 }
+      }
     });
     open.mockImplementationOnce(() => {
       throw new Error("runtime configuration secrets could not be decrypted");
@@ -145,6 +162,53 @@ describe("worker executable", () => {
     expect(generationCloses[0]).toHaveBeenCalledOnce();
     expect(generationCloses[1]).toHaveBeenCalledOnce();
     expect(loaderEnd).toHaveBeenCalledOnce();
+  });
+
+  it("restores the persisted last-known-good candidate before trying a bad latest version", async () => {
+    const appliedEnvelope = { version: 1 as const, nonce: "applied-nonce", tag: "tag", ciphertext: "applied" };
+    const latestEnvelope = { version: 1 as const, nonce: "latest-nonce", tag: "tag", ciphertext: "latest" };
+    const runtimeConfig = {
+      externalAdapterMode: "mock" as const,
+      workerConcurrency: 3,
+      maxCanvasRunsPerDay: 60,
+      retryPolicy: { maxAttempts: 4, initialDelaySeconds: 75 }
+    };
+    const applied = { version: 4, publicConfig: SAVED_PUBLIC_CONFIG, encryptedSecrets: appliedEnvelope, runtimeConfig };
+    const latest = { version: 5, publicConfig: SAVED_PUBLIC_CONFIG, encryptedSecrets: latestEnvelope, runtimeConfig };
+    const run = vi.fn(async () => ({ processed: 4 }));
+    const close = vi.fn(async () => undefined);
+    const markRejected = vi.fn(async () => undefined);
+    const open = vi.fn((envelope: typeof appliedEnvelope) => {
+      if (envelope.ciphertext === "latest") throw new Error("bad latest ciphertext");
+      return { extensionToken: "applied-token" };
+    });
+    const application = createRuntimeConfiguredWorkerApplication({
+      env: {
+        NODE_ENV: "production", EXTERNAL_ADAPTER_MODE: "mock",
+        DATABASE_URL: "postgres://postgres:postgres@127.0.0.1:5432/tk_workbench",
+        TEST_DATABASE_URL: "postgres://postgres:postgres@127.0.0.1:5432/tk_workbench_test",
+        LOCAL_OPERATOR_ID: "local-operator",
+        CONFIG_ENCRYPTION_KEY: Buffer.alloc(32, 6).toString("base64")
+      },
+      dependencies: {
+        createPool: vi.fn(() => ({ query: vi.fn(), connect: vi.fn(), on: vi.fn(), end: vi.fn(async () => undefined) }) as never),
+        createRepository: vi.fn(() => ({
+          seedIfMissing: vi.fn(async () => undefined),
+          loadAppliedCandidate: vi.fn(async () => applied),
+          loadCandidate: vi.fn(async () => latest),
+          markApplied: vi.fn(async () => undefined),
+          markRejected
+        })),
+        createSecretCodec: vi.fn(() => ({ seal: vi.fn(() => appliedEnvelope), open })),
+        build: vi.fn(async () => ({ run, counters: () => ({ canvas: 0, llm: 0, exchangeRate: 0, assetStaging: 0, assetPublishing: 0, imagePlanner: 0, imageGeneration: 0 }), close }))
+      }
+    });
+
+    await expect(application.run()).resolves.toEqual({ processed: 4 });
+    expect(markRejected).toHaveBeenCalledWith(5, "runtime_configuration_secrets_invalid");
+    expect(run).toHaveBeenCalledOnce();
+    await application.close();
+    expect(close).toHaveBeenCalledOnce();
   });
 
   it("starts the composed application, consumes queued work, and closes cleanly", async () => {

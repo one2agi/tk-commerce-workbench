@@ -5,7 +5,7 @@ type SettingsPatch = Record<string, unknown> & {
   secretMutations?: Record<string, unknown>;
 };
 
-test("settings sends only explicit secret replacement and reports the Worker-applied version", async ({ page, request }) => {
+test("settings sends only the explicit secret replacement", async ({ page, request }) => {
   const initialResponse = await request.get("/api/v1/settings");
   expect(initialResponse.ok()).toBeTruthy();
   const initial = await initialResponse.json() as WorkspaceSettingsView;
@@ -29,8 +29,8 @@ test("settings sends only explicit secret replacement and reports the Worker-app
         runtimeStatus: {
           ...initial.runtimeStatus,
           savedVersion: version,
-          appliedVersion: version,
-          applyState: "applied",
+          appliedVersion: initial.runtimeStatus.appliedVersion,
+          applyState: "pending",
           applyErrorCode: null
         }
       })

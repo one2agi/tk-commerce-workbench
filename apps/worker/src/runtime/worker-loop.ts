@@ -165,12 +165,22 @@ export async function runWorkerLoop(input: {
   workerId: string;
   leaseMs: number;
   workerConcurrency?: number;
+  defaultMaxAttempts?: number;
+  genericRetryDelayMs?: number;
   maxJobs?: number;
 }): Promise<{ processed: number }> {
   await input.jobs.releaseExpired(input.clock.now());
   const maximum = input.maxJobs ?? Number.POSITIVE_INFINITY;
   const concurrency = input.workerConcurrency ?? 1;
   if (!Number.isInteger(concurrency) || concurrency < 1) throw new Error("workerConcurrency must be a positive integer");
+  const defaultMaxAttempts = input.defaultMaxAttempts ?? 3;
+  if (!Number.isInteger(defaultMaxAttempts) || defaultMaxAttempts < 1) {
+    throw new Error("defaultMaxAttempts must be a positive integer");
+  }
+  const genericRetryDelayMs = input.genericRetryDelayMs ?? 30_000;
+  if (!Number.isInteger(genericRetryDelayMs) || genericRetryDelayMs < 0) {
+    throw new Error("genericRetryDelayMs must be a non-negative integer");
+  }
   let processed = 0;
   let claimTickets = 0;
 
@@ -226,7 +236,8 @@ export async function runWorkerLoop(input: {
           if (leaseLost) throw new LeaseLostError();
           const persisted = await input.jobs.enqueueCompensation(job, input.workerId, input.clock.now(), {
             ...cleanup,
-            batchKey: cleanup.batchKey ?? job.batchKey
+            batchKey: cleanup.batchKey ?? job.batchKey,
+            maxAttempts: cleanup.maxAttempts ?? defaultMaxAttempts
           });
           if (!persisted) {
             loseLease();
@@ -250,7 +261,11 @@ export async function runWorkerLoop(input: {
       try {
         const result = await handler(job, execution);
         execution.assertLease();
-        const next = result.next.map((item) => ({ ...item, batchKey: item.batchKey ?? job.batchKey }));
+        const next = result.next.map((item) => ({
+          ...item,
+          batchKey: item.batchKey ?? job.batchKey,
+          maxAttempts: item.maxAttempts ?? defaultMaxAttempts
+        }));
         const completed = await input.jobs.completeAndEnqueue(job, input.workerId, input.clock.now(), next);
         if (!completed) loseLease();
       } catch (error) {
@@ -287,7 +302,7 @@ export async function runWorkerLoop(input: {
           }
         } else if (isExternalFailure(error)) {
           if (error.kind === "retryable") {
-            await input.jobs.retry(job, input.workerId, input.clock.now(), 30_000, error);
+            await input.jobs.retry(job, input.workerId, input.clock.now(), genericRetryDelayMs, error);
           } else if (error.kind === "needs_input" || error.kind === "reconcile_required") {
             await input.jobs.markNeedsInput(job, input.workerId, input.clock.now(), error);
           } else {

@@ -203,29 +203,28 @@ async function closeWorkerResources(
   if (errors.length > 0) throw new AggregateError(errors, "worker resource cleanup failed");
 }
 
-export function createWorkerApplication(input: CreateWorkerApplicationInput = {}): WorkerApplication {
+export async function createWorkerApplication(input: CreateWorkerApplicationInput = {}): Promise<WorkerApplication> {
   const env = input.env ?? process.env;
   const processKind = input.processKind ?? "app";
   const dependencies = input.dependencies ?? {};
-
-  // Keep this order deliberate: config and adapter-mode guards execute before
-  // a database socket, Miaoshou client, or asset HTTP transport is constructed.
-  const config = input.resolvedConfig ?? loadConfig(env);
   let liveFetch: EnvAwareFetch | undefined;
   const getLiveFetch = (): EnvAwareFetch => {
     liveFetch ??= (dependencies.createLiveFetch ?? createEnvAwareFetch)(env);
     return liveFetch;
   };
-  const adapters = dependencies.createAdapterBundle
-    ? dependencies.createAdapterBundle({ ...config, processKind }, input.commandContext)
-    : createDefaultAdapterBundle(
-      { ...config, processKind },
-      input.commandContext,
-      { createLiveFetch: getLiveFetch }
-    );
-
   let acquiredPool: ClosableDbPool | undefined;
   try {
+    // Keep this order deliberate: config and adapter-mode guards execute before
+    // a database socket, Miaoshou client, or asset HTTP transport is constructed.
+    const config = input.resolvedConfig ?? loadConfig(env);
+    const adapters = dependencies.createAdapterBundle
+      ? dependencies.createAdapterBundle({ ...config, processKind }, input.commandContext)
+      : createDefaultAdapterBundle(
+        { ...config, processKind },
+        input.commandContext,
+        { createLiveFetch: getLiveFetch }
+      );
+
     const connectionString = processKind === "test" || processKind === "integration" || processKind === "e2e"
       ? config.testDatabaseUrl
       : config.databaseUrl;
@@ -358,13 +357,15 @@ export function createWorkerApplication(input: CreateWorkerApplicationInput = {}
         workerId,
         leaseMs: config.workerLeaseMs,
         workerConcurrency: config.workerConcurrency,
+        defaultMaxAttempts: config.retryPolicy.maxAttempts,
+        genericRetryDelayMs: config.retryPolicy.initialDelaySeconds * 1_000,
         ...(maxJobs === undefined ? {} : { maxJobs })
       }),
       counters: () => adapters.counters(),
       close: () => closeWorkerResources(pool, liveFetch)
     };
   } catch (error) {
-    void closeWorkerResources(acquiredPool, liveFetch).catch(() => undefined);
+    await closeWorkerResources(acquiredPool, liveFetch).catch(() => undefined);
     throw error;
   }
 }

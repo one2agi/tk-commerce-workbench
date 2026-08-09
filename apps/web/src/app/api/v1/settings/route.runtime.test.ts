@@ -24,4 +24,18 @@ describe("runtime settings route", () => {
       field: "imageProviderApiKey"
     });
   });
+
+  it("rejects assetRoot as a deployment-owned field before calling the service", async () => {
+    const update = vi.fn();
+    const handler = createPatchHandler({ service: { update } as never });
+    const response = await handler(new Request("http://127.0.0.1/api/v1/settings", {
+      method: "PATCH",
+      headers: { "content-type": "application/json", origin: "http://127.0.0.1" },
+      body: JSON.stringify({ expectedVersion: 1, assetRoot: "/from/browser" })
+    }));
+
+    expect(response.status).toBe(400);
+    await expect(response.json()).resolves.toEqual({ error: "invalid_request" });
+    expect(update).not.toHaveBeenCalled();
+  });
 });

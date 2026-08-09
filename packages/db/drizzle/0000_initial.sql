@@ -454,6 +454,7 @@ CREATE TABLE IF NOT EXISTS runtime_configuration_status (
   error_code        TEXT,
   updated_at        TIMESTAMPTZ NOT NULL DEFAULT now()
 );
+ALTER TABLE runtime_configuration_status ADD COLUMN IF NOT EXISTS applied_candidate JSONB;
 
 -- Image generation templates (with versioned drafts) --------------------------------
 CREATE TABLE IF NOT EXISTS image_generation_templates (

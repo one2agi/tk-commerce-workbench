@@ -31,8 +31,19 @@ describe("runtime secret codec", () => {
   });
 
   it("rejects a malformed master key", () => {
-    expect(() => createRuntimeSecretCodec("short")).toThrow(
+    expect(() => createRuntimeSecretCodec(Buffer.alloc(16, 1).toString("base64"))).toThrow(
       "config: CONFIG_ENCRYPTION_KEY must decode to 32 bytes"
+    );
+  });
+
+  it.each([
+    `${MASTER_KEY.slice(0, 8)}!${MASTER_KEY.slice(8)}`,
+    MASTER_KEY.replace(/=$/, ""),
+    ` ${MASTER_KEY}`,
+    `_${MASTER_KEY.slice(1)}`
+  ])("rejects a non-canonical base64 master key", (value) => {
+    expect(() => createRuntimeSecretCodec(value)).toThrow(
+      "config: CONFIG_ENCRYPTION_KEY must be strict base64"
     );
   });
 
@@ -45,6 +56,18 @@ describe("runtime secret codec", () => {
       "runtime configuration secrets could not be decrypted"
     );
     expect(() => codec.open(tampered, "workspace_settings:1")).toThrow(
+      "runtime configuration secrets could not be decrypted"
+    );
+  });
+
+  it("rejects malformed base64 envelope fields with the same safe error", () => {
+    const codec = createRuntimeSecretCodec(MASTER_KEY);
+    const envelope = codec.seal({ imageProviderApiKey: "provider-secret" }, "workspace_settings:1");
+
+    expect(() => codec.open({ ...envelope, nonce: `${envelope.nonce}!` }, "workspace_settings:1")).toThrow(
+      "runtime configuration secrets could not be decrypted"
+    );
+    expect(() => codec.open({ ...envelope, tag: envelope.tag.replace(/=$/, "") }, "workspace_settings:1")).toThrow(
       "runtime configuration secrets could not be decrypted"
     );
   });

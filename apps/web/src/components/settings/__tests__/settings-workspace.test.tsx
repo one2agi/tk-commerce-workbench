@@ -233,4 +233,134 @@ describe("SettingsWorkspace", () => {
     await user.selectOptions(localeSelect, "th-TH");
     expect(addEventListenerSpy).toHaveBeenCalledWith("beforeunload", expect.any(Function));
   });
+
+  it("polls the saved version until Worker applies it without overwriting a newer local draft", async () => {
+    vi.useFakeTimers();
+    try {
+      let resolveGet: ((response: Response) => void) | undefined;
+      const getResponse = new Promise<Response>((resolve) => { resolveGet = resolve; });
+      const saved = {
+        ...baseline(),
+        version: 13,
+        defaultLocale: "th-TH",
+        runtimeStatus: {
+          ...baseline().runtimeStatus,
+          savedVersion: 13,
+          appliedVersion: 12,
+          applyState: "pending" as const,
+          applyErrorCode: null
+        }
+      };
+      const fetcher = vi.fn((_url: string | URL | Request, init?: RequestInit) => {
+        if (init?.method === "PATCH") return Promise.resolve(Response.json(saved));
+        return getResponse;
+      }) as unknown as typeof fetch;
+      const { container } = render(<SettingsWorkspace initial={baseline()} fetcher={fetcher} />);
+      const ctx = within(container);
+
+      fireEvent.change(ctx.getAllByRole("combobox")[0], { target: { value: "th-TH" } });
+      fireEvent.click(ctx.getByRole("button", { name: "保存更改" }));
+      await act(async () => { await Promise.resolve(); });
+      expect(fetcher).toHaveBeenCalledTimes(1);
+
+      act(() => { vi.advanceTimersToNextTimer(); });
+      await act(async () => { await Promise.resolve(); });
+      expect(fetcher).toHaveBeenCalledTimes(2);
+      expect(fetcher).toHaveBeenLastCalledWith("/api/v1/settings", expect.objectContaining({ method: "GET" }));
+
+      fireEvent.change(ctx.getAllByRole("combobox")[1], { target: { value: "THB" } });
+      resolveGet?.(Response.json({
+        ...saved,
+        defaultCurrency: "CNY",
+        runtimeStatus: {
+          ...saved.runtimeStatus,
+          appliedVersion: 13,
+          applyState: "applied" as const
+        }
+      }));
+      await act(async () => { await Promise.resolve(); });
+
+      expect(ctx.getAllByRole("combobox")[1]).toHaveValue("THB");
+      expect(ctx.getByText("Worker 已应用当前配置")).toBeInTheDocument();
+      act(() => { vi.runOnlyPendingTimers(); });
+      expect(fetcher).toHaveBeenCalledTimes(2);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("keeps polling when an error belongs to an older candidate version", async () => {
+    vi.useFakeTimers();
+    try {
+      const saved = {
+        ...baseline(),
+        version: 13,
+        defaultLocale: "th-TH",
+        runtimeStatus: {
+          ...baseline().runtimeStatus,
+          savedVersion: 13,
+          appliedVersion: 11,
+          candidateVersion: 12,
+          applyState: "error" as const,
+          applyErrorCode: "runtime_configuration_invalid"
+        }
+      };
+      const fetcher = vi.fn((_url: string | URL | Request, init?: RequestInit) => {
+        if (init?.method === "PATCH") return Promise.resolve(Response.json(saved));
+        return new Promise<Response>(() => {});
+      }) as unknown as typeof fetch;
+      const { container, unmount } = render(<SettingsWorkspace initial={baseline()} fetcher={fetcher} />);
+      const ctx = within(container);
+
+      fireEvent.change(ctx.getAllByRole("combobox")[0], { target: { value: "th-TH" } });
+      fireEvent.click(ctx.getByRole("button", { name: "保存更改" }));
+      await act(async () => { await Promise.resolve(); });
+      act(() => { vi.advanceTimersToNextTimer(); });
+      await act(async () => { await Promise.resolve(); });
+
+      expect(fetcher).toHaveBeenCalledTimes(2);
+      expect(fetcher).toHaveBeenLastCalledWith("/api/v1/settings", expect.objectContaining({ method: "GET" }));
+      unmount();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("aborts an in-flight runtime-status poll when unmounted", async () => {
+    vi.useFakeTimers();
+    try {
+      let getSignal: AbortSignal | null = null;
+      const saved = {
+        ...baseline(),
+        version: 13,
+        defaultLocale: "th-TH",
+        runtimeStatus: {
+          ...baseline().runtimeStatus,
+          savedVersion: 13,
+          appliedVersion: 12,
+          applyState: "pending" as const,
+          applyErrorCode: null
+        }
+      };
+      const fetcher = vi.fn((_url: string | URL | Request, init?: RequestInit) => {
+        if (init?.method === "PATCH") return Promise.resolve(Response.json(saved));
+        getSignal = init?.signal ?? null;
+        return new Promise<Response>(() => {});
+      }) as unknown as typeof fetch;
+      const { container, unmount } = render(<SettingsWorkspace initial={baseline()} fetcher={fetcher} />);
+      const ctx = within(container);
+
+      fireEvent.change(ctx.getAllByRole("combobox")[0], { target: { value: "th-TH" } });
+      fireEvent.click(ctx.getByRole("button", { name: "保存更改" }));
+      await act(async () => { await Promise.resolve(); });
+      act(() => { vi.advanceTimersToNextTimer(); });
+      await act(async () => { await Promise.resolve(); });
+      expect(getSignal).not.toBeNull();
+
+      unmount();
+      expect((getSignal as AbortSignal | null)?.aborted).toBe(true);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
 });

@@ -11,6 +11,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 import type { WorkspaceSettingsView } from "../../../server/services/settings-service";
 import { BasicSettingsSection } from "../sections/basic-settings-section";
+import { AdvancedSettingsSection } from "../sections/advanced-settings-section";
 import { ExternalServicesSection } from "../sections/external-services-section";
 import { PricingFormulaSection } from "../sections/pricing-formula-section";
 import { ProviderOptionsSection } from "../sections/provider-options-section";
@@ -85,6 +86,28 @@ describe("BasicSettingsSection", () => {
   });
 });
 
+describe("AdvancedSettingsSection", () => {
+  it("shows the bootstrap asset directory read-only and removes legacy Listing controls", () => {
+    const draft = viewFixture({
+      assetRoot: "/stale/database/path",
+      runtimeStatus: {
+        ...viewFixture().runtimeStatus,
+        active: { ...viewFixture().runtimeStatus.active, assetRoot: "/bootstrap/assets" }
+      }
+    });
+    const { container } = render(
+      <AdvancedSettingsSection draft={draft} />
+    );
+    const ctx = within(container);
+
+    expect(ctx.getByLabelText("素材目录")).toHaveValue("/bootstrap/assets");
+    expect(ctx.getByLabelText("素材目录")).toHaveAttribute("readonly");
+    expect(ctx.queryByLabelText("Listing Provider")).not.toBeInTheDocument();
+    expect(ctx.queryByLabelText("Listing 模型")).not.toBeInTheDocument();
+    expect(ctx.getAllByText(/部署环境/)).not.toHaveLength(0);
+  });
+});
+
 describe("PricingFormulaSection", () => {
   it("renders all seven pricing fields", () => {
     const { container } = render(
@@ -142,8 +165,7 @@ describe("ProviderOptionsSection", () => {
 });
 
 describe("ExternalServicesSection", () => {
-  it("renders editable service endpoints and secrets without echoing a saved secret", async () => {
-    const user = userEvent.setup();
+  it("renders editable service endpoints and secrets without echoing a saved secret", () => {
     const onSecretChange = vi.fn();
     const draft = viewFixture({
       serviceConfiguration: {
@@ -175,9 +197,72 @@ describe("ExternalServicesSection", () => {
     const plannerKey = ctx.getByLabelText("Planner API Key");
     expect(plannerKey).toHaveValue("");
     expect(plannerKey).toHaveAttribute("placeholder", "已配置，输入新值可替换");
-    await user.type(plannerKey, "next-key");
+    fireEvent.change(plannerKey, { target: { value: "next-key" } });
     expect(onSecretChange).toHaveBeenLastCalledWith("imagePlannerApiKey", { value: "next-key", clear: false });
     expect(container.textContent).not.toContain("old-secret");
+  });
+
+  it("uses only serviceConfiguration.llmModel when the LLM model changes", () => {
+    const onFieldChange = vi.fn();
+    const draft = viewFixture({
+      serviceConfiguration: {
+        imageGenerationPath: "canvas", imagePlannerBaseUrl: "", imagePlannerModel: "",
+        imageProviderBaseUrl: "", imageProviderModel: "", canvasBaseUrl: "http://canvas.test",
+        canvasId: "canvas-1", canvasWorkflowName: "TK工作流", llmBaseUrl: "https://llm.test",
+        llmModel: "runtime-model", exchangeRateBaseUrl: "https://rates.test", miaoshouBaseUrl: "",
+        miaoshouAccountId: "", assetPublishS3Endpoint: "", assetPublishS3Region: "",
+        assetPublishS3Bucket: "", assetPublishPublicBaseUrl: ""
+      }
+    });
+    const { container } = render(<ExternalServicesSection
+      draft={draft}
+      dirtyFields={new Set()}
+      secretDrafts={{}}
+      onFieldChange={onFieldChange}
+      onSecretChange={() => {}}
+    />);
+
+    fireEvent.change(within(container).getByLabelText("LLM 模型"), { target: { value: "runtime-model-v2" } });
+    expect(onFieldChange).toHaveBeenCalledTimes(1);
+    expect(onFieldChange).toHaveBeenCalledWith("serviceConfiguration.llmModel", "runtime-model-v2");
+  });
+
+  it("requires an inline second confirmation before marking a configured secret for removal", async () => {
+    const user = userEvent.setup();
+    const onSecretChange = vi.fn();
+    const draft = viewFixture({
+      serviceConfiguration: {
+        imageGenerationPath: "headless", imagePlannerBaseUrl: "https://planner.test/v1",
+        imagePlannerModel: "planner-v1", imageProviderBaseUrl: "https://images.test/v1",
+        imageProviderModel: "image-v1", canvasBaseUrl: "", canvasId: "canvas-1",
+        canvasWorkflowName: "TK工作流", llmBaseUrl: "", llmModel: "",
+        exchangeRateBaseUrl: "", miaoshouBaseUrl: "", miaoshouAccountId: "",
+        assetPublishS3Endpoint: "", assetPublishS3Region: "", assetPublishS3Bucket: "",
+        assetPublishPublicBaseUrl: ""
+      },
+      serviceSecretStatus: {
+        imagePlannerApiKey: true, imageProviderApiKey: false, canvasApiKey: false,
+        llmApiKey: false, miaoshouAppKey: false, miaoshouAppSecret: false,
+        miaoshouAuthorization: false, miaoshouCookie: false,
+        assetPublishS3AccessKeyId: false, assetPublishS3SecretAccessKey: false,
+        extensionToken: false
+      }
+    });
+    const { container } = render(<ExternalServicesSection
+      draft={draft}
+      dirtyFields={new Set()}
+      secretDrafts={{}}
+      onFieldChange={() => {}}
+      onSecretChange={onSecretChange}
+    />);
+    const ctx = within(container);
+
+    await user.click(ctx.getByRole("button", { name: "移除" }));
+    expect(ctx.getByRole("button", { name: "确认移除" })).toBeInTheDocument();
+    expect(onSecretChange).not.toHaveBeenCalled();
+
+    await user.click(ctx.getByRole("button", { name: "确认移除" }));
+    expect(onSecretChange).toHaveBeenCalledWith("imagePlannerApiKey", { value: "", clear: true });
   });
 });
 

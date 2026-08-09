@@ -25,6 +25,8 @@ export interface SettingsWorkspaceProps {
 type FieldErrors = Readonly<Record<string, string>>;
 interface ToastState { message: string; key: number; }
 
+const RUNTIME_STATUS_POLL_MS = 1_500;
+
 export function validateSettingsDraft(draft: WorkspaceSettingsView): FieldErrors {
   const errors: Record<string, string> = {};
   const config = draft.serviceConfiguration;
@@ -58,6 +60,7 @@ export function SettingsWorkspace({ initial, fetcher }: SettingsWorkspaceProps):
   const [secretDrafts, setSecretDrafts] = useState<SecretDraftMap>({});
   const [errors, setErrors] = useState<FieldErrors>({});
   const [toast, setToast] = useState<ToastState | null>(null);
+  const [runtimePollingVersion, setRuntimePollingVersion] = useState<number | null>(null);
   const saveHook = useSaveSettings({ fetcher });
 
   const dirtyFields = useMemo(() => {
@@ -105,8 +108,55 @@ export function SettingsWorkspace({ initial, fetcher }: SettingsWorkspaceProps):
     setBaseline(normalizedSaved);
     setDraft(normalizedSaved);
     setSecretDrafts({});
+    setRuntimePollingVersion(isRuntimeStatusTerminal(normalizedSaved.runtimeStatus, saved.version) ? null : saved.version);
     setToast({ message: `更改已保存 · 版本 v${saved.version}`, key: Date.now() });
   }, [baseline, draft, dirtyCount, dirtyFields, saveHook, secretDrafts]);
+
+  useEffect(() => {
+    if (runtimePollingVersion === null) return;
+    const pollingFetcher = fetcher ?? fetch;
+    let cancelled = false;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    let controller: AbortController | undefined;
+
+    const schedule = () => {
+      if (!cancelled) timer = setTimeout(() => void poll(), RUNTIME_STATUS_POLL_MS);
+    };
+    const poll = async () => {
+      controller = new AbortController();
+      try {
+        const response = await pollingFetcher("/api/v1/settings", {
+          method: "GET",
+          headers: { accept: "application/json" },
+          cache: "no-store",
+          signal: controller.signal
+        });
+        if (!response.ok) {
+          schedule();
+          return;
+        }
+        const refreshed = normalizeSettingsView(await response.json() as WorkspaceSettingsView);
+        if (cancelled) return;
+        const runtimeStatus = refreshed.runtimeStatus;
+        setBaseline((previous) => ({ ...previous, runtimeStatus }));
+        setDraft((previous) => ({ ...previous, runtimeStatus }));
+        if (isRuntimeStatusTerminal(runtimeStatus, runtimePollingVersion)) {
+          setRuntimePollingVersion(null);
+          return;
+        }
+        schedule();
+      } catch (error) {
+        if (!cancelled && !(error instanceof DOMException && error.name === "AbortError")) schedule();
+      }
+    };
+
+    schedule();
+    return () => {
+      cancelled = true;
+      if (timer) clearTimeout(timer);
+      controller?.abort();
+    };
+  }, [fetcher, runtimePollingVersion]);
 
   useEffect(() => {
     if (!toast) return;
@@ -186,13 +236,28 @@ export function SettingsWorkspace({ initial, fetcher }: SettingsWorkspaceProps):
           <SystemDiagnosticsSection draft={draft} />
         </SettingsCard></div>
 
-        <div id="advanced"><AdvancedSettingsSection draft={draft} dirtyFields={dirtyFields} onFieldChange={handleFieldChange} /></div>
+        <div id="advanced"><AdvancedSettingsSection draft={draft} /></div>
       </main>
 
       <SaveBar state={saveHook.state} error={saveHook.error} dirtyCount={dirtyCount} version={baseline.version} onDiscard={handleDiscard} onSave={() => void handleSave()} />
       {toast ? <output className="tk-toast" role="status" key={toast.key}><span aria-hidden>✓</span>{toast.message}</output> : null}
     </div>
   );
+}
+
+function isRuntimeStatusTerminal(
+  status: WorkspaceSettingsView["runtimeStatus"],
+  savedVersion: number
+): boolean {
+  if (status.applyState === "error") {
+    return status.candidateVersion !== null &&
+      status.candidateVersion !== undefined &&
+      status.candidateVersion >= savedVersion;
+  }
+  return status.applyState === "applied" &&
+    status.appliedVersion !== null &&
+    status.appliedVersion !== undefined &&
+    status.appliedVersion >= savedVersion;
 }
 
 function normalizeSettingsView(view: WorkspaceSettingsView): WorkspaceSettingsView {

@@ -154,7 +154,7 @@ test("sample 1688 URL converges duplicate collection and replays the same ingest
     expect(queuedJobIds.get("collect-first")).toHaveLength(2);
     expect(new Set(queuedJobIds.get("collect-first"))).toHaveProperty("size", 1);
 
-    const application = createWorkerApplication({
+    const application = await createWorkerApplication({
       processKind: "e2e",
       env: {
         ...E2E_ENV,

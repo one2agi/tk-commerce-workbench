@@ -1,3 +1,5 @@
+import { useState } from "react";
+
 import type { SecretFieldName } from "../../../../../packages/contracts/src/runtime-configuration.js";
 
 export type SecretDraft = Readonly<{ value: string; clear: boolean }>;
@@ -20,6 +22,7 @@ export function SecretField({
 }): React.JSX.Element {
   const id = `secret-${field}`;
   const effectiveConfigured = configured && !draft.clear;
+  const [confirmingClear, setConfirmingClear] = useState(false);
   return (
     <div className={`tk-secret-field${draft.value || draft.clear ? " is-dirty" : ""}`}>
       <div className="tk-secret-field__head">
@@ -35,14 +38,29 @@ export function SecretField({
           autoComplete="new-password"
           value={draft.value}
           placeholder={effectiveConfigured ? "已配置，输入新值可替换" : "输入后将加密保存"}
-          onChange={(event) => onChange(field, { value: event.target.value, clear: false })}
+          onChange={(event) => {
+            setConfirmingClear(false);
+            onChange(field, { value: event.target.value, clear: false });
+          }}
         />
         {configured ? (
           <button
             type="button"
-            onClick={() => onChange(field, draft.clear ? { value: "", clear: false } : { value: "", clear: true })}
+            onClick={() => {
+              if (draft.clear) {
+                setConfirmingClear(false);
+                onChange(field, { value: "", clear: false });
+                return;
+              }
+              if (!confirmingClear) {
+                setConfirmingClear(true);
+                return;
+              }
+              setConfirmingClear(false);
+              onChange(field, { value: "", clear: true });
+            }}
           >
-            {draft.clear ? "撤销移除" : "移除"}
+            {draft.clear ? "撤销移除" : confirmingClear ? "确认移除" : "移除"}
           </button>
         ) : null}
       </div>

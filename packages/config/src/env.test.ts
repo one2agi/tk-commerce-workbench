@@ -217,7 +217,12 @@ describe("config env", () => {
       extensionToken: "extension-secret"
     };
 
-    const resolved = resolveRuntimeAppConfig(bootstrap, publicConfig, secrets);
+    const resolved = resolveRuntimeAppConfig(bootstrap, publicConfig, secrets, {
+      externalAdapterMode: "mock",
+      workerConcurrency: 7,
+      maxCanvasRunsPerDay: 80,
+      retryPolicy: { maxAttempts: 9, initialDelaySeconds: 75 }
+    });
 
     expect(resolved).toMatchObject({
       databaseUrl: bootstrap.databaseUrl,
@@ -225,6 +230,9 @@ describe("config env", () => {
       assetRoot: bootstrap.assetRoot,
       localOperatorId: bootstrap.localOperatorId,
       workerLeaseMs: bootstrap.workerLeaseMs,
+      workerConcurrency: 7,
+      maxCanvasRunsPerDay: 80,
+      retryPolicy: { maxAttempts: 9, initialDelaySeconds: 75 },
       nodeEnv: bootstrap.nodeEnv,
       configEncryptionKey: bootstrap.configEncryptionKey,
       imageGenerationPath: "headless",

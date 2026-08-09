@@ -21,10 +21,16 @@ export interface SecretStatus {
 
 export type ImageGenerationPath = "headless" | "canvas";
 
+export type WorkerRetryPolicy = Readonly<{
+  maxAttempts: number;
+  initialDelaySeconds: number;
+}>;
+
 export type StoredWorkerRuntimeConfiguration = Readonly<{
   externalAdapterMode: ExternalAdapterMode;
   workerConcurrency: number;
   maxCanvasRunsPerDay: number;
+  retryPolicy: WorkerRetryPolicy;
 }>;
 
 export interface AppConfig {
@@ -38,6 +44,7 @@ export interface AppConfig {
   readonly workerConcurrency: number;
   readonly workerLeaseMs: number;
   readonly maxCanvasRunsPerDay: number;
+  readonly retryPolicy: WorkerRetryPolicy;
   readonly nodeEnv: "test" | "development" | "production";
   readonly configEncryptionKey: string;
   readonly miaoshouConfigured: boolean;
@@ -182,6 +189,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
     workerConcurrency: parseIntStrict(env, "WORKER_CONCURRENCY", 2),
     workerLeaseMs: parseIntStrict(env, "WORKER_LEASE_MS", 60_000),
     maxCanvasRunsPerDay: parseIntStrict(env, "MAX_CANVAS_RUNS_PER_DAY", 50),
+    retryPolicy: Object.freeze({ maxAttempts: 3, initialDelaySeconds: 30 }),
     nodeEnv,
     configEncryptionKey: read(env, "CONFIG_ENCRYPTION_KEY") ?? "",
     miaoshouConfigured: Boolean(read(env, "MIAOSHOU_APP_KEY") && read(env, "MIAOSHOU_APP_SECRET")),
@@ -247,6 +255,7 @@ export function resolveRuntimeAppConfig(
     externalAdapterMode: runtimeConfig?.externalAdapterMode ?? bootstrap.externalAdapterMode,
     workerConcurrency: runtimeConfig?.workerConcurrency ?? bootstrap.workerConcurrency,
     maxCanvasRunsPerDay: runtimeConfig?.maxCanvasRunsPerDay ?? bootstrap.maxCanvasRunsPerDay,
+    retryPolicy: runtimeConfig?.retryPolicy ?? bootstrap.retryPolicy,
     extensionToken: secrets.extensionToken?.trim() ?? "",
     imageGenerationPath: publicConfig.imageGenerationPath,
     imagePlannerBaseUrl: publicConfig.imagePlannerBaseUrl.trim(),

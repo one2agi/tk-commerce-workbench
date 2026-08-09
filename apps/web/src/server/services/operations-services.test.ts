@@ -125,8 +125,8 @@ describe("workspace settings", () => {
   it("rejects a stale settings update instead of overwriting a newer save", async () => {
     const service = new SettingsService(new MemorySettingsStore(), runtime);
     await service.get();
-    await service.update({ expectedVersion: 1, assetRoot: "./assets/new" });
-    await expect(service.update({ expectedVersion: 1, assetRoot: "./assets/stale" }))
+    await service.update({ expectedVersion: 1, defaultLocale: "en-US" });
+    await expect(service.update({ expectedVersion: 1, defaultLocale: "vi-VN" }))
       .rejects.toBeInstanceOf(SettingsConflictError);
   });
 

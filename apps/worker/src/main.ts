@@ -155,6 +155,8 @@ export function buildWorkerRuntime(input: HandlerRegistryInput) {
       workerId: string;
       leaseMs: number;
       workerConcurrency?: number;
+      defaultMaxAttempts?: number;
+      genericRetryDelayMs?: number;
       maxJobs?: number;
       clock?: { now(): Date };
     }) {
@@ -169,6 +171,8 @@ export async function runWorker(input: {
   workerId: string;
   leaseMs: number;
   workerConcurrency?: number;
+  defaultMaxAttempts?: number;
+  genericRetryDelayMs?: number;
   clock?: { now(): Date };
   maxJobs?: number;
 }) {

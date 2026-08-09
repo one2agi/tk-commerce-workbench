@@ -48,7 +48,6 @@ export function ExternalServicesSection({
           if (name === "imagePlannerModel") onFieldChange("providerOptions.imagePlannerModel", value);
           if (name === "imageProviderModel") onFieldChange("providerOptions.imageProviderModel", value);
           if (name === "canvasWorkflowName") onFieldChange("providerOptions.canvasWorkflow", value);
-          if (name === "llmModel") onFieldChange("providerOptions.listingModel", value);
         }}
       />
     </Field>

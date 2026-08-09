@@ -401,10 +401,15 @@ describe("v1 API integration", () => {
       new Request("http://127.0.0.1/api/v1/settings")
     );
     const text = await response.text();
+    const payload = JSON.parse(text) as {
+      secretStatus: { miaoshouConfigured: boolean };
+      serviceSecretStatus?: Record<string, unknown>;
+    };
 
     expect(response.status).toBe(200);
-    expect(JSON.parse(text).secretStatus.miaoshouConfigured).toBe(true);
-    expect(text).not.toMatch(/app[_-]?secret|api[_-]?key|extension-secret/i);
+    expect(payload.secretStatus.miaoshouConfigured).toBe(true);
+    expect(Object.values(payload.serviceSecretStatus ?? {}).every((value) => typeof value === "boolean")).toBe(true);
+    expect(text).not.toContain("extension-secret");
 
     const nonLoopback = await createSettingsHandler({ service })(
       new Request("http://192.168.1.8/api/v1/settings")
@@ -502,6 +507,10 @@ describe.runIf(Boolean(pgTestUrl))("v1 API PostgreSQL integration", () => {
       await pool.query(
         `INSERT INTO local_operators (id, handle, display_name)
          VALUES ('operator-rerun', 'rerun-test', 'Rerun Test')`
+      );
+      await pool.query(
+        `INSERT INTO workspace_settings (id, retry_policy)
+         VALUES (1, '{"maxAttempts":7,"initialDelaySeconds":30}'::jsonb)`
       );
       await pool.query(
         `INSERT INTO products (id, operator_id, source_url, source_item_id, state_source)
@@ -607,12 +616,13 @@ describe.runIf(Boolean(pgTestUrl))("v1 API PostgreSQL integration", () => {
       });
       expect(clonedAsset.id).not.toBe(originalAsset.id);
       expect((await pool.query(
-        "SELECT id, kind, status, payload FROM jobs WHERE id = $1",
+        "SELECT id, kind, status, payload, max_attempts FROM jobs WHERE id = $1",
         [result.jobId]
       )).rows[0]).toMatchObject({
         id: result.jobId,
         kind: "listing_generate",
         status: "queued",
+        max_attempts: 7,
         payload: { version: 1, revisionId: result.revisionId }
       });
     } finally {

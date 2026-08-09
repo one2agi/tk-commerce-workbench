@@ -39,8 +39,12 @@ export interface RunWorkerProcessInput {
 }
 
 type RuntimeConfigurationLoader = Pick<RuntimeConfigurationRepository,
-  "seedIfMissing" | "loadCandidate" | "markApplied" | "markRejected"
+  "seedIfMissing" | "loadAppliedCandidate" | "loadCandidate" | "markApplied" | "markRejected"
 >;
+
+type ResolvedCandidateWithSnapshot = ResolvedRuntimeCandidate & Readonly<{
+  persistedCandidate: RuntimeConfigurationCandidate;
+}>;
 
 export interface RuntimeConfiguredWorkerDependencies {
   createPool?(connectionString: string): ClosableDbPool;
@@ -96,7 +100,7 @@ function resolveCandidate(
   bootstrap: ReturnType<typeof loadConfig>,
   codec: RuntimeSecretCodec,
   candidate: RuntimeConfigurationCandidate
-): ResolvedRuntimeCandidate {
+): ResolvedCandidateWithSnapshot {
   let secrets: RuntimeSecretsV1;
   try {
     secrets = codec.open(candidate.encryptedSecrets, "workspace_settings:1");
@@ -108,7 +112,8 @@ function resolveCandidate(
   }
   return {
     version: candidate.version,
-    config: resolveRuntimeAppConfig(bootstrap, candidate.publicConfig, secrets, candidate.runtimeConfig)
+    config: resolveRuntimeAppConfig(bootstrap, candidate.publicConfig, secrets, candidate.runtimeConfig),
+    persistedCandidate: candidate
   };
 }
 
@@ -128,7 +133,8 @@ export function createRuntimeConfiguredWorkerApplication(
     runtimeConfig: {
       externalAdapterMode: bootstrap.externalAdapterMode,
       workerConcurrency: bootstrap.workerConcurrency,
-      maxCanvasRunsPerDay: bootstrap.maxCanvasRunsPerDay
+      maxCanvasRunsPerDay: bootstrap.maxCanvasRunsPerDay,
+      retryPolicy: bootstrap.retryPolicy
     }
   };
   let seeded = false;
@@ -140,6 +146,10 @@ export function createRuntimeConfiguredWorkerApplication(
   }));
 
   return createReloadableWorkerApplication({
+    async loadAppliedCandidate() {
+      const candidate = await repository.loadAppliedCandidate();
+      return candidate ? resolveCandidate(bootstrap, codec, candidate) : undefined;
+    },
     async loadCandidate() {
       if (!seeded) {
         await repository.seedIfMissing(seed);
@@ -149,7 +159,9 @@ export function createRuntimeConfiguredWorkerApplication(
       return candidate ? resolveCandidate(bootstrap, codec, candidate) : undefined;
     },
     build,
-    markApplied: (version) => repository.markApplied(version),
+    markApplied: (candidate) => repository.markApplied(
+      (candidate as ResolvedCandidateWithSnapshot).persistedCandidate
+    ),
     markRejected: (version, errorCode) => repository.markRejected(version, errorCode),
     closeLoader: () => pool.end()
   });

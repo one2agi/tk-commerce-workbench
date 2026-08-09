@@ -38,15 +38,19 @@ export interface LocalCaptureRepository {
   }>;
 }
 
+type RetryPolicyLoader = () => Promise<Readonly<{ maxAttempts: number }>>;
+
 export class IngestService {
   constructor(
     private readonly jobs: IngestJobRepository,
-    private readonly captures?: LocalCaptureRepository
+    private readonly captures?: LocalCaptureRepository,
+    private readonly loadRetryPolicy: RetryPolicyLoader = async () => ({ maxAttempts: 3 })
   ) {}
 
   async ingest(command: IngestLinksV1): Promise<{
     jobs: Array<{ idempotencyKey: string; jobId: string }>;
   }> {
+    const { maxAttempts } = await this.loadRetryPolicy();
     const queued = [] as Array<{ idempotencyKey: string; jobId: string }>;
     for (const item of command.items) {
         const jobId = await this.jobs.enqueue({
@@ -59,7 +63,7 @@ export class IngestService {
             sourceUrl: item.sourceUrl,
             idempotencyKey: item.idempotencyKey
           },
-          maxAttempts: 3,
+          maxAttempts,
           audit: {
             actorType: "operator",
             action: "ingest_link",

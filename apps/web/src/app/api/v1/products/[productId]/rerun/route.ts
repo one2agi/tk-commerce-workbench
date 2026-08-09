@@ -53,6 +53,15 @@ const rerunMaxAttempts: Partial<Record<RerunCommand["startNode"], number>> = {
   canvas: 30
 };
 
+async function loadDefaultMaxAttempts(client: Pick<pg.PoolClient, "query">): Promise<number> {
+  const result = await client.query<{ max_attempts: string | number | null }>(
+    `SELECT retry_policy ->> 'maxAttempts' AS max_attempts
+     FROM workspace_settings WHERE id = 1`
+  );
+  const value = Number(result.rows[0]?.max_attempts ?? 3);
+  return Number.isInteger(value) && value >= 1 && value <= 20 ? value : 3;
+}
+
 export function createPgRerunPort(
   approvalInvalidation: ApprovalInvalidationPort,
   databaseProvider: () => Pick<pg.Pool, "connect"> = database
@@ -162,12 +171,14 @@ export function createPgRerunPort(
       );
       const jobId = `job_${randomUUID()}`;
       const businessKey = `${newRevisionId}:rerun:${newDraftVersion}:${command.startNode}`;
+      const defaultMaxAttempts = await loadDefaultMaxAttempts(client);
       const inserted = await client.query<{ id: string }>(
         `INSERT INTO jobs (id, kind, business_key, idempotency_key, payload, status, max_attempts)
-         VALUES ($1, $2, $3, $3, $4::jsonb, 'queued', COALESCE($5, 3))
+         VALUES ($1, $2, $3, $3, $4::jsonb, 'queued', $5)
          ON CONFLICT (kind, business_key) DO UPDATE SET updated_at = jobs.updated_at
          RETURNING id`,
-        [jobId, firstJob[command.startNode], businessKey, JSON.stringify({ version: 1, revisionId: newRevisionId }), rerunMaxAttempts[command.startNode] ?? null]
+        [jobId, firstJob[command.startNode], businessKey, JSON.stringify({ version: 1, revisionId: newRevisionId }),
+          rerunMaxAttempts[command.startNode] ?? defaultMaxAttempts]
       );
       await client.query(
         `INSERT INTO audit_events (id, actor_type, action, target_kind, target_id, payload, redacted)

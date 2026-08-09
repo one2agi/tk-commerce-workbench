@@ -54,7 +54,7 @@ describe("reloadable worker application", () => {
     await expect(application.run({ maxJobs: 1 })).resolves.toEqual({ processed: 2 });
 
     expect(build).toHaveBeenLastCalledWith(currentCandidate);
-    expect(markApplied).toHaveBeenNthCalledWith(2, 2);
+    expect(markApplied).toHaveBeenNthCalledWith(2, currentCandidate);
     expect(first.close).toHaveBeenCalledOnce();
     expect(second.run).toHaveBeenCalledWith({ maxJobs: 1 });
   });
@@ -157,5 +157,83 @@ describe("reloadable worker application", () => {
 
     expect(active.close).toHaveBeenCalledOnce();
     expect(closeLoader).toHaveBeenCalledOnce();
+  });
+
+  it("restores the persisted last-known-good generation before rejecting the latest candidate", async () => {
+    const applied = candidate(4);
+    const latest = candidate(5);
+    const lastKnownGood = generation(4);
+    const build = vi.fn(async (value: ResolvedRuntimeCandidate) => {
+      if (value.version === 5) {
+        throw Object.assign(new Error("latest is invalid"), { code: "image_provider_required" });
+      }
+      return lastKnownGood;
+    });
+    const markRejected = vi.fn(async () => undefined);
+    const application = createReloadableWorkerApplication({
+      loadAppliedCandidate: async () => applied,
+      loadCandidate: async () => latest,
+      build,
+      markApplied: vi.fn(async () => undefined),
+      markRejected
+    });
+
+    await expect(application.run()).resolves.toEqual({ processed: 4 });
+
+    expect(build).toHaveBeenNthCalledWith(1, applied);
+    expect(build).toHaveBeenNthCalledWith(2, latest);
+    expect(markRejected).toHaveBeenCalledWith(5, "image_provider_required");
+    expect(lastKnownGood.run).toHaveBeenCalledOnce();
+  });
+
+  it("closes an uncommitted generation when markApplied fails and keeps the previous generation", async () => {
+    let currentCandidate = candidate(1);
+    const first = generation(1);
+    const secondClose = vi.fn()
+      .mockRejectedValueOnce(new Error("first cleanup failed"))
+      .mockResolvedValueOnce(undefined);
+    const second = { ...generation(2), close: secondClose };
+    const markApplied = vi.fn(async (value: ResolvedRuntimeCandidate) => {
+      if (value.version === 2) throw new Error("status write failed");
+    });
+    const application = createReloadableWorkerApplication({
+      loadCandidate: async () => currentCandidate,
+      build: vi.fn(async (value) => value.version === 1 ? first : second),
+      markApplied,
+      markRejected: vi.fn(async () => undefined)
+    });
+
+    await application.run();
+    currentCandidate = candidate(2);
+    await expect(application.run()).rejects.toThrow("status write failed");
+    expect(first.close).not.toHaveBeenCalled();
+    expect(secondClose).toHaveBeenCalledOnce();
+
+    await application.close();
+    expect(first.close).toHaveBeenCalledOnce();
+    expect(secondClose).toHaveBeenCalledTimes(2);
+  });
+
+  it("retains the replaced generation when its first close attempt fails", async () => {
+    let currentCandidate = candidate(1);
+    const firstClose = vi.fn()
+      .mockRejectedValueOnce(new Error("old close failed"))
+      .mockResolvedValueOnce(undefined);
+    const first = { ...generation(1), close: firstClose };
+    const second = generation(2);
+    const application = createReloadableWorkerApplication({
+      loadCandidate: async () => currentCandidate,
+      build: vi.fn(async (value) => value.version === 1 ? first : second),
+      markApplied: vi.fn(async () => undefined),
+      markRejected: vi.fn(async () => undefined)
+    });
+
+    await application.run();
+    currentCandidate = candidate(2);
+    await expect(application.run()).rejects.toThrow("old close failed");
+
+    await application.close();
+    expect(firstClose).toHaveBeenCalledTimes(2);
+    expect(second.close).toHaveBeenCalledOnce();
   });
 });

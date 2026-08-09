@@ -76,16 +76,16 @@ describe("worker entry", () => {
     expect(liveFetch).not.toHaveBeenCalled();
   });
 
-  it("rejects live adapters in tests before constructing database or HTTP clients", () => {
+  it("rejects live adapters in tests before constructing database or HTTP clients", async () => {
     const createPool = vi.fn();
     const createAdapterBundle = vi.fn();
     const createMiaoshou = vi.fn();
 
-    expect(() => createWorkerApplication({
+    await expect(createWorkerApplication({
       env: testEnv,
       processKind: "test",
       dependencies: { createPool, createAdapterBundle, createMiaoshou }
-    })).toThrow("refusing to boot test/integration/e2e process with external adapter mode=live");
+    })).rejects.toThrow("refusing to boot test/integration/e2e process with external adapter mode=live");
 
     expect(createPool).not.toHaveBeenCalled();
     expect(createAdapterBundle).not.toHaveBeenCalled();
@@ -103,7 +103,7 @@ describe("worker entry", () => {
     const createPool = vi.fn(() => ({ query: vi.fn(), connect: vi.fn(), end, on: vi.fn() }) as never);
     const createAdapterBundle = vi.fn((config, context) => createDefaultAdapterBundle(config, context));
 
-    const application = createWorkerApplication({
+    const application = await createWorkerApplication({
       env: testEnv,
       resolvedConfig,
       dependencies: { createPool, createAdapterBundle }
@@ -141,7 +141,7 @@ describe("worker entry", () => {
     const end = vi.fn(async () => undefined);
     const closeFetch = vi.fn(async () => undefined);
 
-    const application = createWorkerApplication({
+    const application = await createWorkerApplication({
       env: {},
       resolvedConfig,
       processKind: "app",
@@ -170,7 +170,7 @@ describe("worker entry", () => {
     const createMiaoshou = vi.fn(() => ({ fetchItem: vi.fn() }));
     const createMiaoshouEdit = vi.fn(() => ({ applyEdit: vi.fn(), reconcile: vi.fn() }));
     const end = vi.fn(async () => undefined);
-    const application = createWorkerApplication({
+    const application = await createWorkerApplication({
       env: {
         ...testEnv,
         NODE_ENV: "production",
@@ -209,10 +209,11 @@ describe("worker entry", () => {
     expect(end).toHaveBeenCalledTimes(1);
   });
 
-  it("starts dispatcher cleanup when pool construction fails after live adapter setup", async () => {
-    const closeFetch = vi.fn(async () => undefined);
+  it("waits for dispatcher cleanup when pool construction fails after live adapter setup", async () => {
+    let finishCleanup: (() => void) | undefined;
+    const closeFetch = vi.fn(() => new Promise<void>((resolve) => { finishCleanup = resolve; }));
     const createLiveFetch = vi.fn(() => Object.assign(vi.fn(), { close: closeFetch }) as never);
-    expect(() => createWorkerApplication({
+    const creation = createWorkerApplication({
       env: {
         ...testEnv,
         NODE_ENV: "production",
@@ -239,9 +240,15 @@ describe("worker entry", () => {
         createPool: vi.fn(() => { throw new Error("pool construction failed"); }),
         createLiveFetch
       }
-    })).toThrow("pool construction failed");
+    });
 
+    let settled = false;
+    void Promise.resolve(creation).finally(() => { settled = true; }).catch(() => undefined);
     await vi.waitFor(() => expect(closeFetch).toHaveBeenCalledTimes(1));
+    expect(settled).toBe(false);
+    finishCleanup?.();
+    await expect(creation).rejects.toThrow("pool construction failed");
+    expect(settled).toBe(true);
   });
 
   it("waits for database and dispatcher cleanup and reports every close failure", async () => {
@@ -249,7 +256,7 @@ describe("worker entry", () => {
     const fetchError = new Error("fetch close failed");
     const end = vi.fn(async () => { throw poolError; });
     const closeFetch = vi.fn(async () => { throw fetchError; });
-    const application = createWorkerApplication({
+    const application = await createWorkerApplication({
       env: {
         ...testEnv,
         NODE_ENV: "production",

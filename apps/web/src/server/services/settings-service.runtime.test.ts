@@ -136,12 +136,66 @@ describe("SettingsService runtime configuration", () => {
     expect(store.record.version).toBe(1);
   });
 
+  it.each([
+    ["imagePlannerBaseUrl", "ftp://planner.test/v1", "image_planner_base_url_invalid"],
+    ["imageProviderBaseUrl", "planner.test/v1", "image_provider_base_url_invalid"],
+    ["canvasBaseUrl", "file:///tmp/canvas", "canvas_base_url_invalid"],
+    ["llmBaseUrl", "javascript:alert(1)", "llm_base_url_invalid"],
+    ["exchangeRateBaseUrl", "//rates.test", "exchange_rate_base_url_invalid"],
+    ["miaoshouBaseUrl", "ws://miaoshou.test", "miaoshou_base_url_invalid"],
+    ["assetPublishS3Endpoint", "s3://bucket", "asset_s3_endpoint_invalid"],
+    ["assetPublishPublicBaseUrl", "data:text/plain,no", "asset_public_base_url_invalid"]
+  ] as const)("rejects a non-http(s) non-empty %s with a safe field code", async (field, value, code) => {
+    const store = new MemoryStore();
+
+    await expect(service(store).update({
+      expectedVersion: 1,
+      serviceConfiguration: { ...PUBLIC_CONFIG, [field]: value }
+    })).rejects.toEqual(expect.objectContaining<Partial<SettingsValidationError>>({
+      code,
+      field
+    }));
+    expect(store.record.version).toBe(1);
+  });
+
+  it("accepts http service URLs as well as https URLs", async () => {
+    const store = new MemoryStore();
+    const view = await service(store).update({
+      expectedVersion: 1,
+      serviceConfiguration: { ...PUBLIC_CONFIG, miaoshouBaseUrl: "http://127.0.0.1:8080/api" }
+    });
+
+    expect(view.serviceConfiguration?.miaoshouBaseUrl).toBe("http://127.0.0.1:8080/api");
+  });
+
+  it("rejects a non-http(s) URL in mock mode when non-empty", async () => {
+    const store = new MemoryStore();
+
+    await expect(service(store).update({
+      expectedVersion: 1,
+      externalAdapterMode: "mock",
+      serviceConfiguration: { ...PUBLIC_CONFIG, miaoshouBaseUrl: "ftp://miaoshou.test" }
+    })).rejects.toEqual(expect.objectContaining<Partial<SettingsValidationError>>({
+      code: "miaoshou_base_url_invalid",
+      field: "miaoshouBaseUrl"
+    }));
+  });
+
+  it("does not persist assetRoot from a settings update", async () => {
+    const store = new MemoryStore();
+    const view = await service(store).update({ expectedVersion: 1, assetRoot: "/untrusted/ui/path" } as never);
+
+    expect(store.record.assetRoot).toBe("./data/assets");
+    expect(view.assetRoot).toBe("./data/assets");
+  });
+
   it("returns saved and Worker-applied versions independently", async () => {
     const view = await service(new MemoryStore()).get();
 
     expect(view.runtimeStatus).toMatchObject({
       savedVersion: 1,
       appliedVersion: 1,
+      candidateVersion: 1,
       applyState: "applied",
       applyErrorCode: null
     });

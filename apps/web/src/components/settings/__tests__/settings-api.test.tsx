@@ -64,6 +64,7 @@ describe("saveSettings (legacy FormData path)", () => {
       expectedVersion: 1,
       defaultLocale: "th-TH"
     });
+    expect(bodies[0]).not.toHaveProperty("assetRoot");
   });
 });
 
@@ -79,6 +80,7 @@ describe("patchSettings", () => {
     const result = await patchSettings(fetcher, baseline, draft, new Set(["defaultLocale"]));
     expect(result.ok).toBe(true);
     expect(bodies[0]).toMatchObject({ expectedVersion: 1, defaultLocale: "th-TH" });
+    expect(bodies[0]).not.toHaveProperty("assetRoot");
   });
 
   it("returns ok:false with status on non-2xx", async () => {

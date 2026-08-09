@@ -69,12 +69,13 @@ export type WorkspaceSettingsView = Omit<WorkspaceSettingsRecord, "encryptedSecr
     restartRequiredFields: string[];
     savedVersion?: number;
     appliedVersion?: number | null;
+    candidateVersion?: number | null;
     applyState?: "pending" | "applied" | "error";
     applyErrorCode?: string | null;
   };
 }>;
 
-export type SettingsUpdate = Readonly<Partial<Omit<WorkspaceSettingsRecord, "version">> & {
+export type SettingsUpdate = Readonly<Partial<Omit<WorkspaceSettingsRecord, "version" | "assetRoot">> & {
   expectedVersion: number;
   secretMutations?: Partial<Record<SecretFieldName, SecretMutation>>;
 }>;
@@ -148,7 +149,7 @@ export class SettingsService {
       externalAdapterMode: command.externalAdapterMode ?? current.externalAdapterMode,
       workerConcurrency: command.workerConcurrency ?? current.workerConcurrency,
       maxCanvasRunsPerDay: command.maxCanvasRunsPerDay ?? current.maxCanvasRunsPerDay,
-      assetRoot: command.assetRoot ?? current.assetRoot,
+      assetRoot: currentRecord.assetRoot,
       pricingDefaults: command.pricingDefaults ?? current.pricingDefaults,
       providerOptions: command.providerOptions ?? current.providerOptions,
       retryPolicy: command.retryPolicy ?? current.retryPolicy,
@@ -188,6 +189,7 @@ export class SettingsService {
         restartRequiredFields,
         savedVersion: record.version,
         appliedVersion: applyStatus.appliedVersion,
+        candidateVersion: applyStatus.candidateVersion,
         applyState: applyStatus.state,
         applyErrorCode: applyStatus.errorCode
       },
@@ -213,6 +215,7 @@ function validateRuntimeConfiguration(
   config: PublicServiceConfigurationV1,
   secrets: RuntimeSecretsV1
 ): void {
+  validateServiceUrls(config);
   if (mode !== "live") return;
   if (config.imageGenerationPath === "headless") {
     if (!config.imagePlannerBaseUrl.trim()) throw new SettingsValidationError("image_planner_base_url_required", "imagePlannerBaseUrl");
@@ -244,6 +247,32 @@ function validateRuntimeConfiguration(
     if (!config.assetPublishPublicBaseUrl.trim()) throw new SettingsValidationError("asset_public_base_url_required", "assetPublishPublicBaseUrl");
     if (!secrets.assetPublishS3AccessKeyId?.trim()) throw new SettingsValidationError("asset_s3_access_key_required", "assetPublishS3AccessKeyId");
     if (!secrets.assetPublishS3SecretAccessKey?.trim()) throw new SettingsValidationError("asset_s3_secret_key_required", "assetPublishS3SecretAccessKey");
+  }
+}
+
+const SERVICE_URL_FIELDS = [
+  ["imagePlannerBaseUrl", "image_planner_base_url_invalid"],
+  ["imageProviderBaseUrl", "image_provider_base_url_invalid"],
+  ["canvasBaseUrl", "canvas_base_url_invalid"],
+  ["llmBaseUrl", "llm_base_url_invalid"],
+  ["exchangeRateBaseUrl", "exchange_rate_base_url_invalid"],
+  ["miaoshouBaseUrl", "miaoshou_base_url_invalid"],
+  ["assetPublishS3Endpoint", "asset_s3_endpoint_invalid"],
+  ["assetPublishPublicBaseUrl", "asset_public_base_url_invalid"]
+] as const satisfies ReadonlyArray<readonly [keyof PublicServiceConfigurationV1, string]>;
+
+function validateServiceUrls(config: PublicServiceConfigurationV1): void {
+  for (const [field, code] of SERVICE_URL_FIELDS) {
+    const value = config[field].trim();
+    if (!value) continue;
+    try {
+      const parsed = new URL(value);
+      if ((parsed.protocol !== "http:" && parsed.protocol !== "https:") || !parsed.hostname) {
+        throw new Error("unsupported service URL");
+      }
+    } catch {
+      throw new SettingsValidationError(code, field);
+    }
   }
 }
 
@@ -305,7 +334,6 @@ function restartRequired(
   if (record.externalAdapterMode !== active.externalAdapterMode) fields.push("externalAdapterMode");
   if (record.workerConcurrency !== active.workerConcurrency) fields.push("workerConcurrency");
   if (record.maxCanvasRunsPerDay !== active.maxCanvasRunsPerDay) fields.push("maxCanvasRunsPerDay");
-  if (record.assetRoot !== active.assetRoot) fields.push("assetRoot");
   if (providerOptions.imageGenerationPath !== active.imageGenerationPath) fields.push("providerOptions.imageGenerationPath");
   if (providerOptions.imagePlannerModel !== active.imagePlannerModel) fields.push("providerOptions.imagePlannerModel");
   if (providerOptions.imageProviderModel !== active.imageProviderModel) fields.push("providerOptions.imageProviderModel");

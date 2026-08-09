@@ -473,42 +473,48 @@ export function createServerServices(input: {
     imageGenerationConfigured: input.config.imageGenerationConfigured ?? false,
     imageGenerationPath
   };
+  const settingsStore = new PgSettingsStore(input.pool);
+  const settingsDefaults = {
+    defaultLocale: "th-TH",
+    defaultCurrency: "THB",
+    externalAdapterMode: input.config.externalAdapterMode,
+    workerConcurrency: input.config.workerConcurrency,
+    maxCanvasRunsPerDay: input.config.maxCanvasRunsPerDay,
+    assetRoot: input.config.assetRoot,
+    pricingDefaults: {
+      domesticShippingCny: "2.00",
+      crossBorderCostCny: "6.00",
+      fixedTargetCostThb: "10.00",
+      platformFeeRate: "0.05",
+      paymentFeeRate: "0.03",
+      targetProfitRate: "0.30",
+      ending: "9"
+    },
+    providerOptions: {
+      listingProvider: "rules",
+      listingModel: "rules-v1",
+      canvasWorkflow,
+      imageGenerationPath,
+      imagePlannerModel,
+      imageProviderModel
+    },
+    retryPolicy: { maxAttempts: 3, initialDelaySeconds: 30 },
+    serviceConfiguration: input.config.serviceConfiguration,
+    encryptedSecrets
+  } as const;
   return {
     verifyExtensionToken: createDynamicExtensionTokenVerifier(loadExtensionToken),
-    ingest: new IngestService(jobs, new LocalCaptureRepository(input.pool)),
+    ingest: new IngestService(
+      jobs,
+      new LocalCaptureRepository(input.pool),
+      async () => (await settingsStore.get())?.retryPolicy ?? settingsDefaults.retryPolicy
+    ),
     automation: new AutomationService(new RevisionVersions(input.pool), automationRuns),
     products,
     tasks: new TaskService(database, new PgTaskActions(input.pool)),
     templates: new TemplateService(new PgTemplateStore(input.pool)),
-    settings: new SettingsService(new PgSettingsStore(input.pool), {
-      defaults: {
-        defaultLocale: "th-TH",
-        defaultCurrency: "THB",
-        externalAdapterMode: input.config.externalAdapterMode,
-        workerConcurrency: input.config.workerConcurrency,
-        maxCanvasRunsPerDay: input.config.maxCanvasRunsPerDay,
-        assetRoot: input.config.assetRoot,
-        pricingDefaults: {
-          domesticShippingCny: "2.00",
-          crossBorderCostCny: "6.00",
-          fixedTargetCostThb: "10.00",
-          platformFeeRate: "0.05",
-          paymentFeeRate: "0.03",
-          targetProfitRate: "0.30",
-          ending: "9"
-        },
-        providerOptions: {
-          listingProvider: "rules",
-          listingModel: "rules-v1",
-          canvasWorkflow,
-          imageGenerationPath,
-          imagePlannerModel,
-          imageProviderModel
-        },
-        retryPolicy: { maxAttempts: 3, initialDelaySeconds: 30 },
-        serviceConfiguration: input.config.serviceConfiguration,
-        encryptedSecrets
-      },
+    settings: new SettingsService(settingsStore, {
+      defaults: settingsDefaults,
       secretStatus,
       secretCodec,
       loadApplyStatus: () => runtimeConfiguration.loadApplyStatus(),
