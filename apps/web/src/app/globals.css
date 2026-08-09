@@ -1961,6 +1961,12 @@ button:disabled {
 }
 .tk-settings-header__boundary strong { display: block; color: oklch(0.34 0.07 65); font-size: 12px; }
 .tk-settings-header__boundary span { margin-top: 3px !important; color: oklch(0.43 0.045 65) !important; font-size: 11px !important; line-height: 1.5; }
+.tk-settings-header__boundary.is-auto-apply {
+  border-left-color: oklch(0.62 0.13 150);
+  background: oklch(0.97 0.03 150);
+}
+.tk-settings-header__boundary.is-auto-apply strong { color: oklch(0.35 0.09 150); }
+.tk-settings-header__boundary.is-auto-apply span { color: oklch(0.42 0.055 150) !important; }
 
 .tk-settings-shell .tk-settings-card {
   margin-bottom: 16px;
@@ -2019,8 +2025,50 @@ button:disabled {
 .tk-path-picker span { display: grid; gap: 4px; }
 .tk-path-picker strong { font-size: 13px; }
 .tk-path-picker small { color: var(--settings-muted); font-size: 12px; }
+.tk-inline-note { margin: 0; color: var(--settings-muted); font-size: 12px; }
 
-.tk-pill-row { grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 8px; }
+.tk-service-groups { display: grid; gap: 8px; }
+.tk-service-group { border: 1px solid var(--settings-line); border-radius: 8px; background: #fff; }
+.tk-service-group summary {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  min-height: 48px;
+  padding: 0 16px;
+  color: var(--settings-ink);
+  cursor: pointer;
+}
+.tk-service-group summary:focus-visible { outline: 2px solid var(--settings-primary); outline-offset: 2px; }
+.tk-service-group summary > span { display: flex; align-items: baseline; gap: 10px; }
+.tk-service-group summary strong { font-size: 13px; }
+.tk-service-group summary small { color: var(--settings-muted); font-size: 11px; }
+.tk-service-group[open] summary { border-bottom: 1px solid var(--settings-line); background: var(--settings-soft); }
+.tk-service-group__body { padding: 16px; }
+
+.tk-secret-field { display: grid; gap: 6px; min-width: 0; }
+.tk-secret-field__head { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.tk-secret-field__head label { color: var(--settings-ink); font-size: 13px; font-weight: 600; }
+.tk-secret-field__head span { font-size: 10px; font-weight: 700; }
+.tk-secret-field__head span.is-configured { color: oklch(0.38 0.1 150); }
+.tk-secret-field__head span.is-empty { color: var(--settings-muted); }
+.tk-secret-field__control { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 8px; }
+.tk-secret-field__control input {
+  min-width: 0;
+  min-height: 40px;
+  padding: 8px 12px;
+  border: 1px solid oklch(0.84 0.02 255);
+  border-radius: 8px;
+  color: var(--settings-ink);
+  background: #fff;
+}
+.tk-secret-field__control input:focus-visible,
+.tk-secret-field__control button:focus-visible { outline: 2px solid var(--settings-primary); outline-offset: 2px; }
+.tk-secret-field__control button { min-height: 40px; padding: 0 12px; border: 1px solid var(--settings-line); border-radius: 8px; background: #fff; color: var(--settings-muted); }
+.tk-secret-field__control button:hover { color: oklch(0.44 0.14 30); border-color: oklch(0.76 0.08 30); }
+.tk-secret-field small { color: var(--settings-muted); font-size: 11px; line-height: 1.4; }
+.tk-secret-field.is-dirty input { border-color: var(--settings-primary); background: oklch(0.98 0.015 255); }
+
+.tk-pill-row { grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 8px; }
 .tk-settings-shell .tk-pill { padding: 12px; border-radius: 8px; transform: none; box-shadow: none; }
 .tk-settings-shell .tk-pill:hover { transform: none; box-shadow: none; }
 .tk-settings-shell .tk-pill.is-ok { border-color: oklch(0.84 0.075 150); background: oklch(0.96 0.035 150); }
@@ -2041,6 +2089,7 @@ button:disabled {
 .tk-apply-status p { margin: 3px 0 0; font-size: 11px; line-height: 1.5; }
 .tk-apply-status.is-pending { color: oklch(0.38 0.08 65); background: oklch(0.96 0.035 75); }
 .tk-apply-status.is-applied { color: oklch(0.36 0.09 150); background: oklch(0.96 0.035 150); }
+.tk-apply-status.is-error { color: oklch(0.4 0.12 30); background: oklch(0.96 0.035 30); }
 
 .tk-advanced-settings { margin-top: 16px; border: 1px solid var(--settings-line); border-radius: 10px; background: #fff; }
 .tk-advanced-settings summary { display: flex; justify-content: space-between; align-items: center; padding: 16px 20px; cursor: pointer; list-style-position: inside; }

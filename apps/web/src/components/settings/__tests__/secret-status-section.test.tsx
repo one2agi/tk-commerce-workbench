@@ -64,7 +64,7 @@ describe("SecretStatusSection", () => {
     const { container } = render(<SecretStatusSection draft={makeDraft(true)} />);
 
     expect(screen.getByText("Headless 生图")).toBeInTheDocument();
-    expect(container.querySelectorAll(".tk-pill.is-ok")).toHaveLength(2);
+    expect(container.querySelectorAll(".tk-pill.is-ok")).toHaveLength(3);
   });
 
   it("shows a warning when headless image generation is not ready", () => {

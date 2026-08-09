@@ -126,18 +126,21 @@ export class SettingsService {
     const serviceConfiguration = command.serviceConfiguration ??
       currentRecord.serviceConfiguration ?? defaultServiceConfiguration(currentRecord.providerOptions);
     let encryptedSecrets = currentRecord.encryptedSecrets ?? null;
-    if (command.secretMutations && Object.keys(command.secretMutations).length > 0) {
+    const hasSecretMutations = Boolean(command.secretMutations && Object.keys(command.secretMutations).length > 0);
+    let nextSecrets: RuntimeSecretsV1 = encryptedSecrets && this.runtime.secretCodec
+      ? this.runtime.secretCodec.open(encryptedSecrets, "workspace_settings:1")
+      : {};
+    if (hasSecretMutations) {
       if (!this.runtime.secretCodec) throw new Error("runtime secret codec is unavailable");
-      const secrets = encryptedSecrets
-        ? this.runtime.secretCodec.open(encryptedSecrets, "workspace_settings:1")
-        : {};
-      const nextSecrets = applySecretMutations(secrets, command.secretMutations);
+      nextSecrets = applySecretMutations(nextSecrets, command.secretMutations!);
+      encryptedSecrets = this.runtime.secretCodec.seal(nextSecrets, "workspace_settings:1");
+    }
+    if (hasSecretMutations || command.serviceConfiguration || command.externalAdapterMode || command.providerOptions) {
       validateRuntimeConfiguration(
         command.externalAdapterMode ?? current.externalAdapterMode,
         serviceConfiguration,
         nextSecrets
       );
-      encryptedSecrets = this.runtime.secretCodec.seal(nextSecrets, "workspace_settings:1");
     }
     const next: Omit<WorkspaceSettingsRecord, "version"> = {
       defaultLocale: command.defaultLocale ?? current.defaultLocale,

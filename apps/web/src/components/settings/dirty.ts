@@ -24,10 +24,11 @@ const SCALAR_KEYS: ReadonlyArray<ScalarKey> = [
   "maxCanvasRunsPerDay"
 ];
 
-const NESTED_GROUPS: ReadonlyArray<"pricingDefaults" | "providerOptions" | "retryPolicy"> = [
+const NESTED_GROUPS: ReadonlyArray<"pricingDefaults" | "providerOptions" | "retryPolicy" | "serviceConfiguration"> = [
   "pricingDefaults",
   "providerOptions",
-  "retryPolicy"
+  "retryPolicy",
+  "serviceConfiguration"
 ];
 
 export function computeDirtyFields(
@@ -39,9 +40,9 @@ export function computeDirtyFields(
     if (baseline[key] !== draft[key]) dirty.add(key);
   }
   for (const group of NESTED_GROUPS) {
-    const baseGroup = baseline[group] as Record<string, unknown>;
-    const draftGroup = draft[group] as Record<string, unknown>;
-    for (const subKey of Object.keys(baseGroup)) {
+    const baseGroup = (baseline[group] ?? {}) as Record<string, unknown>;
+    const draftGroup = (draft[group] ?? {}) as Record<string, unknown>;
+    for (const subKey of new Set([...Object.keys(baseGroup), ...Object.keys(draftGroup)])) {
       if (baseGroup[subKey] !== draftGroup[subKey]) {
         dirty.add(`${group}.${subKey}`);
       }

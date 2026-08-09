@@ -78,11 +78,12 @@ describe("SettingsWorkspace", () => {
     expect(ctx.getAllByText("基础设置")).not.toHaveLength(0);
     expect(ctx.queryByText("定价公式")).not.toBeInTheDocument();
     expect(ctx.getByRole("navigation", { name: "设置分区" })).toBeInTheDocument();
-    expect(ctx.getAllByText("生图与模型")).not.toHaveLength(0);
+    expect(ctx.getAllByText("生图路径")).not.toHaveLength(0);
+    expect(ctx.getAllByText("外部服务")).not.toHaveLength(0);
     expect(ctx.getAllByText("稳定性")).not.toHaveLength(0);
-    expect(ctx.getAllByText("服务状态")).not.toHaveLength(0);
-    expect(ctx.getByText("当前启动值")).toBeInTheDocument();
-    expect(ctx.getByText("重启 Worker 后生效")).toBeInTheDocument();
+    expect(ctx.getAllByText("应用状态")).not.toHaveLength(0);
+    expect(ctx.getByText("配置应用状态")).toBeInTheDocument();
+    expect(ctx.getByText("等待 Worker 自动应用")).toBeInTheDocument();
     expect(ctx.queryByRole("region", { name: "保存栏" })).toBeNull();
   });
 
@@ -117,7 +118,7 @@ describe("SettingsWorkspace", () => {
     const { container } = render(<SettingsWorkspace initial={baseline()} />);
     const ctx = within(container);
     expect(ctx.getByRole("link", { name: "打开任务日志" })).toHaveAttribute("href", "/tasks");
-    expect(ctx.getByText("页面只显示是否就绪，不会读取、返回或保存密钥与服务地址。请在服务器运行环境中维护敏感配置。")).toBeInTheDocument();
+    expect(ctx.getByText("密钥只显示配置状态；已有值不会回显。输入新值后保存即可替换。")).toBeInTheDocument();
     expect(ctx.queryByText("参考图")).not.toBeInTheDocument();
     expect(ctx.queryByText("生图风格")).not.toBeInTheDocument();
   });

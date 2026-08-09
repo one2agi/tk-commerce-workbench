@@ -8,10 +8,10 @@ export interface SaveBarProps {
   version: number;
   onDiscard: () => void;
   onSave: () => void;
-  restartRequired?: boolean;
+  autoApply?: boolean;
 }
 
-export function SaveBar({ state, error, dirtyCount, version, onDiscard, onSave, restartRequired = false }: SaveBarProps): React.JSX.Element | null {
+export function SaveBar({ state, error, dirtyCount, version, onDiscard, onSave, autoApply = true }: SaveBarProps): React.JSX.Element | null {
   const visible = dirtyCount > 0 || state !== "idle";
   if (!visible) return null;
   const isError = state === "error" || state === "conflict";
@@ -31,7 +31,7 @@ export function SaveBar({ state, error, dirtyCount, version, onDiscard, onSave, 
           <span>
             已修改 <strong>{dirtyCount}</strong> 项
             <span className="tk-save-bar__meta">当前版本 v{version}</span>
-            {restartRequired ? <small>启动型配置需重启 Worker</small> : null}
+            {autoApply ? <small>保存后由 Worker 自动应用</small> : null}
           </span>
         )}
       </div>

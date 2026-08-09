@@ -121,6 +121,19 @@ describe("SettingsService runtime configuration", () => {
     expect(store.record.version).toBe(1);
   });
 
+  it("validates changed public provider configuration even when secrets are retained", async () => {
+    const store = new MemoryStore();
+
+    await expect(service(store).update({
+      expectedVersion: 1,
+      serviceConfiguration: { ...PUBLIC_CONFIG, imageProviderBaseUrl: "" }
+    })).rejects.toEqual(expect.objectContaining<Partial<SettingsValidationError>>({
+      code: "image_provider_base_url_required",
+      field: "imageProviderBaseUrl"
+    }));
+    expect(store.record.version).toBe(1);
+  });
+
   it("returns saved and Worker-applied versions independently", async () => {
     const view = await service(new MemoryStore()).get();
 

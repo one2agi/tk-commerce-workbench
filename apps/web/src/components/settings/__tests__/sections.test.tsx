@@ -11,6 +11,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 import type { WorkspaceSettingsView } from "../../../server/services/settings-service";
 import { BasicSettingsSection } from "../sections/basic-settings-section";
+import { ExternalServicesSection } from "../sections/external-services-section";
 import { PricingFormulaSection } from "../sections/pricing-formula-section";
 import { ProviderOptionsSection } from "../sections/provider-options-section";
 import { RetryPolicySection } from "../sections/retry-policy-section";
@@ -122,7 +123,7 @@ describe("PricingFormulaSection", () => {
 });
 
 describe("ProviderOptionsSection", () => {
-  it("renders Canvas compatibility controls without headless-only model inputs", () => {
+  it("renders the Canvas path and its daily limit without duplicating service credentials", () => {
     const { container } = render(
       <ProviderOptionsSection
         draft={viewFixture()}
@@ -132,23 +133,62 @@ describe("ProviderOptionsSection", () => {
     );
     const ctx = within(container);
     expect(ctx.getByRole("radio", { name: /Canvas 兼容/ })).toBeChecked();
-    expect(ctx.getByLabelText("Canvas 工作流")).toHaveValue("wf-1");
     expect(ctx.getByLabelText("Canvas 每日上限")).toHaveAttribute("min", "0");
     expect(ctx.queryByLabelText("Planner 模型")).not.toBeInTheDocument();
+    expect(ctx.queryByLabelText("Canvas 工作流")).not.toBeInTheDocument();
     expect(ctx.queryByText("参考图")).not.toBeInTheDocument();
     expect(ctx.queryByText("生图风格")).not.toBeInTheDocument();
   });
 });
 
+describe("ExternalServicesSection", () => {
+  it("renders editable service endpoints and secrets without echoing a saved secret", async () => {
+    const user = userEvent.setup();
+    const onSecretChange = vi.fn();
+    const draft = viewFixture({
+      serviceConfiguration: {
+        imageGenerationPath: "headless", imagePlannerBaseUrl: "https://planner.test/v1",
+        imagePlannerModel: "planner-v1", imageProviderBaseUrl: "https://images.test/v1",
+        imageProviderModel: "image-v1", canvasBaseUrl: "", canvasId: "canvas-1",
+        canvasWorkflowName: "TK工作流", llmBaseUrl: "", llmModel: "",
+        exchangeRateBaseUrl: "", miaoshouBaseUrl: "", miaoshouAccountId: "",
+        assetPublishS3Endpoint: "", assetPublishS3Region: "", assetPublishS3Bucket: "",
+        assetPublishPublicBaseUrl: ""
+      },
+      serviceSecretStatus: {
+        imagePlannerApiKey: true, imageProviderApiKey: false, canvasApiKey: false,
+        llmApiKey: false, miaoshouAppKey: false, miaoshouAppSecret: false,
+        miaoshouAuthorization: false, miaoshouCookie: false,
+        assetPublishS3AccessKeyId: false, assetPublishS3SecretAccessKey: false,
+        extensionToken: true
+      }
+    });
+    const { container } = render(<ExternalServicesSection
+      draft={draft}
+      dirtyFields={new Set()}
+      secretDrafts={{}}
+      onFieldChange={() => {}}
+      onSecretChange={onSecretChange}
+    />);
+    const ctx = within(container);
+    expect(ctx.getByLabelText("Planner API 地址")).toHaveValue("https://planner.test/v1");
+    const plannerKey = ctx.getByLabelText("Planner API Key");
+    expect(plannerKey).toHaveValue("");
+    expect(plannerKey).toHaveAttribute("placeholder", "已配置，输入新值可替换");
+    await user.type(plannerKey, "next-key");
+    expect(onSecretChange).toHaveBeenLastCalledWith("imagePlannerApiKey", { value: "next-key", clear: false });
+    expect(container.textContent).not.toContain("old-secret");
+  });
+});
+
 describe("SystemDiagnosticsSection", () => {
-  it("links to task logs and shows safe configured status", () => {
+  it("links to task logs and separates saved from applied versions", () => {
     const { container } = render(<SystemDiagnosticsSection draft={viewFixture()} />);
     const ctx = within(container);
     expect(ctx.getByRole("link", { name: "打开任务日志" })).toHaveAttribute("href", "/tasks");
-    expect(ctx.getByText("生图路径")).toBeInTheDocument();
-    expect(ctx.getByText("Planner 模型")).toBeInTheDocument();
-    expect(ctx.getByText("图片模型")).toBeInTheDocument();
-    expect(ctx.getByText("当前启动值")).toBeInTheDocument();
+    expect(ctx.getByText("已保存版本")).toBeInTheDocument();
+    expect(ctx.getByText("Worker 已应用")).toBeInTheDocument();
+    expect(ctx.getByText("配置应用状态")).toBeInTheDocument();
   });
 });
 
@@ -172,12 +212,12 @@ describe("SecretStatusSection", () => {
     const { container } = render(
       <SecretStatusSection draft={viewFixture()} />
     );
-    expect(container.querySelectorAll(".tk-pill.is-ok")).toHaveLength(2);
+    expect(container.querySelectorAll(".tk-pill.is-ok")).toHaveLength(3);
     expect(container.querySelectorAll(".tk-pill.is-warn")).toHaveLength(2);
     const ctx = within(container);
     expect(ctx.getByText("妙手")).toBeInTheDocument();
     expect(ctx.getByText("Canvas")).toBeInTheDocument();
     expect(ctx.getByText("Headless 生图")).toBeInTheDocument();
-    expect(ctx.getByText("汇率")).toBeInTheDocument();
+    expect(ctx.getByText("浏览器扩展")).toBeInTheDocument();
   });
 });

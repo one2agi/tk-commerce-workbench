@@ -87,6 +87,33 @@ describe("patchSettings", () => {
     expect(result.ok).toBe(false);
     if (!result.ok) expect(result.status).toBe(409);
   });
+
+  it("sends public service configuration and explicit secret mutations", async () => {
+    const bodies: Array<Record<string, unknown>> = [];
+    const fetcher = vi.fn(async (_url, init) => {
+      bodies.push(JSON.parse(String(init?.body)) as Record<string, unknown>);
+      return Response.json({ ...baselineFixture(), version: 2 });
+    }) as unknown as typeof fetch;
+    const baseline = baselineFixture();
+    const serviceConfiguration = {
+      imageGenerationPath: "headless" as const,
+      imagePlannerBaseUrl: "https://planner.test/v1", imagePlannerModel: "planner-v1",
+      imageProviderBaseUrl: "https://images.test/v1", imageProviderModel: "image-v1",
+      canvasBaseUrl: "", canvasId: "canvas-1", canvasWorkflowName: "TK工作流",
+      llmBaseUrl: "", llmModel: "", exchangeRateBaseUrl: "", miaoshouBaseUrl: "",
+      miaoshouAccountId: "", assetPublishS3Endpoint: "", assetPublishS3Region: "",
+      assetPublishS3Bucket: "", assetPublishPublicBaseUrl: ""
+    };
+    await patchSettings(fetcher, baseline, { ...baseline, serviceConfiguration }, new Set([
+      "serviceConfiguration.imagePlannerBaseUrl", "secret.extensionToken"
+    ]), { extensionToken: { value: "new-extension-token", clear: false } });
+
+    expect(bodies[0]).toMatchObject({
+      serviceConfiguration,
+      secretMutations: { extensionToken: { action: "replace", value: "new-extension-token" } }
+    });
+    expect(JSON.stringify(bodies[0])).not.toContain("serviceSecretStatus");
+  });
 });
 
 describe("useSaveSettings", () => {

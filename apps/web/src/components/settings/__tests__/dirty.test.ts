@@ -67,6 +67,27 @@ describe("computeDirtyFields", () => {
     expect([...dirty]).toEqual(["pricingDefaults.ending"]);
   });
 
+  it("detects a public service configuration change", () => {
+    const b = {
+      ...baselineFixture(),
+      serviceConfiguration: {
+        imageGenerationPath: "headless" as const,
+        imagePlannerBaseUrl: "https://planner.test/v1", imagePlannerModel: "planner-v1",
+        imageProviderBaseUrl: "https://images.test/v1", imageProviderModel: "image-v1",
+        canvasBaseUrl: "", canvasId: "canvas-1", canvasWorkflowName: "TK工作流",
+        llmBaseUrl: "", llmModel: "", exchangeRateBaseUrl: "", miaoshouBaseUrl: "",
+        miaoshouAccountId: "", assetPublishS3Endpoint: "", assetPublishS3Region: "",
+        assetPublishS3Bucket: "", assetPublishPublicBaseUrl: ""
+      }
+    };
+    const draft = {
+      ...b,
+      serviceConfiguration: { ...b.serviceConfiguration, imagePlannerBaseUrl: "https://planner.new/v1" }
+    };
+
+    expect([...computeDirtyFields(b, draft)]).toContain("serviceConfiguration.imagePlannerBaseUrl");
+  });
+
   it("reports multiple dirty fields", () => {
     const b = baselineFixture();
     const draft = {
