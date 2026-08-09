@@ -181,27 +181,27 @@ function TemplateItem({ template, onRefresh }: {
                   <strong>{kind === "inputCounts" ? "输入图片" : "输出图片"}</strong>
                   {(["min", "default", "max"] as const).map((field) => (
                     <label key={field}>{field === "min" ? "最少" : field === "max" ? "最多" : "默认"}
-                      <input type="number" min="1" max={kind === "inputCounts" ? 6 : 8} value={recipe[kind][field]} onChange={(event) => updateCounts(kind, field, Number(event.target.value))} />
+                      <input name={`${template.templateId}-${kind}-${field}`} type="number" min="1" max={kind === "inputCounts" ? 6 : 8} value={recipe[kind][field]} onChange={(event) => updateCounts(kind, field, Number(event.target.value))} />
                     </label>
                   ))}
                 </div>
               ))}
             </div>
             <label>必须保留（每行一项）
-              <textarea value={recipe.mustPreserve.join("\n")} onChange={(event) => setRecipe((current) => ({ ...current, mustPreserve: lines(event.target.value) }))} />
+              <textarea name={`${template.templateId}-must-preserve`} value={recipe.mustPreserve.join("\n")} onChange={(event) => setRecipe((current) => ({ ...current, mustPreserve: lines(event.target.value) }))} />
             </label>
             <label>视觉方向
-              <textarea value={recipe.visualDirection} onChange={(event) => setRecipe((current) => ({ ...current, visualDirection: event.target.value }))} />
+              <textarea name={`${template.templateId}-visual-direction`} value={recipe.visualDirection} onChange={(event) => setRecipe((current) => ({ ...current, visualDirection: event.target.value }))} />
             </label>
             <label>禁止内容（每行一项）
-              <textarea value={recipe.forbidden.join("\n")} onChange={(event) => setRecipe((current) => ({ ...current, forbidden: lines(event.target.value) }))} />
+              <textarea name={`${template.templateId}-forbidden`} value={recipe.forbidden.join("\n")} onChange={(event) => setRecipe((current) => ({ ...current, forbidden: lines(event.target.value) }))} />
             </label>
             <div className="tk-template-role-editor">
               <strong>图片角色说明</strong>
               {recipe.roles.map((role, index) => (
                 <div key={`${role.key}:${index}`}>
-                  <input aria-label={`角色 ${index + 1} 名称`} value={role.key} onChange={(event) => setRecipe((current) => ({ ...current, roles: current.roles.map((item, roleIndex) => roleIndex === index ? { ...item, key: event.target.value } : item) }))} />
-                  <textarea aria-label={`角色 ${index + 1} 说明`} value={role.instruction} onChange={(event) => setRecipe((current) => ({ ...current, roles: current.roles.map((item, roleIndex) => roleIndex === index ? { ...item, instruction: event.target.value } : item) }))} />
+                  <input name={`${template.templateId}-role-${index + 1}-key`} aria-label={`角色 ${index + 1} 名称`} value={role.key} onChange={(event) => setRecipe((current) => ({ ...current, roles: current.roles.map((item, roleIndex) => roleIndex === index ? { ...item, key: event.target.value } : item) }))} />
+                  <textarea name={`${template.templateId}-role-${index + 1}-instruction`} aria-label={`角色 ${index + 1} 说明`} value={role.instruction} onChange={(event) => setRecipe((current) => ({ ...current, roles: current.roles.map((item, roleIndex) => roleIndex === index ? { ...item, instruction: event.target.value } : item) }))} />
                 </div>
               ))}
             </div>
@@ -210,7 +210,7 @@ function TemplateItem({ template, onRefresh }: {
           <fieldset disabled={disabled}>
             <legend>测试提示词</legend>
             <label>样例商品 ID
-              <input value={sampleProductId} onChange={(event) => setSampleProductId(event.target.value)} placeholder="例如 prod_ms1tnmsvx2sxoh0r" />
+              <input name={`${template.templateId}-sample-product-id`} autoComplete="off" value={sampleProductId} onChange={(event) => setSampleProductId(event.target.value)} placeholder="例如 prod_ms1tnmsvx2sxoh0r" />
             </label>
             <small>只生成提示词，不会创建图片任务；会产生提示词模型费用。</small>
             <button type="button" disabled={disabled || !sampleProductId.trim()} onClick={() => void testPrompt()}>{pending === "test" ? "正在测试…" : "测试提示词"}</button>
@@ -273,7 +273,7 @@ export function ImageGenerationTemplateManager({ items }: { items: ImageGenerati
         <h2>新建模板</h2>
         <form onSubmit={(event) => void handleCreate(event)}>
           <div className="tk-form-row">
-            <label>模板名称<input name="name" required /></label>
+            <label>模板名称<input name="name" autoComplete="off" required /></label>
             <label>类目标识
               <input
                 name="categoryKey"

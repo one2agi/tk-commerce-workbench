@@ -242,22 +242,22 @@ describe("operational pages", () => {
     // SettingsWorkspace renders only real settings plus diagnostics
     expect(settingsHtml).toContain("基础设置");
     expect(settingsHtml).not.toContain("定价公式");
-    expect(settingsHtml).toContain("生图与模型");
+    expect(settingsHtml).toContain("生图路径");
+    expect(settingsHtml).toContain("外部服务");
     expect(settingsHtml).toContain("稳定性");
-    expect(settingsHtml).toContain("服务状态");
+    expect(settingsHtml).toContain("应用状态");
     expect(settingsHtml).toContain("打开任务日志");
-    expect(settingsHtml).toContain("保存不会重启 Worker");
+    expect(settingsHtml).toContain("保存后自动生效");
+    expect(settingsHtml).toContain("无需重启容器");
     expect(settingsHtml).not.toContain("生图风格");
     expect(settingsHtml).not.toContain("参考图");
-    expect(settingsHtml).toContain("保存不会重启 Worker");
-    expect(settingsHtml).toContain("页面只显示是否就绪，不会读取、返回或保存密钥与服务地址");
-    // StatusPill shows env-var name in .tk-pill__env
-    expect(settingsHtml).toContain("MIAOSHOU_APP_KEY / MIAOSHOU_APP_SECRET");
+    expect(settingsHtml).toContain("密钥只显示配置状态；已有值不会回显");
     // Configured/unconfigured state via CSS class (BEM class, not text "已配置"/"未配置")
     expect(settingsHtml).toContain("tk-pill is-ok");
     expect(settingsHtml).toContain("tk-pill is-warn");
-    // No password inputs (security boundary preserved)
-    expect(settingsHtml).not.toContain("type=\"password\"");
+    // Secrets can be replaced in the UI, but existing values are never rendered.
+    expect(settingsHtml).toContain("type=\"password\"");
+    expect(settingsHtml).not.toContain("MIAOSHOU_APP_KEY / MIAOSHOU_APP_SECRET");
     // No SaveBar at idle (rendered only when dirty)
     expect(settingsHtml).not.toContain("tk-save-bar");
     expect(settingsHtml).not.toContain("影响每个商品的售价建议");
