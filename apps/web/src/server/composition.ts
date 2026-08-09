@@ -13,7 +13,7 @@ import { ImageGenerationRepository } from "../../../../packages/db/src/repositor
 import { RuntimeConfigurationRepository } from "../../../../packages/db/src/repositories/runtime-configuration-repository.js";
 import type { DbPool } from "../../../../packages/db/src/schema/index.js";
 
-import { createExtensionTokenVerifier, type ExtensionTokenVerifier } from "./auth/extension-token";
+import { createDynamicExtensionTokenVerifier, type ExtensionTokenVerifier } from "./auth/extension-token";
 import { AutomationService } from "./services/automation-service";
 import { IngestService } from "./services/ingest-service";
 import { ProductService, type QueryPort } from "./services/product-service";
@@ -454,6 +454,12 @@ export function createServerServices(input: {
   const encryptedSecrets = secretCodec
     ? secretCodec.seal(input.config.initialSecrets ?? {}, "workspace_settings:1")
     : null;
+  const loadExtensionToken = async (): Promise<string> => {
+    if (!secretCodec) return input.config.extensionToken;
+    const candidate = await runtimeConfiguration.loadCandidate();
+    if (!candidate) return input.config.extensionToken;
+    return secretCodec.open(candidate.encryptedSecrets, "workspace_settings:1").extensionToken ?? "";
+  };
   const products = new ProductService(database);
   const reruns = createPgRerunPort(
     createPgApprovalInvalidationPort(() => input.pool),
@@ -468,7 +474,7 @@ export function createServerServices(input: {
     imageGenerationPath
   };
   return {
-    verifyExtensionToken: createExtensionTokenVerifier(input.config.extensionToken),
+    verifyExtensionToken: createDynamicExtensionTokenVerifier(loadExtensionToken),
     ingest: new IngestService(jobs, new LocalCaptureRepository(input.pool)),
     automation: new AutomationService(new RevisionVersions(input.pool), automationRuns),
     products,
