@@ -62,6 +62,32 @@ export function ProductTable({
   scrollTop,
   onStart
 }: Props): ReactElement {
+  const [collapsedIds, setCollapsedIds] = useState<ReadonlySet<string>>(new Set());
+
+  const allCollapsed =
+    filtered.length > 0 &&
+    filtered.every((item) => collapsedIds.has(String(item.productId)));
+
+  function toggleGallery(productId: string): void {
+    setCollapsedIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(productId)) {
+        next.delete(productId);
+      } else {
+        next.add(productId);
+      }
+      return next;
+    });
+  }
+
+  function toggleAllGalleries(): void {
+    if (allCollapsed) {
+      setCollapsedIds(new Set());
+    } else {
+      setCollapsedIds(new Set(filtered.map((item) => String(item.productId))));
+    }
+  }
+
   function handleScroll(ev: UIEvent<HTMLDivElement>): void {
     onScroll(ev.currentTarget.scrollTop);
   }
@@ -91,7 +117,21 @@ export function ProductTable({
               <th scope="col">图片进度</th>
               <th scope="col">问题提示</th>
               <th scope="col">下一步</th>
-              <th scope="col">操作</th>
+              <th scope="col">
+                <div className="tk-product-table__header-cell">
+                  <span>操作</span>
+                  <button
+                    type="button"
+                    className="tk-product-table__toggle-all-gallery"
+                    aria-expanded={!allCollapsed}
+                    aria-label={allCollapsed ? "展开全部商品图片" : "折叠全部商品图片"}
+                    onClick={toggleAllGalleries}
+                    disabled={filtered.length === 0}
+                  >
+                    {allCollapsed ? "展开全部图片" : "折叠全部图片"}
+                  </button>
+                </div>
+              </th>
             </tr>
           </thead>
           <tbody>
@@ -104,6 +144,7 @@ export function ProductTable({
               const blockedReason = row.nextAction.kind === "start" && !row.nextAction.enabled
                 ? startBlockedReason(item)
                 : null;
+              const isCollapsed = collapsedIds.has(productId);
               return (
                 <Fragment key={productId}>
                   <tr data-product-summary-for={productId} aria-selected={checked}>
@@ -163,22 +204,35 @@ export function ProductTable({
                     </div>
                   </td>
                   <td>
-                    <a href={`/products/${encodeURIComponent(productId)}`} aria-label={`查看详情 ${productId}`}>
-                      查看
-                    </a>
+                    <div className="tk-product-table__row-actions">
+                      <a href={`/products/${encodeURIComponent(productId)}`} aria-label={`查看详情 ${productId}`}>
+                        查看
+                      </a>
+                      <button
+                        type="button"
+                        className="tk-product-table__toggle-gallery"
+                        aria-expanded={!isCollapsed}
+                        aria-label={`${isCollapsed ? "展开图片" : "折叠图片"} ${productId}`}
+                        onClick={() => toggleGallery(productId)}
+                      >
+                        {isCollapsed ? "展开图片" : "折叠图片"}
+                      </button>
+                    </div>
                   </td>
                   </tr>
-                  <tr className="tk-product-table__gallery-row" data-product-gallery-for={productId}>
-                    <td colSpan={10}>
-                      <div role="group" aria-label={`商品 ${productId} 图片`}>
-                        <ProductImageGallery
-                          productId={productId}
-                          originalImageUrls={item.originalImageUrls}
-                          processedImageUrls={item.processedImageUrls}
-                        />
-                      </div>
-                    </td>
-                  </tr>
+                  {!isCollapsed ? (
+                    <tr className="tk-product-table__gallery-row" data-product-gallery-for={productId}>
+                      <td colSpan={10}>
+                        <div role="group" aria-label={`商品 ${productId} 图片`}>
+                          <ProductImageGallery
+                            productId={productId}
+                            originalImageUrls={item.originalImageUrls}
+                            processedImageUrls={item.processedImageUrls}
+                          />
+                        </div>
+                      </td>
+                    </tr>
+                  ) : null}
                 </Fragment>
               );
             })}

@@ -77,6 +77,9 @@ function ImageSection({
                     aria-label={`放大${label} ${index + 1}/${images.length}`}
                     onClick={(event) => onOpen(kind, index, event.currentTarget)}
                   >
+                    {index === 0 ? (
+                      <span className="tk-product-image-gallery__badge-cover">主图</span>
+                    ) : null}
                     {failed ? (
                       <span>图片加载失败</span>
                     ) : (
@@ -118,12 +121,6 @@ export function ProductImageGallery({
   const [failedImageKeys, setFailedImageKeys] = useState<ReadonlySet<string>>(new Set());
   const openerRef = useRef<HTMLButtonElement | null>(null);
 
-  const previewImages = preview?.kind === "original"
-    ? originalImageUrls
-    : preview?.kind === "processed"
-      ? processedImageUrls
-      : [];
-
   function handleOpen(
     kind: GalleryKind,
     activeIndex: number,
@@ -163,7 +160,8 @@ export function ProductImageGallery({
       {preview ? (
         <ImagePreviewDialog
           kind={KIND_LABEL[preview.kind]}
-          images={previewImages}
+          originalImageUrls={originalImageUrls}
+          processedImageUrls={processedImageUrls}
           activeIndex={preview.activeIndex}
           onActiveIndexChange={(activeIndex) => setPreview({ ...preview, activeIndex })}
           onClose={handleClose}

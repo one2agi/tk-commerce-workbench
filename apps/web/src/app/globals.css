@@ -239,7 +239,77 @@ button:disabled {
 
 .tk-product-table th:last-child,
 .tk-product-table td:last-child {
-  width: 92px;
+  width: 140px;
+}
+
+.tk-product-table__header-cell {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px;
+}
+
+.tk-product-table__toggle-all-gallery {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 22px;
+  padding: 1px 6px;
+  border: 1px solid #cbd5e1;
+  border-radius: 5px;
+  color: #475569;
+  background: #fff;
+  font-size: 11px;
+  font-weight: 600;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: border-color 150ms ease, background 150ms ease, color 150ms ease;
+}
+
+.tk-product-table__toggle-all-gallery:hover:not(:disabled) {
+  border-color: #2563eb;
+  color: #1d4ed8;
+  background: #eff6ff;
+}
+
+.tk-product-table__toggle-all-gallery:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.tk-product-table__row-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.tk-product-table__toggle-gallery {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 26px;
+  padding: 2px 7px;
+  border: 1px solid #cbd5e1;
+  border-radius: 6px;
+  color: #334155;
+  background: #f8fafc;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: all 150ms ease;
+}
+
+.tk-product-table__toggle-gallery:hover {
+  border-color: #2563eb;
+  color: #1d4ed8;
+  background: #eff6ff;
+}
+
+.tk-product-table__toggle-gallery[aria-expanded="false"] {
+  border-color: #e2e8f0;
+  color: #64748b;
+  background: #f1f5f9;
 }
 
 .tk-product-table tbody tr:last-child td {
@@ -296,6 +366,10 @@ button:disabled {
   color: #64748b;
   font-size: 13px;
   font-weight: 700;
+}
+
+.tk-product-table__gallery-row {
+  transition: opacity 150ms ease, max-height 150ms ease;
 }
 
 .tk-product-table__gallery-row > td:first-child {
@@ -379,6 +453,8 @@ button:disabled {
   overscroll-behavior-inline: contain;
   scrollbar-color: #b9c4d2 transparent;
   scrollbar-width: thin;
+  -webkit-mask-image: linear-gradient(to right, black calc(100% - 32px), transparent 100%);
+  mask-image: linear-gradient(to right, black calc(100% - 32px), transparent 100%);
 }
 
 .tk-product-image-gallery__strip {
@@ -396,21 +472,50 @@ button:disabled {
   flex: 0 0 86px;
   padding: 0;
   overflow: hidden;
-  border: 1px solid #d8e0e9;
+  border: 1px solid #ccd5e0;
   border-radius: 10px;
   background: #edf1f5;
+  cursor: pointer;
+  transition: transform 0.15s cubic-bezier(0.16, 1, 0.3, 1),
+              border-color 0.15s cubic-bezier(0.16, 1, 0.3, 1),
+              box-shadow 0.15s cubic-bezier(0.16, 1, 0.3, 1);
 }
 
 .tk-product-image-gallery__tile:hover,
 .tk-product-image-gallery__tile:focus-visible {
   border-color: #1769e0;
-  outline: 3px solid rgb(23 105 224 / 14%);
+  outline: 3px solid rgb(23 105 224 / 20%);
+  transform: translateY(-2px);
+  box-shadow: 0 4px 12px rgba(23, 105, 224, 0.2);
 }
 
 .tk-product-image-gallery__section.is-processed .tk-product-image-gallery__tile:hover,
 .tk-product-image-gallery__section.is-processed .tk-product-image-gallery__tile:focus-visible {
   border-color: #7857d8;
-  outline-color: rgb(120 87 216 / 16%);
+  outline-color: rgb(120 87 216 / 22%);
+  box-shadow: 0 4px 12px rgba(120, 87, 216, 0.22);
+}
+
+.tk-product-image-gallery__badge-cover {
+  position: absolute;
+  top: 4px;
+  left: 4px;
+  z-index: 2;
+  padding: 2px 6px;
+  border-radius: 4px;
+  color: #ffffff;
+  background: rgba(23, 105, 224, 0.92);
+  font-size: 10px;
+  font-weight: 700;
+  line-height: 1.2;
+  letter-spacing: 0.2px;
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.25);
+  pointer-events: none;
+  backdrop-filter: blur(2px);
+}
+
+.tk-product-image-gallery__section.is-processed .tk-product-image-gallery__badge-cover {
+  background: rgba(120, 87, 216, 0.92);
 }
 
 .tk-product-image-gallery__tile img {
@@ -418,9 +523,14 @@ button:disabled {
   width: 100%;
   height: 100%;
   object-fit: cover;
+  transition: transform 0.2s cubic-bezier(0.16, 1, 0.3, 1);
 }
 
-.tk-product-image-gallery__tile > span {
+.tk-product-image-gallery__tile:hover img {
+  transform: scale(1.05);
+}
+
+.tk-product-image-gallery__tile > span:not(.tk-product-image-gallery__badge-cover) {
   display: grid;
   place-items: center;
   width: 100%;
@@ -436,6 +546,7 @@ button:disabled {
   position: absolute;
   right: 5px;
   bottom: 5px;
+  z-index: 2;
   display: grid;
   place-items: center;
   min-width: 21px;
@@ -443,9 +554,10 @@ button:disabled {
   padding: 0 5px;
   border-radius: 6px;
   color: #fff;
-  background: rgb(15 25 38 / 72%);
+  background: rgb(15 25 38 / 76%);
   font-size: 11px;
   font-weight: 750;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.2);
 }
 
 .tk-product-image-gallery__controls {
@@ -522,7 +634,7 @@ button:disabled {
   font-weight: 750;
 }
 
-.tk-image-preview__header button {
+.tk-image-preview__header > button {
   width: 38px;
   height: 38px;
   border: 1px solid rgb(255 255 255 / 18%);
@@ -530,6 +642,44 @@ button:disabled {
   color: #fff;
   background: rgb(255 255 255 / 6%);
   font-size: 24px;
+}
+
+.tk-image-preview__mode-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  padding: 3px;
+  border-radius: 8px;
+  background: rgb(255 255 255 / 7%);
+  border: 1px solid rgb(255 255 255 / 12%);
+}
+
+.tk-image-preview__mode-toggle button {
+  width: auto;
+  min-height: 28px;
+  height: 28px;
+  padding: 0 10px;
+  border: none;
+  border-radius: 6px;
+  color: #94a3b8;
+  background: transparent;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 120ms ease;
+}
+
+.tk-image-preview__mode-toggle button:hover:not(.is-active) {
+  color: #f1f5f9;
+  background: rgb(255 255 255 / 8%);
+}
+
+.tk-image-preview__mode-toggle button.is-active,
+.tk-image-preview__mode-toggle button[aria-selected="true"] {
+  color: #fff;
+  background: #2563eb;
+  font-weight: 700;
+  box-shadow: 0 1px 4px rgb(0 0 0 / 25%);
 }
 
 .tk-image-preview__stage {
@@ -549,6 +699,82 @@ button:disabled {
   border-radius: 8px;
   object-fit: contain;
   box-shadow: 0 16px 45px rgb(0 0 0 / 38%);
+}
+
+.tk-image-preview__stage--ab {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 16px;
+  place-items: center stretch;
+  align-content: center;
+}
+
+.tk-image-preview__ab-pane {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  height: 100%;
+  max-height: 100%;
+  min-height: 0;
+  min-width: 0;
+  overflow: hidden;
+  border-radius: 10px;
+  background: rgb(0 0 0 / 24%);
+  border: 1px solid rgb(255 255 255 / 8%);
+  padding: 12px;
+}
+
+.tk-image-preview__ab-pane > img {
+  max-width: 100%;
+  max-height: 100%;
+  border-radius: 6px;
+  object-fit: contain;
+  box-shadow: 0 12px 36px rgb(0 0 0 / 36%);
+}
+
+.tk-image-preview__ab-tag {
+  position: absolute;
+  top: 10px;
+  left: 10px;
+  z-index: 2;
+  padding: 3px 9px;
+  border-radius: 6px;
+  color: #fff;
+  background: rgb(15 25 38 / 78%);
+  backdrop-filter: blur(4px);
+  border: 1px solid rgb(255 255 255 / 15%);
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  pointer-events: none;
+}
+
+.tk-image-preview__placeholder {
+  display: grid;
+  place-items: center;
+  width: 100%;
+  height: 100%;
+  padding: 24px;
+  border: 1px dashed rgb(255 255 255 / 18%);
+  border-radius: 8px;
+  color: #94a3b8;
+  background: rgb(255 255 255 / 3%);
+  font-size: 13px;
+  text-align: center;
+}
+
+.tk-image-preview__filmstrip-placeholder {
+  display: grid;
+  place-items: center;
+  width: 100%;
+  height: 100%;
+  border-radius: 5px;
+  color: #64748b;
+  background: rgb(255 255 255 / 5%);
+  font-size: 12px;
+  font-weight: 700;
 }
 
 .tk-image-preview__previous,
@@ -604,6 +830,36 @@ button:disabled {
   height: 100%;
   border-radius: 5px;
   object-fit: cover;
+}
+
+@media (max-width: 768px) {
+  .tk-image-preview__backdrop {
+    padding: 12px;
+  }
+
+  .tk-image-preview {
+    width: 100%;
+    height: calc(100vh - 24px);
+    grid-template-rows: 60px minmax(0, 1fr) 96px;
+  }
+
+  .tk-image-preview__stage {
+    padding: 16px 56px;
+  }
+
+  .tk-image-preview__stage--ab {
+    grid-template-columns: 1fr;
+    grid-template-rows: 1fr 1fr;
+    gap: 10px;
+  }
+
+  .tk-image-preview__previous {
+    left: 8px;
+  }
+
+  .tk-image-preview__next {
+    right: 8px;
+  }
 }
 
 .tk-start-status {

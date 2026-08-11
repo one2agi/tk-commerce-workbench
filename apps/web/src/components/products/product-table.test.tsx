@@ -262,4 +262,51 @@ describe("ProductTable row-level start action", () => {
     expect(screen.getByRole("link", { name: /查看进度 892408514788/ })).toHaveAttribute("href", "/products/892408514788");
     expect(screen.queryByRole("button", { name: /开始处理 892408514788/ })).toBeNull();
   });
+
+  it("toggles individual product gallery row collapse and expand state", () => {
+    const { screen } = renderTable({
+      item: item({
+        originalImageUrls: ["/source-1.jpg"],
+        processedImageUrls: []
+      })
+    });
+
+    const groupBefore = screen.getByRole("group", { name: "商品 892408514788 图片" });
+    expect(groupBefore).toBeInTheDocument();
+
+    const toggleButton = screen.getByRole("button", { name: "折叠图片 892408514788" });
+    expect(toggleButton).toHaveAttribute("aria-expanded", "true");
+
+    fireEvent.click(toggleButton);
+
+    expect(screen.queryByRole("group", { name: "商品 892408514788 图片" })).toBeNull();
+
+    const expandButton = screen.getByRole("button", { name: "展开图片 892408514788" });
+    expect(expandButton).toHaveAttribute("aria-expanded", "false");
+
+    fireEvent.click(expandButton);
+
+    expect(screen.getByRole("group", { name: "商品 892408514788 图片" })).toBeInTheDocument();
+  });
+
+  it("toggles all product gallery rows using global header button", () => {
+    const { screen } = renderTable({
+      item: item({
+        originalImageUrls: ["/source-1.jpg"],
+        processedImageUrls: []
+      })
+    });
+
+    const globalButton = screen.getByRole("button", { name: "折叠全部商品图片" });
+    expect(globalButton).toHaveAttribute("aria-expanded", "true");
+
+    fireEvent.click(globalButton);
+
+    expect(screen.queryByRole("group", { name: "商品 892408514788 图片" })).toBeNull();
+    expect(screen.getByRole("button", { name: "展开全部商品图片" })).toHaveAttribute("aria-expanded", "false");
+
+    fireEvent.click(screen.getByRole("button", { name: "展开全部商品图片" }));
+
+    expect(screen.getByRole("group", { name: "商品 892408514788 图片" })).toBeInTheDocument();
+  });
 });
