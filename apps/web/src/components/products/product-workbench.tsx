@@ -102,18 +102,6 @@ export function ProductWorkbench({
     dispatch({ type: "refresh", items: initialItems });
   }, [initialItems]);
 
-  // Restore the recorded scrollTop onto the table region after each render.
-  // We avoid ref-based DOM mutation by relying on a hidden mirror that the
-  // table reads back — this keeps the React tree declarative.
-  useEffect(() => {
-    const region = document.querySelector<HTMLDivElement>(
-      "[data-testid='product-table-scroll']"
-    );
-    if (region && region.scrollTop !== state.scrollTop) {
-      region.scrollTop = state.scrollTop;
-    }
-  }, [state.scrollTop, state.filtered]);
-
   const overview = useMemo(() => buildStageOverview(state.items), [state.items]);
 
   const drawerItem = useMemo<ProductPoolItemV1 | null>(() => {
