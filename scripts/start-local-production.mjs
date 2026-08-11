@@ -26,6 +26,14 @@ const PROXY_ENV_KEYS = [
   "NODE_TLS_REJECT_UNAUTHORIZED"
 ];
 const LOOPBACK_NO_PROXY = ["127.0.0.1", "localhost", "::1"];
+const EXTERNAL_PROXY_ENV_KEYS = [
+  "HTTP_PROXY",
+  "HTTPS_PROXY",
+  "ALL_PROXY",
+  "http_proxy",
+  "https_proxy",
+  "all_proxy"
+];
 
 export function readEnvFile(text) {
   const env = {};
@@ -83,6 +91,25 @@ export function buildRuntimeEnvironment({
     TK_RUNTIME_LAUNCH_ID: launchId,
     NO_PROXY: mergeNoProxy(envFile.NO_PROXY ?? sanitized.NO_PROXY),
     no_proxy: mergeNoProxy(envFile.no_proxy ?? sanitized.no_proxy)
+  };
+}
+
+export function buildWorkerEnvironment({
+  runtimeEnv,
+  hostEnv = process.env,
+  workerReadyPath
+}) {
+  const proxyEnv = {};
+  for (const key of EXTERNAL_PROXY_ENV_KEYS) {
+    if (hostEnv[key]) proxyEnv[key] = hostEnv[key];
+  }
+  return {
+    ...runtimeEnv,
+    ...proxyEnv,
+    PGAPPNAME: "tk-workbench-local-worker",
+    TK_WORKER_READY_PATH: workerReadyPath,
+    NO_PROXY: mergeNoProxy(hostEnv.NO_PROXY ?? hostEnv.no_proxy ?? runtimeEnv.NO_PROXY),
+    no_proxy: mergeNoProxy(hostEnv.no_proxy ?? hostEnv.NO_PROXY ?? runtimeEnv.no_proxy)
   };
 }
 
@@ -356,11 +383,7 @@ async function main() {
   await mkdir(RUNTIME_DIR, { recursive: true });
 
   console.log("[start] Starting web and worker. Keep this terminal open.");
-  const workerEnv = {
-    ...runtimeEnv,
-    PGAPPNAME: "tk-workbench-local-worker",
-    TK_WORKER_READY_PATH: workerReadyPath
-  };
+  const workerEnv = buildWorkerEnvironment({ runtimeEnv, workerReadyPath });
   const web = spawnService("web", "pnpm", ["--filter", "@tk/web", "start"], runtimeEnv);
   const worker = spawnService("worker", "pnpm", ["--filter", "@tk/worker", "start"], workerEnv);
 

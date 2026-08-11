@@ -4,6 +4,7 @@ import { join } from "node:path";
 import test from "node:test";
 
 import {
+  buildWorkerEnvironment,
   buildRuntimeEnvironment,
   mergeNoProxy,
   readEnvFile,
@@ -69,6 +70,41 @@ test("buildRuntimeEnvironment injects production launch context and live worker 
     assert.equal(env.TMPDIR, "/tmp");
     assert.equal(env.TEMP, "/tmp");
   }
+});
+
+test("buildWorkerEnvironment restores external proxy variables for live adapters", () => {
+  const runtimeEnv = buildRuntimeEnvironment({
+    launchId: "launch_1",
+    hostEnv: {
+      PATH: "/bin",
+      HTTP_PROXY: "http://127.0.0.1:6984",
+      HTTPS_PROXY: "http://127.0.0.1:6984",
+      NO_PROXY: "custom.internal"
+    },
+    envFile: {
+      DATABASE_URL: "postgresql://postgres:postgres@127.0.0.1:5432/tk_workbench",
+      EXTERNAL_ADAPTER_MODE: "live"
+    }
+  });
+
+  const workerEnv = buildWorkerEnvironment({
+    runtimeEnv,
+    hostEnv: {
+      HTTP_PROXY: "http://127.0.0.1:6984",
+      HTTPS_PROXY: "http://127.0.0.1:6984",
+      NO_PROXY: "custom.internal"
+    },
+    workerReadyPath: "/tmp/worker-ready.json"
+  });
+
+  assert.equal(runtimeEnv.HTTP_PROXY, undefined);
+  assert.equal(runtimeEnv.HTTPS_PROXY, undefined);
+  assert.equal(workerEnv.HTTP_PROXY, "http://127.0.0.1:6984");
+  assert.equal(workerEnv.HTTPS_PROXY, "http://127.0.0.1:6984");
+  assert.equal(workerEnv.NO_PROXY, "custom.internal,127.0.0.1,localhost,::1");
+  assert.equal(workerEnv.no_proxy, workerEnv.NO_PROXY);
+  assert.equal(workerEnv.TK_WORKER_READY_PATH, "/tmp/worker-ready.json");
+  assert.equal(workerEnv.PGAPPNAME, "tk-workbench-local-worker");
 });
 
 test("readEnvFile parses simple env assignments", () => {
