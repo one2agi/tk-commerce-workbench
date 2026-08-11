@@ -1,6 +1,6 @@
 # 项目索引：tk-commerce-workbench
 
-生成时间：2026-07-25
+生成时间：2026-08-11
 
 ## 📁 项目结构
 
@@ -41,41 +41,49 @@ tk-commerce-workbench/                 # pnpm monorepo (pnpm@9.15.9, node 22)
 ## 📦 核心模块
 
 ### 模块：@tk/contracts
+
 - 路径：`packages/contracts/src/`
 - 导出：`ids, quantities, states, errors, commands, read-models, jobs, ports, source-url`
 - 用途：跨应用层的类型/端口契约（zod 校验）
 
 ### 模块：@tk/domain
+
 - 路径：`packages/domain/src/`
 - 导出：`pricing`, `product/quality+revision`, `state/project-ui-stage`, `listing`, `assets`, `templates/match-template`, `automation/graph`, `approval/create-snapshot+invalidate-approval`
 - 用途：纯函数领域逻辑（定价、选品、模板匹配、状态机）
 
 ### 模块：@tk/db
+
 - 路径：`packages/db/src/`
-- 导出：`schema`, 11 个 repository（catalog/job/automation-run/exchange-rate/asset/audit/approval/canvas-quota/pipeline/local-capture），`content-addressed-store`，`bootTestDb`
+- 导出：`schema`, 10 个 repository（approval/asset/audit/automation-run/canvas-quota/catalog/exchange-rate/job/local-capture/pipeline），`content-addressed-store`，`bootTestDb`
 - 用途：drizzle-orm 数据访问 + pglite 测试 harness
 
 ### 模块：@tk/adapters
+
 - 路径：`packages/adapters/src/`
 - 导出：`miaoshou/{client,source-adapter,edit-adapter,edit-mapper,reconcile-edit}`, `canvas`, `llm/openai-compatible`, `exchange-rate`, `staging`, `security/safe-image-download`, `factory`, `testing/fakes`
 - 用途：实现 contracts 中的 port，含 mock 与 live 双模式
 
 ### 模块：@tk/config
+
 - 路径：`packages/config/src/`
-- 导出：`env`（基于 process.env + zod）
+- 导出：`env`（基于 process.env + 手写 helper 校验 `require_`/`parseIntStrict`/`ensureLoopbackUnlessAllowLan`，无 zod）
 - 用途：本地/测试/生产的统一环境变量入口
 
 ### 模块：apps/worker（handlers）
+
 - 路径：`apps/worker/src/handlers/`
 - 模块：`miaoshou_collect`, `miaoshou_prepare_writeback`, `archive_assets`, `generate_listing`, `calculate_pricing`, `refresh_exchange_rate`, `match_template`, `select_images`, `generate_canvas`, `final_preview`, `staging_cleanup`, `miaoshou_edit`
-- 用途：每个 handler 对应 worker-loop 的一种 job
+- 用途：每个 handler 对应 worker-loop 的一种 job；**注意 handler 文件名 ≠ Job kind**（如 kind `asset_archive` 由 `archive-assets.ts` 处理，12 类 `JobKind` 定义于 `@tk/contracts`）
 
 ### 模块：apps/web（pages）
+
 - 路径：`apps/web/src/app/`
 - 页面：`/`, `/products/[id]`, `/products/[id]/review`, `/processing-rules`, `/write-records`, `/settings`, `/tasks`, `/templates`
 - 用途：本地产品工作台 UI（侧栏导航在 `components/navigation/sidebar.tsx`）
 
 ### 模块：apps/extension
+
 - 路径：`apps/extension/src/`
 - 组成：`background/{index,capture-queue,chrome-capture-tab-port,submit-selected}`, `content/{index,detail-parser,scan-store,store-overlay,page-context-bridge,page-image-selection,normalize-1688-url}`
 - 用途：1688 商品选择 → 提交到本地 ingest API（`/api/v1/ingest-links`）
@@ -102,7 +110,7 @@ tk-commerce-workbench/                 # pnpm monorepo (pnpm@9.15.9, node 22)
 
 ## 🧪 测试覆盖
 
-- 单元/组件测试：约 95 个 `*.test.ts(x)` 文件（vitest）
+- 单元/组件测试：94 个 `*.test.ts(x)` 文件（vitest）
 - 集成测试：`packages/db/test:integration`（pglite）+ `apps/worker/test:integration`
 - E2E：6 个 Playwright spec（`e2e/*.spec.ts`），含 `full-mocked-flow`、`worker-recovery`、`browser-workbench`、`ui-context`、`workbench-fixed-samples`、`collection-to-product-pool`
 - 入口：`pnpm test` → `scripts/run-tests.mjs`；`pnpm test:e2e` → `playwright test`

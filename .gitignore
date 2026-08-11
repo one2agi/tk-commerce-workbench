@@ -33,3 +33,6 @@ test-results/
 .idea/
 .vscode/*
 !.vscode/settings.json
+
+# SkillHub 等第三方工具本地 skill 包，不入库
+.agents/
