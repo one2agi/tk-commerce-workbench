@@ -121,6 +121,69 @@ test("真实桌面页面保留高密度工作台布局、筛选勾选与批量�
   expect(startedRevisionIds.sort()).toEqual(["revision_browser_a", "revision_browser_b"]);
 });
 
+test("连续向下滚动商品表时不会被旧位置反向拉回", async ({ page }) => {
+  await database.pool.query(`
+    INSERT INTO products
+      (id, operator_id, source_url, source_item_id, locale, currency, state_source, state_automation)
+    SELECT
+      'product_scroll_' || sequence,
+      'op_browser',
+      'https://detail.1688.com/offer/scroll-' || sequence || '.html',
+      'scroll-' || sequence,
+      'th-TH',
+      'THB',
+      'success',
+      'not_started'
+    FROM generate_series(1, 40) AS sequence;
+    INSERT INTO product_revisions
+      (id, product_id, draft_version, source_title, source_payload, working_draft)
+    SELECT
+      'revision_scroll_' || sequence,
+      'product_scroll_' || sequence,
+      1,
+      '滚动稳定性商品 ' || sequence,
+      '{"mainImages":[{"url":"https://assets.example/scroll.jpg"}],"detailImages":[]}'::jsonb,
+      '{}'
+    FROM generate_series(1, 40) AS sequence;
+  `);
+
+  try {
+    await page.setViewportSize({ width: 1458, height: 576 });
+    const cdp = await page.context().newCDPSession(page);
+    await cdp.send("Emulation.setCPUThrottlingRate", { rate: 6 });
+    await page.goto("/");
+    const scroller = page.getByTestId("product-table-scroll");
+    await expect(scroller).toBeVisible();
+    await scroller.evaluate((node) => {
+      node.scrollTop = 420;
+      (window as typeof window & { __productScrollEvents?: number[] }).__productScrollEvents = [];
+      node.addEventListener("scroll", () => {
+        (window as typeof window & { __productScrollEvents: number[] })
+          .__productScrollEvents.push(node.scrollTop);
+      });
+    });
+
+    const box = await scroller.boundingBox();
+    expect(box).not.toBeNull();
+    await page.mouse.move(box!.x + box!.width / 2, box!.y + box!.height / 2);
+    for (let index = 0; index < 64; index += 1) {
+      await page.mouse.wheel(0, 60);
+      await page.waitForTimeout(4);
+    }
+    await page.waitForTimeout(300);
+
+    const scrollEvents = await page.evaluate(() => (
+      (window as typeof window & { __productScrollEvents?: number[] }).__productScrollEvents ?? []
+    ));
+    const reverseSteps = scrollEvents.slice(1).filter((top, index) => top < scrollEvents[index]!);
+
+    expect(scrollEvents.length).toBeGreaterThan(8);
+    expect(reverseSteps).toEqual([]);
+  } finally {
+    await database.pool.query("DELETE FROM products WHERE id LIKE 'product_scroll_%'");
+  }
+});
+
 test("商品列表直接按商品分开展示全部采集原图与洗图结果", async ({ page }) => {
   const imageBody = Buffer.from(
     "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=",
