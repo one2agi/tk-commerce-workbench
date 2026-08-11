@@ -245,4 +245,11 @@ describe("adapter bundle factory cost boundary", () => {
     expect(serialized).toContain("adapter.proxy_invalid");
     expect(serialized).not.toContain(sentinel);
   });
+
+  it("refuses live worker startup with an incomplete image provider", () => {
+    expect(() => createAdapterBundle(
+      { externalAdapterMode: "live", nodeEnv: "production", assetRoot: "./data/assets", imageProviderApiKey: "" },
+      { kind: "worker_command", commandId: "command_123", idempotencyKey: "stable:key:123" }
+    )).toThrow("live adapter configuration is incomplete");
+  });
 });
