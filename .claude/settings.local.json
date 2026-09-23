@@ -1,0 +1,42 @@
+{
+  "permissions": {
+    "allow": [
+      "Skill(tdd-with-review)",
+      "Bash(git check-ignore *)",
+      "Bash(git -C /mnt/d/project/TKcaiji/tk-commerce-workbench/.worktrees/headless-image-gen log --oneline -15)",
+      "Bash(git -C /mnt/d/project/TKcaiji/tk-commerce-workbench/.worktrees/headless-image-gen status --short)",
+      "mcp__serena__get_symbols_overview",
+      "mcp__serena__find_symbol",
+      "Bash(docker version *)",
+      "Bash(docker context *)",
+      "Bash(DOCKER_HOST=unix:///var/run/docker.sock /usr/bin/docker compose -f docker-compose.yml -f compose.dev.yml down)",
+      "Bash(DOCKER_HOST=unix:///var/run/docker.sock /usr/bin/docker compose -f docker-compose.yml -f compose.dev.yml up -d --build)",
+      "Bash(TK_WORKBENCH_ENV_FILE=/home/morav/.local/share/tk-commerce-workbench/.env TK_WORKBENCH_ASSET_DIR=/home/morav/.local/share/tk-commerce-workbench/data/assets DOCKER_HOST=unix:///var/run/docker.sock /usr/bin/docker compose -f docker-compose.yml -f compose.dev.yml down)",
+      "Bash(TK_WORKBENCH_ENV_FILE=/home/morav/.local/share/tk-commerce-workbench/.env TK_WORKBENCH_ASSET_DIR=/home/morav/.local/share/tk-commerce-workbench/data/assets DOCKER_HOST=unix:///var/run/docker.sock /usr/bin/docker compose -f docker-compose.yml -f compose.dev.yml up -d --build)",
+      "Bash(DOCKER_HOST=unix:///var/run/docker.sock /usr/bin/docker image inspect tk-commerce-workbench:dev --format '构建时间: {{.Created}}')",
+      "Bash(DOCKER_HOST=unix:///var/run/docker.sock /usr/bin/docker compose -f docker-compose.yml -f compose.dev.yml ps)",
+      "Bash(DOCKER_HOST=unix:///var/run/docker.sock /usr/bin/docker build *)",
+      "Bash(TK_WORKBENCH_ENV_FILE=/home/morav/.local/share/tk-commerce-workbench/.env TK_WORKBENCH_ASSET_DIR=/home/morav/.local/share/tk-commerce-workbench/data/assets DOCKER_HOST=unix:///var/run/docker.sock /usr/bin/docker compose *)",
+      "Bash(curl -s -o /dev/null -w 'HTTP %{http_code}\\\\n' http://127.0.0.1:3000/api/runtime-health)",
+      "Bash(curl -s http://127.0.0.1:3000/api/runtime-health)",
+      "Bash(bash -n ~/.bashrc)",
+      "Bash(docker info *)",
+      "Bash(docker run *)",
+      "Bash(bash -ic 'type docker; echo \"DOCKER_HOST=[$DOCKER_HOST]\"; docker run --rm -v /home/morav/perm-test:/t tk-commerce-workbench:dev cat /t/file.txt' 2>/dev/null)",
+      "Bash(DOCKER_HOST=unix:///var/run/docker.sock /usr/bin/docker image inspect tk-commerce-workbench:dev --format '{{.Created}}')",
+      "Bash(DOCKER_HOST=unix:///var/run/docker.sock /usr/bin/docker inspect -f 'worker: {{.State.Health.Status}}' tk-commerce-workbench-worker-1)",
+      "Bash(DOCKER_HOST=unix:///var/run/docker.sock /usr/bin/docker ps --format '{{.Names}}\\\\t{{.Image}}\\\\t{{.Status}}')",
+      "Bash(DOCKER_HOST=unix:///var/run/docker.sock /usr/bin/docker images --format '{{.Repository}}:{{.Tag}}')",
+      "Bash(DOCKER_HOST=unix:///var/run/docker.sock /usr/bin/docker images --format '{{.Repository}}:{{.Tag}}\\\\t{{.CreatedSince}}\\\\t{{.Size}}')",
+      "Bash(TK_IMAGE_TAG=880c8c5 TK_WORKBENCH_ENV_FILE=/home/morav/.local/share/tk-commerce-workbench/.env TK_WORKBENCH_ASSET_DIR=/home/morav/.local/share/tk-commerce-workbench/data/assets TK_WEB_PORT=3001 TK_POSTGRES_VOLUME_NAME=tk-commerce-workbench-prod_postgres_data DOCKER_HOST=unix:///var/run/docker.sock /usr/bin/docker compose *)",
+      "Bash(DOCKER_HOST=unix:///var/run/docker.sock /usr/bin/docker logs tk-commerce-workbench-prod-worker-1)",
+      "Bash(DOCKER_HOST=unix:///var/run/docker.sock /usr/bin/docker exec tk-commerce-workbench-prod-worker-1 sh -c 'cat /tmp/tk-worker-ready.json 2>&1; echo; echo \"进程pid: $\\(ls -l /proc/1/comm 2>/dev/null\\)\"')",
+      "Bash(DOCKER_HOST=unix:///var/run/docker.sock /usr/bin/docker run *)",
+      "Bash(DOCKER_HOST=unix:///var/run/docker.sock /usr/bin/docker exec tk-commerce-workbench-web-1 sh -c 'grep -c \"runtime-health\" /app/apps/web/src/app/api/runtime-health/route.ts 2>&1 || ls /app/apps/web/src/app/api/ 2>&1')",
+      "Bash(DOCKER_HOST=unix:///var/run/docker.sock /usr/bin/docker ps -a --filter name=tk-commerce-workbench-prod --format '{{.Names}}')",
+      "Bash(DOCKER_HOST=unix:///var/run/docker.sock /usr/bin/docker volume ls --format '{{.Name}}')",
+      "Bash(docker volume *)",
+      "Bash(python3 -m json.tool)"
+    ]
+  }
+}
