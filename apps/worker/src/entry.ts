@@ -22,7 +22,7 @@ import {
 import { createAdapterBundle as createDefaultAdapterBundle } from "../../../packages/adapters/src/factory.js";
 import { loadConfig, type AppConfig } from "../../../packages/config/src/index.js";
 import { createFakePorts } from "@tk/contracts/testing";
-import type { MiaoshouEditPort, MiaoshouSourcePort } from "@tk/contracts";
+import type { AssetPublishingPort, MiaoshouEditPort, MiaoshouSourcePort } from "@tk/contracts";
 import {
   AuditRepository,
   ApprovalRepository,
@@ -33,6 +33,7 @@ import {
   PipelineRepository,
   createNodePinnedAssetFetch,
   pipelineRepositories,
+  schema,
   type AssetFetch,
   type AssetFetchResponse,
   type DbPool
@@ -309,6 +310,27 @@ export async function createWorkerApplication(input: CreateWorkerApplicationInpu
       jobs.persistMiaoshouReconciliationContext(fence.jobId, fence.owner, fence.leaseToken, new Date(), context)
   };
   const imageGenerationRepository = new ImageGenerationRepository(pool);
+  const publishingPort: AssetPublishingPort = {
+    async publish(publishInput) {
+      if (config.assetPublishS3Endpoint) {
+        return adapters.assetPublishing.publish(publishInput);
+      }
+      const assetIds = publishInput.assets.map((a) => a.assetId);
+      const { rows } = await pool.query<{ id: string; remote_url: string | null }>(
+        `SELECT id, remote_url FROM ${schema.assets} WHERE id = ANY($1::text[])`,
+        [assetIds]
+      );
+      const urlMap = new Map(rows.map((r) => [r.id, r.remote_url]));
+      return publishInput.assets.map((asset) => {
+        const remoteUrl = urlMap.get(asset.assetId);
+        if (remoteUrl && /^https?:\/\//i.test(remoteUrl)) {
+          return { remoteUrl };
+        }
+        return { remoteUrl: `https://cdn.mock/images/${asset.assetId}.${asset.extension}` };
+      });
+    },
+    release: (releaseInput) => adapters.assetPublishing.release(releaseInput)
+  };
   const runtime = buildWorkerRuntime({
     ports: {
       miaoshou,
@@ -317,7 +339,7 @@ export async function createWorkerApplication(input: CreateWorkerApplicationInpu
       exchangeRate: adapters.exchangeRate,
       canvas: adapters.canvas,
       staging: adapters.assetStaging,
-      publishing: adapters.assetPublishing,
+      publishing: publishingPort,
       imagePlanner: adapters.imagePlanner,
       imageGeneration: adapters.imageGeneration
     },

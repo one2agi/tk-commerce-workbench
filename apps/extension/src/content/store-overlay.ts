@@ -6,7 +6,7 @@ import type { IngestLocalCaptureItemV3 } from "@tk/contracts/commands";
 import type { ScanStore, ScannedCard } from "./scan-store.js";
 
 export const OVERLAY_PREVIEW_LIMIT = 40;
-export const COLLECTOR_VERSION_LABEL = "采集器 v3 · 当前详情页";
+const COLLECTOR_VERSION_LABEL = "采集器 v3 · 当前详情页";
 
 export interface OverlayHandle {
   mount(store: ScanStore, host: HTMLElement): void;

@@ -99,7 +99,10 @@ tk-commerce-workbench/                 # pnpm monorepo (pnpm@9.15.9, node 22)
 
 ## 📚 文档
 
+- `MEMORY.md`：项目核心全局记忆库（架构拓扑、实测基线、踩坑指南、演进清单）
 - `docs/product/positioning-and-features.md`：产品定位
+- `docs/product/pending-issues.md`：实测发现的待解决问题与技术债务清单
+- `docs/product/frontend-ux-audit-kiss-yagni.md`：商品界面前端体验走查报告（KISS 与 YAGNI）
 - `docs/operations/local-production.md`：本地生产模式
 - `docs/operations/recovery.md`：worker 恢复与重启
 - `docs/operations/security.md`：token / loopback / secret 安全

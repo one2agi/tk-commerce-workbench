@@ -204,8 +204,6 @@ function captureAndSubmit(
       );
 }
 
-export const createSubmitSelectedHandler = createBackgroundMessageHandler;
-
 function isCaptureStageMessage(message: unknown): message is {
   kind: "capture-stage";
   stage: "waiting_product" | "loading_detail" | "validating";
@@ -275,7 +273,7 @@ type ChromeScripting = {
   ): Promise<unknown> | void;
 };
 
-export function registerBackground(
+function registerBackground(
   runtime: ChromeRuntime,
   storage: ChromeStorage,
   tabs: ChromeTabsApi,

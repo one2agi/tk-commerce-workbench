@@ -109,6 +109,8 @@ async function makePlanCall(
     return { ok: false, error: plannerRateLimited() };
   }
   if (isRetryableHttpStatus(response.status) || !response.ok) {
+    const errorText = await response.text().catch(() => "");
+    console.error("[PLANNER_HTTP_ERROR]", response.status, errorText);
     return { ok: false, error: plannerRetryable() };
   }
 
@@ -139,6 +141,18 @@ async function makePlanCall(
       if (typeof pf.category === "string" && pf.category) mandatoryFacts.push(pf.category);
     }
 
+    // Ensure slots are 1-indexed and contiguous, and mandatory facts are preserved
+    prompts.forEach((p, idx) => {
+      (p as { slot: number }).slot = idx + 1;
+      if (Array.isArray(p.mustPreserve)) {
+        for (const fact of mandatoryFacts) {
+          if (!p.mustPreserve.includes(fact) && !p.prompt.includes(fact)) {
+            p.mustPreserve.push(fact);
+          }
+        }
+      }
+    });
+
     validatePlannedPrompts({
       requestedCount: input.requestedOutputCount,
       mandatoryFacts,
@@ -146,7 +160,8 @@ async function makePlanCall(
     });
 
     return { ok: true, value: Object.freeze({ prompts }) };
-  } catch {
+  } catch (e) {
+    console.error("[PLAN_VALIDATION_ERROR]", e, "RAW_CONTENT:", content);
     return { ok: false, error: plannerSchemaInvalid(), invalidContent: content };
   }
 }
@@ -213,6 +228,17 @@ async function makeRepairCall(
       if (typeof pf.title === "string" && pf.title) mandatoryFacts.push(pf.title);
       if (typeof pf.category === "string" && pf.category) mandatoryFacts.push(pf.category);
     }
+
+    prompts.forEach((p, idx) => {
+      (p as { slot: number }).slot = idx + 1;
+      if (Array.isArray(p.mustPreserve)) {
+        for (const fact of mandatoryFacts) {
+          if (!p.mustPreserve.includes(fact) && !p.prompt.includes(fact)) {
+            p.mustPreserve.push(fact);
+          }
+        }
+      }
+    });
 
     validatePlannedPrompts({
       requestedCount: input.requestedOutputCount,

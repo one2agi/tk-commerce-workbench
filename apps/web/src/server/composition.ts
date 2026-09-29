@@ -8,7 +8,7 @@ import pg from "pg";
 import { AutomationRunRepository } from "../../../../packages/db/src/repositories/automation-run-repository.js";
 import { JobRepository } from "../../../../packages/db/src/repositories/job-repository.js";
 import { LocalCaptureRepository } from "../../../../packages/db/src/repositories/local-capture-repository.js";
-import { ApprovalRepository, schema } from "@tk/db";
+import { ApprovalRepository, CatalogRepository, schema } from "@tk/db";
 import { ImageGenerationRepository } from "../../../../packages/db/src/repositories/image-generation-repository.js";
 import { AuditRepository } from "../../../../packages/db/src/repositories/audit-repository.js";
 import { RuntimeConfigurationRepository } from "../../../../packages/db/src/repositories/runtime-configuration-repository.js";
@@ -506,6 +506,7 @@ export function createServerServices(input: {
   const database = queryPort(input.pool);
   const jobs = new JobRepository(input.pool);
   const automationRuns = new AutomationRunRepository(input.pool);
+  const catalog = new CatalogRepository(input.pool);
   const runtimeConfiguration = new RuntimeConfigurationRepository(input.pool);
   const imageGenerationRepository = new ImageGenerationRepository(input.pool);
   const audit = new AuditRepository(input.pool);
@@ -521,7 +522,7 @@ export function createServerServices(input: {
     if (!candidate) return input.config.extensionToken;
     return secretCodec.open(candidate.encryptedSecrets, "workspace_settings:1").extensionToken ?? "";
   };
-  const products = new ProductService(database);
+  const products = new ProductService(catalog);
   const loadImagePromptPlanner = createImagePromptPlannerLoader({
     bootstrapConfig: () => input.config.bootstrapConfig ?? loadConfig(),
     loadAppliedCandidate: () => runtimeConfiguration.loadAppliedCandidate(),

@@ -27,7 +27,7 @@ interface ToastState { message: string; key: number; }
 
 const RUNTIME_STATUS_POLL_MS = 1_500;
 
-export function validateSettingsDraft(draft: WorkspaceSettingsView): FieldErrors {
+function validateSettingsDraft(draft: WorkspaceSettingsView): FieldErrors {
   const errors: Record<string, string> = {};
   const config = draft.serviceConfiguration;
   if (draft.providerOptions.imageGenerationPath === "headless") {

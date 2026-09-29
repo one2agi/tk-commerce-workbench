@@ -13,13 +13,13 @@
 | PostgreSQL | Docker volume `tk-commerce-workbench_postgres_data` | 同名 Docker volume |
 | 素材 | 宿主机 storage 下的 `data/assets` | 宿主机明确指定的持久化目录 |
 | 配置与密钥 | 宿主机 storage 下的 `.env`，只注入容器 | 目标机器上的 `.env`，不打进镜像 |
-| 对外端口 | 默认仅 `127.0.0.1:3000` | 默认仅 loopback；通过 SSH 本地隧道访问 |
+| 对外端口 | 由 `TK_WEB_PORT` 指定（当前为 `127.0.0.1:3005`，默认 3000） | 默认仅 loopback；通过 SSH 本地隧道访问 |
 
 镜像、源码、数据库和素材相互独立。升级镜像不会删除数据库或素材；`down` 命令也禁止携带 `--volumes`。
 
 ## 配置现在放在哪里
 
-日常业务配置统一在 `http://127.0.0.1:3000/settings` 维护，包括生图路径、Planner、图片 Provider、Canvas、LLM、汇率、妙手、S3 和浏览器扩展 Token。密钥会用 AES-256-GCM 加密后保存在 PostgreSQL，页面只显示“已配置/未配置”，不会回显明文。
+日常业务配置统一在 `http://127.0.0.1:3005/settings`（或对应 `TK_WEB_PORT`）维护，包括生图路径、Planner、图片 Provider、Canvas、LLM、汇率、妙手、S3 和浏览器扩展 Token。密钥会用 AES-256-GCM 加密后保存在 PostgreSQL，页面只显示“已配置/未配置”，不会回显明文。
 
 部署 `.env` 仍保留数据库地址、素材路径等基础设施变量，以及唯一的 `CONFIG_ENCRYPTION_KEY`。新环境可用以下命令生成主密钥：
 
@@ -57,7 +57,7 @@ pnpm docker:dev:up
 3. 构建开发镜像，启动 PostgreSQL，执行迁移，再启动 Web 和 Worker。
 4. Web 健康检查成功后，才记录迁移已完成标记。
 
-成功后访问 `http://127.0.0.1:3000`。
+成功后访问 `http://127.0.0.1:3005`（或您指定的 `TK_WEB_PORT`）。
 
 ### 热重载范围
 

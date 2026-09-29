@@ -157,11 +157,29 @@ function filterSkuMapBySaleProperties(input: {
   }));
 }
 
+function clampMiaoshouSkuMap(skuMap: unknown): unknown {
+  if (!skuMap || typeof skuMap !== "object" || Array.isArray(skuMap)) return skuMap;
+  const clamped: Record<string, unknown> = {};
+  for (const [k, v] of Object.entries(skuMap as Record<string, unknown>)) {
+    if (v && typeof v === "object" && !Array.isArray(v)) {
+      const skuObj = { ...(v as Record<string, unknown>) };
+      if (typeof skuObj.stock === "number" && skuObj.stock > 99_999) {
+        skuObj.stock = 99_999;
+      }
+      clamped[k] = skuObj;
+    } else {
+      clamped[k] = v;
+    }
+  }
+  return clamped;
+}
+
 function mergeDetail(current: Record<string, unknown>, desired: MiaoshouEditableDetail): Record<string, unknown> {
   const colorMap = limitMiaoshouCollection(current.colorMap);
   const sizeMap = limitMiaoshouCollection(current.sizeMap);
   const saleProp3Map = limitMiaoshouCollection(current.saleProp3Map);
-  const skuMap = filterSkuMapBySaleProperties({ skuMap: current.skuMap, colorMap, sizeMap, saleProp3Map });
+  const filteredSkuMap = filterSkuMapBySaleProperties({ skuMap: current.skuMap, colorMap, sizeMap, saleProp3Map });
+  const skuMap = clampMiaoshouSkuMap(filteredSkuMap);
   const merged: Record<string, unknown> = {
     ...current,
     ...desired,
@@ -170,6 +188,12 @@ function mergeDetail(current: Record<string, unknown>, desired: MiaoshouEditable
     saleProp3Map,
     ...(skuMap === undefined ? {} : { skuMap })
   };
+  if (typeof merged.stock === "number" && merged.stock > 99_999) {
+    merged.stock = 99_999;
+  }
+  if (typeof merged.weight === "number" && merged.weight < 0.01) {
+    merged.weight = 0.01;
+  }
   return merged;
 }
 

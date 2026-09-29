@@ -13,7 +13,7 @@ Headless 图片生成绕过 Canvas 工作流界面，通过直接调用图像生
 
 ## 路由切换
 
-打开 `http://127.0.0.1:3000/settings`，在“生图路径”选择 `Headless API` 或 `Canvas 兼容`。在“外部服务 → 图片生成”填写当前路径所需的地址、模型和 API Key，然后保存。Worker 会在当前任务结束后自动应用，不需要修改 env 或重启容器。
+打开 `http://127.0.0.1:3005/settings`（或当前指定的 `TK_WEB_PORT`），在“生图路径”选择 `Headless API` 或 `Canvas 兼容`。在“外部服务 → 图片生成”填写当前路径所需的地址、模型和 API Key，然后保存。Worker 会在当前任务结束后自动应用，不需要修改 env 或重启容器。
 
 在 `IMAGE_GENERATION_PATH=headless` 模式下，Canvas 服务可以完全关闭。
 
@@ -22,8 +22,8 @@ Headless 图片生成绕过 Canvas 工作流界面，通过直接调用图像生
 | 字段 | 说明 | 示例 |
 |---|---|---|
 | 生图路径 | 路由模式：Canvas 或 Headless API | `Headless API` |
-| Planner API 地址 / 模型 / Key | 分析商品并生成提示词 | OpenAI-compatible API |
-| 图片 API 地址 / 模型 / Key | 实际生成图片 | `gpt-image-2` 等提供商模型 |
+| Planner API 地址 / 模型 / Key | 分析商品并生成提示词 | SiliconFlow（`Qwen/Qwen3-VL-8B-Instruct` 等视觉模型） |
+| 图片 API 地址 / 模型 / Key | 实际生成图片 | SiliconFlow（`Tongyi-MAI/Z-Image-Turbo` 等生图模型） |
 
 Canvas 地址、ID、工作流和 Key 只在选择 `Canvas 兼容` 时使用。
 

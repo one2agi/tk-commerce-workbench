@@ -1,0 +1,38 @@
+{
+  "$schema": "https://unpkg.com/knip@5/overview/configuration-schema.json",
+  "ignoreExportsUsedInFile": {
+    "interface": true,
+    "type": true
+  },
+  "ignoreDependencies": [
+    "pg"
+  ],
+  "workspaces": {
+    ".": {
+      "entry": [
+        "scripts/**/*.{mjs,ts}",
+        "tests/**/*.{ts,tsx}",
+        "e2e/**/*.{ts,tsx}"
+      ],
+      "project": [
+        "scripts/**/*.{mjs,ts}",
+        "tests/**/*.{ts,tsx}",
+        "e2e/**/*.{ts,tsx}"
+      ]
+    },
+    "apps/extension": {
+      "vite": true,
+      "entry": [
+        "src/background/index.ts",
+        "src/content/index.ts",
+        "src/content/page-context-bridge.ts",
+        "src/options/index.ts",
+        "src/popup/index.ts"
+      ],
+      "project": ["src/**/*.{ts,tsx}"]
+    },
+    "apps/web": {
+      "project": ["src/**/*.{ts,tsx}"]
+    }
+  }
+}

@@ -249,3 +249,17 @@ export type ImageGenerationTemplateViewV1 = Readonly<{
   activatedAt: string | null;
   createdAt: string;
 }>;
+
+export type ProductFactsData = Readonly<{
+  skuCount: number | null;
+  orderedFinalImages: ReadonlyArray<Readonly<{
+    assetId: string;
+    previewUrl: string;
+    thumbnailUrl?: string;
+  }>>;
+  stock: string | null;
+  weightKg: string | null;
+  dimensions: Readonly<{ lengthCm: string; widthCm: string; heightCm: string }> | null;
+  canonicalMiaoshouTarget: string | null;
+}>;
+

@@ -8,7 +8,7 @@ Chrome MV3 浏览器扩展，用于把**当前打开的 1688 商品详情页一�
 
 1. **弹窗只识别当前活动标签中的标准 1688 商品详情页**
 2. **优先读取 1688 页面商品上下文，再用限定商品区域的 DOM 兜底**，提取标题、价格、库存、实际 SKU、图片、属性、重量和包装尺寸（`content/page-context-bridge.ts`、`detail-parser.ts`）
-3. **用 Bearer token 把 V3 采集结果 POST 到 `http://127.0.0.1:3000/api/v1/local-captures`**
+3. **用 Bearer token 把 V3 采集结果 POST 到 `http://127.0.0.1:3005/api/v1/local-captures`**（端口与本地工作台 `TK_WEB_PORT` 保持一致，当前为 3005）
 
 详情连续稳定 2 秒才会提交，单商品最长等待 45 秒。扩展不创建或关闭商品标签页；SVG、页面图标、登录页、店铺标题和伪造 SKU 不会作为完整采集入库。
 
@@ -91,12 +91,12 @@ echo 'EXTENSION_TOKEN='"$(openssl rand -hex 32)" >> apps/web/.env
 > 如果 popup 显示「paused」，多半是：① token 错了；② web runtime 没起；③ 是 Browser 加载的 page 不是真 loopback（拒绝非 loopback 是故意做的）。
 
 ## 关键 URL 与端口
-
+ 
 | 用途 | URL | 来源 |
 |---|---|---|
-| 提交 API | `http://127.0.0.1:3000/api/v1/local-captures` | hardcoded in `src/background/index.ts` `apiBase` |
-| Web UI | `http://127.0.0.1:3000/` | web runtime |
-| 任务中心 | `http://127.0.0.1:3000/tasks` | web runtime |
+| 提交 API | `http://127.0.0.1:3005/api/v1/local-captures` | hardcoded in `src/background/index.ts` `apiBase`（根据宿主机 `TK_WEB_PORT` 配置，当前为 3005） |
+| Web UI | `http://127.0.0.1:3005/` | web runtime |
+| 任务中心 | `http://127.0.0.1:3005/tasks` | web runtime |
 
 修改 API 端口 = 改 `apiBase` 然后重 build。
 

@@ -145,7 +145,7 @@ export function formatCaptureSummary(capture: CaptureSummaryInput): PopupCapture
   };
 }
 
-export function errorMessage(reason: string): string {
+function errorMessage(reason: string): string {
   if (/^http_\d+$/u.test(reason)) return `工作台提交失败（${reason.slice(5)}）`;
   return ERROR_LABELS[reason] ?? `采集失败：${reason}`;
 }

@@ -202,4 +202,17 @@ describe("ContentAddressedStore", () => {
     await expect(store.archive("https://cdn.example/image")).rejects.toThrow(/PNG|JPEG|content.type|image/i);
     expect((await readdir(assetRoot, { recursive: true })).filter((name) => String(name).includes(".tmp-"))).toEqual([]);
   });
+
+  it("archives valid PNG when Content-Type is application/octet-stream and pathname ends in .png", async () => {
+    const assetRoot = await root();
+    const fetch: AssetFetch = async () => ({
+      status: 200,
+      headers: { "content-type": "application/octet-stream" },
+      body: (async function* () { yield png("octet"); })()
+    });
+    const store = new ContentAddressedStore({ assetRoot, fetch, resolveHost: async () => ["93.184.216.34"] });
+    const archived = await store.archive("https://cdn.example/temporary/output.png?token=xyz");
+    expect(archived.extension).toBe("png");
+    expect(archived).toMatchObject({ width: 320, height: 240 });
+  });
 });

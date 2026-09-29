@@ -53,7 +53,7 @@ corepack prepare pnpm@9.15.9 --activate
 pnpm install --frozen-lockfile
 ```
 
-复制 `.env.example` 为 `.env`,至少填写 `DATABASE_URL`、`TEST_DATABASE_URL`、`LOCAL_OPERATOR_ID`、`EXTENSION_TOKEN`;开发阶段保持 `ALLOW_LAN=false`、`EXTERNAL_ADAPTER_MODE=mock`。
+复制 `.env.example` 为 `.env`，至少填写 `DATABASE_URL`、`TEST_DATABASE_URL`、`LOCAL_OPERATOR_ID`、`EXTENSION_TOKEN` 与 `TK_WEB_PORT=3005`；对接真实 1688、SiliconFlow 生图及妙手 ERP 时配置 `EXTERNAL_ADAPTER_MODE=live` 并维护相应 API Key。
 
 ```bash
 set -a
@@ -64,7 +64,7 @@ pnpm db:migrate
 pnpm dev        # 并行启动 web + worker
 ```
 
-Web 只监听 `127.0.0.1`。素材默认永久保存在 `ASSET_ROOT`,不要把 `data/` 加入 Git。
+Web 默认监听 `127.0.0.1:3005`（端口由 `TK_WEB_PORT` 指定）。素材默认永久保存在 `ASSET_ROOT`，不要把 `data/` 加入 Git。
 
 一次性验证全新环境: `bash scripts/verify-fresh-install.sh`
 

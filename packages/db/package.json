@@ -16,13 +16,11 @@
   "dependencies": {
     "@tk/contracts": "workspace:*",
     "@tk/domain": "workspace:*",
-    "drizzle-orm": "0.45.2",
     "pg": "8.22.0"
   },
   "devDependencies": {
     "@electric-sql/pglite": "^0.5.4",
     "@electric-sql/pglite-socket": "^0.2.7",
-    "@types/pg": "8.20.0",
-    "drizzle-kit": "0.31.10"
+    "@types/pg": "8.20.0"
   }
 }

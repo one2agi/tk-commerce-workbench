@@ -63,6 +63,7 @@ export function createPlanImagesHandler(input: PlanImagesDeps): WorkerHandler {
         idempotencyKey: idempotencyKey(`plan:${batchId}`)
       });
     } catch (error) {
+      console.error("[PLAN_IMAGES_ERROR]", error);
       if (error instanceof RetryableJobError) throw error;
       // Transient planner failures are retryable
       throw new RetryableJobError(

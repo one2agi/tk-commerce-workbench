@@ -73,7 +73,7 @@ export function createNodePinnedAssetFetch(timeoutMs = 30_000): AssetFetch {
   });
 }
 
-function imageType(contentType: string | undefined): { extension: "jpg" | "png"; magicLength: number; validMagic: (bytes: Buffer) => boolean } {
+function imageType(contentType: string | undefined, pathname?: string): { extension: "jpg" | "png"; magicLength: number; validMagic: (bytes: Buffer) => boolean } {
   const normalized = contentType?.split(";", 1)[0]?.trim().toLowerCase();
   if (normalized === "image/jpeg") {
     return { extension: "jpg", magicLength: 3, validMagic: (bytes) => bytes[0] === 0xff && bytes[1] === 0xd8 && bytes[2] === 0xff };
@@ -81,6 +81,16 @@ function imageType(contentType: string | undefined): { extension: "jpg" | "png";
   if (normalized === "image/png") {
     const signature = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
     return { extension: "png", magicLength: signature.length, validMagic: (bytes) => bytes.subarray(0, signature.length).equals(signature) };
+  }
+  if (normalized === "application/octet-stream" || normalized === "binary/octet-stream") {
+    const lowerPath = pathname?.toLowerCase() ?? "";
+    if (lowerPath.endsWith(".png")) {
+      const signature = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
+      return { extension: "png", magicLength: signature.length, validMagic: (bytes) => bytes.subarray(0, signature.length).equals(signature) };
+    }
+    if (lowerPath.endsWith(".jpg") || lowerPath.endsWith(".jpeg")) {
+      return { extension: "jpg", magicLength: 3, validMagic: (bytes) => bytes[0] === 0xff && bytes[1] === 0xd8 && bytes[2] === 0xff };
+    }
   }
   throw new Error("asset Content-Type must be image/png or image/jpeg");
 }
@@ -211,7 +221,7 @@ export class ContentAddressedStore {
       }
     }
 
-    const type = imageType(header(response, "content-type"));
+    const type = imageType(header(response, "content-type"), current.pathname);
     const extension = type.extension;
     const temporaryPath = join(this.options.assetRoot, `.tmp-${randomUUID()}`);
     const hash = createHash("sha256");

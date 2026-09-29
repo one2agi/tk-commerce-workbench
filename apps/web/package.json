@@ -30,8 +30,6 @@
     "@types/react": "19.2.17",
     "@types/react-dom": "19.2.3",
     "@types/pg": "8.20.0",
-    "@vitest/coverage-v8": "4.1.10",
-    "eslint-config-next": "16.2.10",
     "jsdom": "29.1.1"
   }
 }
