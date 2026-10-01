@@ -3,6 +3,7 @@
 import { useRef, useState, type ReactElement } from "react";
 
 import { ImagePreviewDialog } from "./image-preview-dialog";
+import { IconImages, IconMaximize } from "../review/review-icons";
 
 export type ProductGalleryImage = Readonly<{
   key: string;
@@ -31,6 +32,8 @@ type ImageSectionProps = Readonly<{
   images: readonly ProductGalleryImage[];
   failedImageKeys: ReadonlySet<string>;
   selectedOriginalAssetIds: ReadonlySet<string>;
+  activeThumbnailIndex?: number;
+  onSelectThumbnail?: (index: number) => void;
   onToggleOriginal?: (assetId: string) => void;
   onImageFailure: (key: string) => void;
   onOpen: (kind: GalleryKind, index: number, opener: HTMLButtonElement) => void;
@@ -47,6 +50,8 @@ function ImageSection({
   images,
   failedImageKeys,
   selectedOriginalAssetIds,
+  activeThumbnailIndex = 0,
+  onSelectThumbnail,
   onToggleOriginal,
   onImageFailure,
   onOpen
@@ -79,13 +84,27 @@ function ImageSection({
                 const failedKey = `${kind}:${image.key}:${image.url}`;
                 const failed = failedImageKeys.has(failedKey);
                 const canSelect = kind === "original" && image.selectable && image.assetId !== null && onToggleOriginal;
+                const isActive = kind === "processed" && index === activeThumbnailIndex;
                 return (
-                  <div key={failedKey} className="tk-product-image-gallery__tile">
+                  <div
+                    key={failedKey}
+                    className={`tk-product-image-gallery__tile ${isActive ? "is-active" : ""}`}
+                    onClick={() => {
+                      if (kind === "processed" && onSelectThumbnail) {
+                        onSelectThumbnail(index);
+                      }
+                    }}
+                  >
                     <button
                       type="button"
                       className="tk-product-image-gallery__preview"
                       aria-label={`放大${label} ${index + 1}/${images.length}`}
-                      onClick={(event) => onOpen(kind, index, event.currentTarget)}
+                      onClick={(event) => {
+                        if (kind === "processed" && onSelectThumbnail) {
+                          onSelectThumbnail(index);
+                        }
+                        onOpen(kind, index, event.currentTarget);
+                      }}
                     >
                       {failed ? (
                         <span>图片加载失败</span>
@@ -97,7 +116,9 @@ function ImageSection({
                           onError={() => onImageFailure(failedKey)}
                         />
                       )}
-                      <small>{index + 1}</small>
+                      <small className="tk-tile-badge">
+                        {kind === "processed" && index === 0 ? "首图" : index + 1}
+                      </small>
                     </button>
                     {kind === "original" ? (
                       canSelect ? (
@@ -140,13 +161,17 @@ export function ProductImageGallery({
 }: ProductImageGalleryProps): ReactElement {
   const [preview, setPreview] = useState<PreviewState>(null);
   const [failedImageKeys, setFailedImageKeys] = useState<ReadonlySet<string>>(new Set());
+  const [activeProcessedIndex, setActiveProcessedIndex] = useState<number>(0);
   const openerRef = useRef<HTMLButtonElement | null>(null);
+  const heroOpenerRef = useRef<HTMLButtonElement | null>(null);
 
   const previewImages = preview?.kind === "original"
     ? originalImages.map((image) => image.url)
     : preview?.kind === "processed"
       ? processedImages.map((image) => image.url)
       : [];
+
+  const activeProcessedImage = processedImages[activeProcessedIndex] ?? processedImages[0] ?? null;
 
   function handleOpen(kind: GalleryKind, activeIndex: number, opener: HTMLButtonElement): void {
     openerRef.current = opener;
@@ -164,25 +189,70 @@ export function ProductImageGallery({
 
   return (
     <div className="tk-product-image-gallery">
-      <ImageSection
-        productId={productId}
-        kind="original"
-        images={originalImages}
-        failedImageKeys={failedImageKeys}
-        selectedOriginalAssetIds={selectedOriginalAssetIds}
-        onToggleOriginal={onToggleOriginal}
-        onImageFailure={handleImageFailure}
-        onOpen={handleOpen}
-      />
+      {/* 1. 主视觉 Hero 展台：居中展示当前选中大图 */}
+      {activeProcessedImage ? (
+        <div className="tk-gallery-hero">
+          <div className="tk-gallery-hero__frame">
+            <img
+              src={activeProcessedImage.url}
+              alt="主图大图预览"
+              className="tk-gallery-hero__image"
+            />
+            <div className="tk-gallery-hero__badge">
+              {activeProcessedIndex === 0 ? "封面主图 · 第 1 张" : `副图 · 第 ${activeProcessedIndex + 1} 张`}
+            </div>
+            <div className="tk-gallery-hero__actions">
+              <button
+                ref={heroOpenerRef}
+                type="button"
+                className="tk-gallery-hero__action-btn"
+                onClick={(e) => handleOpen("processed", activeProcessedIndex, e.currentTarget)}
+                aria-label="放大查看全图"
+              >
+                <IconMaximize />
+                <span>放大查看</span>
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
+
+      {/* 2. 精选主图缩略图序列 */}
       <ImageSection
         productId={productId}
         kind="processed"
         images={processedImages}
         failedImageKeys={failedImageKeys}
         selectedOriginalAssetIds={selectedOriginalAssetIds}
+        activeThumbnailIndex={activeProcessedIndex}
+        onSelectThumbnail={setActiveProcessedIndex}
         onImageFailure={handleImageFailure}
         onOpen={handleOpen}
       />
+
+      {/* 3. 1688 原厂底图抽屉（默认收起，保留呼吸感，按需唤起） */}
+      <details className="tk-product-image-gallery__original-drawer">
+        <summary className="tk-product-image-gallery__drawer-toggle">
+          <div className="tk-product-image-gallery__toggle-label">
+            <IconImages />
+            <span>查看 1688 原厂底图（{originalImages.length} 张）</span>
+          </div>
+          <span className="tk-product-image-gallery__toggle-hint">点击展开 / 收起</span>
+        </summary>
+        <div className="tk-product-image-gallery__drawer-content">
+          <ImageSection
+            productId={productId}
+            kind="original"
+            images={originalImages}
+            failedImageKeys={failedImageKeys}
+            selectedOriginalAssetIds={selectedOriginalAssetIds}
+            onToggleOriginal={onToggleOriginal}
+            onImageFailure={handleImageFailure}
+            onOpen={handleOpen}
+          />
+        </div>
+      </details>
+
       {preview ? (
         <ImagePreviewDialog
           kind={KIND_LABEL[preview.kind]}

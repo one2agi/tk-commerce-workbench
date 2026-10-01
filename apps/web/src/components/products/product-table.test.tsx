@@ -252,4 +252,17 @@ describe("ProductTable row-level start action", () => {
     expect(screen.getByRole("link", { name: /查看进度 892408514788/ })).toHaveAttribute("href", "/products/892408514788");
     expect(screen.queryByRole("button", { name: /开始处理 892408514788/ })).toBeNull();
   });
+
+  it("renders deterministic UTC+8 timestamps to prevent SSR hydration mismatch", () => {
+    const { screen } = renderTable({
+      item: item({
+        collectedAt: "2026-07-26T05:41:00.000Z",
+        updatedAt: "2026-07-26T05:41:00.000Z"
+      })
+    });
+
+    expect(screen.getByText("采集 07/26 13:41")).toBeInTheDocument();
+    expect(screen.getByText("07/26 13:41")).toBeInTheDocument();
+  });
 });
+

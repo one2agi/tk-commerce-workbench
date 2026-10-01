@@ -4,6 +4,7 @@ import { useRef, useState } from "react";
 import type { ConfirmMiaoshouEditV1, RerunDownstreamV1, UpdateProductOverridesV1 } from "@tk/contracts";
 import type { ApprovalPreviewV1 } from "@tk/contracts/read-models";
 import { BASIC_BCP47_PATTERN_SOURCE, isBasicBcp47 } from "../../lib/locale";
+import { IconCheck, IconRefresh, IconArrowRight } from "./review-icons";
 
 type ActionResult = Record<string, unknown> & { draftVersion?: number; revisionId?: string };
 type VersionedDraftUpdate = UpdateProductOverridesV1 & Readonly<{ expectedDraftVersion: number }>;
@@ -234,6 +235,58 @@ export function ApprovalActions(props: Readonly<{
         {writebackState === "failed" ? <p className="tk-review__writeback-warning">写回失败，但已确认图片和审核结果仍保留；重新写回不会重新洗图。</p> : null}
         <p>进入队列后系统才开始同步；这里只更新妙手采集箱草稿，不会发布到店铺。</p>
       </div>
+
+      {/* 底部悬浮操作岛 Floating Action Island */}
+      <div className="tk-floating-island" role="toolbar" aria-label="快捷审核与放行">
+        <div className="tk-floating-island__status">
+          <span className={`tk-floating-island__dot ${writebackState === "succeeded" ? "is-succeeded" : "is-active"}`} />
+          <span className="tk-floating-island__text">
+            {writebackState === "succeeded"
+              ? "已成功写回妙手采集箱"
+              : writebackState === "queued" || writebackState === "syncing"
+                ? "正在向妙手同步中…"
+                : confirmationBlockers.length > 0
+                  ? "当前有前置检查项未就绪，需完成确认"
+                  : "5 张营销主图已就绪 · 规格已自动校验通过"}
+          </span>
+        </div>
+        <div className="tk-floating-island__actions">
+          {writebackState === "not_started" && (
+            <button
+              type="button"
+              className="tk-floating-island__btn-confirm"
+              disabled={confirmPending || confirmationBlockers.length > 0}
+              onClick={() => void confirm()}
+            >
+              <IconCheck />
+              <span>确认放行 · 写入妙手</span>
+            </button>
+          )}
+          {(writebackState === "result_unknown" || writebackState === "failed") && initialWriteback.retryAllowed && !approvalInvalidated && (
+            <button
+              type="button"
+              className="tk-floating-island__btn-confirm"
+              disabled={retryPending}
+              onClick={() => void retryMiaoshouEdit()}
+            >
+              <IconRefresh />
+              <span>重试写入妙手</span>
+            </button>
+          )}
+          {(writebackState === "queued" || writebackState === "syncing") && (
+            <button type="button" className="tk-floating-island__btn-confirm is-syncing" disabled>
+              <span>妙手同步处理中…</span>
+            </button>
+          )}
+          {writebackState === "succeeded" && (
+            <a href={`/write-records?productId=${encodeURIComponent(props.productId)}`} className="tk-floating-island__btn-link">
+              <span>查看写回记录</span>
+              <IconArrowRight />
+            </a>
+          )}
+        </div>
+      </div>
+
       <details className="tk-review__advanced-actions">
         <summary>高级恢复与生成设置</summary>
         <div className="tk-form-row">
