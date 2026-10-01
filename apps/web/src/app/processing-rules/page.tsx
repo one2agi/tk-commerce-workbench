@@ -1,5 +1,3 @@
-export const dynamic = "force-dynamic";
-
 export function renderProcessingRulesPage() {
   return (
     <section aria-label="处理规则">
