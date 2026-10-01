@@ -1,7 +1,7 @@
-import type { MiaoshouSyncStatusV1 } from "@tk/contracts/read-models";
+import type { WriteRecordsOverviewV1 } from "@tk/contracts/read-models";
 import { rejectNonLoopback } from "../../../../server/auth/loopback";
 
-export interface SyncStatusPort { list(): Promise<{ items: MiaoshouSyncStatusV1[] }> }
+export interface SyncStatusPort { list(): Promise<WriteRecordsOverviewV1> }
 
 export function createGetHandler(dependencies: { syncs: SyncStatusPort }) {
   return async function get(request: Request): Promise<Response> {

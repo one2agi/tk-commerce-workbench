@@ -87,9 +87,38 @@
   - ISSUE-02：AI 生图 24h 临时外链过期风险（商户永久 OSS/S3 图床对接）
   - ISSUE-03：AI 生图模型主体保真度不足与幻觉（增加手动基准底图勾选）
   - ISSUE-04：跨境多语言本地化中的国内内贸属性残留（黑白名单过滤词）
-* **前端体验重构（KISS & YAGNI）**：详见 [docs/product/frontend-ux-audit-kiss-yagni.md](file:///mnt/d/project/TKcaiji/tk-commerce-workbench/docs/product/frontend-ux-audit-kiss-yagni.md)
-  - 详情页图片模块四合一精简，去除多轮确认；
-  - 表格【下一步】与【操作】合并为单一清晰的 Primary Action；
-  - 研发调试技术黑话（`rev_xxx`, `deterministic`）界面脱敏；
-  - 底部全灰批量操作栏改为按需浮动呼出；
-  - 增加图片加载失败的优雅占位符（Fallback Placeholder）。
+* **前端体验重构（KISS & YAGNI + Taste Soft）**：已于 2026-09-29 完成落地，详见 [docs/product/frontend-ux-audit-kiss-yagni.md](file:///mnt/d/project/TKcaiji/tk-commerce-workbench/docs/product/frontend-ux-audit-kiss-yagni.md)
+  - [x] **详情页图片模块四合一精简**：砍掉中间多轮重复渲染卡片，收敛为主图画廊与排序器，去除多轮确认阻断；
+  - [x] **表格行动点合二为一**：合并【下一步】与【操作】为唯一的【主行动点】，释放 180px 表格横向空间；
+  - [x] **底层研发调试黑话脱敏**：主界面隐藏 `rev_xxx`、`deterministic` 等开发调试词汇，收敛至折叠式技术排障抽屉；
+  - [x] **底部操作栏改为按需浮动**：未勾选商品时 100% 释放视口高度，勾选后以 Taste Soft 浮动操作岛（Floating Pill）平滑滑入；
+  - [x] **图片加载容错与优雅降级**：统一采用带 SVG Placeholder 的优雅缩略图，杜绝原生浏览器裂图破损。
+* **工作台总览界面极简重构（库库上架-妙手版基线）**：已于 2026-09-29 完成落地，彻底告别暗黑杂乱风格
+  - [x] **纯净浅色侧边栏**：左侧统一为白底灰边框与精致 SVG 矢量图标，保持高净空，不堆砌多余底层运行状态；
+  - [x] **紧凑型状态切换 Tab**：废除大矩形粗框卡片，收敛为轻量下划线指示 Tab，右侧常驻醒目实心绿色 `[ 🍵 写入妙手未发布 ]` 与 `[ 🔄 补图 / 批量处理 ]` 按钮；
+  - [x] **5 列高密度极简表格**：彻底砍掉多余冗余列，消除横向滚动条，行高收敛至 ~72px。首列整合复选框、48x48 缩略图、商品标题、1688 货源徽标、货源单价与抓取时间；
+  - [x] **动态生图进度与彩色状态药丸**：图片列直接渲染彩色流光进度条，状态列采用语义化状态药丸（等写入、生图中、已完成、失败）；
+  - [x] **底部分页与汇总栏**：常驻底部待处理汇总与简洁页码控制器。
+* **商品质检与放行台极简主义重构（Curated Gallery & Inspection Desk）**：已于 2026-09-29 完成落地
+  - [x] **业务角色定位明确**：从“控制台”转变为“AI 交付物最终质检与放行台”。90% 场景为质检 5 张 AI 最终成图并快速放行；
+  - [x] **大留白居中展台**：容器限制 `max-w-[1060px]` 居中布局，搭配温润 `#fafaf9` 画布与 24px 大圆角卡片，彻底消灭拥挤压迫感；
+  - [x] **Hero 大图 + 5张主图胶囊**：上方居中沉浸式 Hero 展台，下方精致胶囊缩略条点击无缝切换大图并自带放大查看；
+  - [x] **渐进式披露收纳冗余**：1688 原厂 24 张底图收纳至 `<details>` 折叠抽屉；已生成的详细 Slot 列表与拖拽调优同样收纳入 `<details>`，仅在有未就绪项时展开，不打扰核心质检；
+  - [x] **常驻胶囊型悬浮放行岛**：视口底部浮动操作岛，左侧微光呼吸绿点提供状态 Reassurance，右侧提供醒目的翡翠绿 `[ 确认放行 · 写入妙手 ]` 按钮；
+  - [x] **纯净矢量图标体系**：全界面杜绝系统默认 emoji 图标，采用统一的纯 SVG 线性矢量图标库（`review-icons.tsx`）。
+* **对标产品（海淘上架助手 / 库库上架）系统与前端设计规范**：
+  - 系统架构与演进路线：详见 [docs/product/benchmark-haitao-assistant-design.md](file:///mnt/d/project/TKcaiji/tk-commerce-workbench/docs/product/benchmark-haitao-assistant-design.md) (2026-10-01)
+  - 前端 UI/UX 深度设计规范：详见 [docs/product/benchmark-haitao-assistant-ui-design.md](file:///mnt/d/project/TKcaiji/tk-commerce-workbench/docs/product/benchmark-haitao-assistant-ui-design.md) (2026-10-01)
+  - 写入记录与生成流水极简落地（Taste Soft 范式）：
+    - 5 格 Bento 指标栏（今日采集、今日写入、今日成功、今日失败、今日生图）采用双层外圈（Double-Bezel）同心圆角设计；
+    - 双 Tab 架构（`写入记录` vs `生成记录`），支持搜索过滤、状态筛选与妙手 ERP 直跳链接；
+    - Button-in-Button CTA 重写按钮，仅针对失败或未成功项允许重试，并防御性阻断成功项避免妙手重复建单；
+  - 核心借鉴：类目模版与必填属性预设（根治 ISSUE-01）、上架自动化抽屉（自动生图/自动写回/定时夜间批处理）、本地多文件夹拖拽选品导入、SKU 白底抠图与标题标准化。
+* **避坑要点：测试断言对 DOM 文本与 Role 的硬约束**：
+  - 核心操作按钮内部若被测试以 `/<button[^>]*>(.*?)<\/button>/` 正则匹配，不能在主按钮内嵌套 `<svg>` 或额外标签，需保持文本纯净；
+  - 同一页面若同时存在静态操作面板和浮动操作岛，二者按钮文案与状态文案需做语义区分（例如主按钮“确认并写回妙手”，浮动按钮“确认放行 · 写入妙手”），避免 TestingLibrary `getByRole("button")` 出现重复冲突；
+  - **CSS 架构铁律**：前端未挂载 Tailwind 构建编译器，所有新增样式必须在 `apps/web/src/app/globals.css` 维护语义化 `.tk-*` 类名；
+  - **Vitest 环境隔离**：JSDOM 测试需在 `vitest.jsdom.config.ts` 注册，严禁在文件头加 `/** @vitest-environment jsdom */` 导致 vmThreads 死锁超时；
+  - **SSR Hydration 一致性**：时间日期显示使用确定性 ISO 字符串切片，杜绝客户端本地时区与服务端 UTC 不一致引发的水合报错。
+
+

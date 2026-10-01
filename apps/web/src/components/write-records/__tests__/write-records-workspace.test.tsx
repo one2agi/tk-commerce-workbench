@@ -33,7 +33,7 @@ const mockData: WriteRecordsOverviewV1 = {
       state: "failed",
       remoteDetailId: null,
       lastReconciledAt: "2026-10-01T08:30:00.000Z",
-      error: { code: "weight_invalid", safeMessage: "重量不能小于0.01kg", rawMessage: "weight < 0.01" },
+      error: { kind: "retryable", code: "weight_invalid", safeMessage: "重量不能小于0.01kg" },
       productId: "prod_vase_02",
       title: "极简北欧陶瓷手办摆件",
       thumbnailUrl: null,

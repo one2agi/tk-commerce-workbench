@@ -14,14 +14,13 @@ export function SyncRecordsTable({
   const [retryMessage, setRetryMessage] = useState<{ syncId: string; text: string; isError?: boolean } | null>(null);
 
   async function handleRetry(item: MiaoshouSyncStatusV1) {
-    const targetProductId = item.productId || item.approvalSnapshotId;
-    if (!targetProductId) return;
+    if (!item.productId) return;
 
     setRetryingId(item.syncId);
     setRetryMessage(null);
 
     try {
-      const res = await fetch(`/api/v1/products/${encodeURIComponent(targetProductId)}/retry-miaoshou-edit`, {
+      const res = await fetch(`/api/v1/products/${encodeURIComponent(item.productId)}/retry-miaoshou-edit`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({})
@@ -236,9 +235,15 @@ export function SyncRecordsTable({
                     <button
                       type="button"
                       onClick={() => handleRetry(item)}
-                      disabled={isRetrying || item.state === "syncing"}
+                      disabled={isRetrying || item.state === "syncing" || item.state === "succeeded" || !item.productId}
                       className="tk-btn-retry"
-                      title="重新推送到妙手采集箱"
+                      title={
+                        item.state === "succeeded"
+                          ? "该商品已成功写入妙手，无需重写"
+                          : !item.productId
+                            ? "无商品ID关联，无法重写"
+                            : "重新推送到妙手采集箱"
+                      }
                     >
                       <span>{isRetrying ? "重推中..." : "重写"}</span>
                       <span className="tk-btn-retry__icon">

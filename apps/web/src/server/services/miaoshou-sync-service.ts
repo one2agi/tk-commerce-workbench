@@ -58,13 +58,13 @@ export class MiaoshouSyncService {
       );
       if (statsRes.rows[0]) {
         const row = statsRes.rows[0];
-        if (Number(row.today_collected) > 0) todayCollected = Number(row.today_collected);
-        if (Number(row.today_written) > 0) todayWritten = Number(row.today_written);
-        if (Number(row.today_success) > 0) todaySuccess = Number(row.today_success);
-        if (Number(row.today_failed) > 0) todayFailed = Number(row.today_failed);
+        todayCollected = Number(row.today_collected ?? 0);
+        todayWritten = Number(row.today_written ?? 0);
+        todaySuccess = Number(row.today_success ?? 0);
+        todayFailed = Number(row.today_failed ?? 0);
       }
     } catch {
-      // safe fallback
+      // safe fallback for in-memory or mock DB environments
     }
 
     let generationRecords: GenerationAuditRecordV1[] = [];
@@ -74,7 +74,9 @@ export class MiaoshouSyncService {
                 (SELECT count(*)::int FROM image_generation_slots s WHERE s.batch_id = b.id AND s.state = 'succeeded') as successful_count,
                 p.title
          FROM image_generation_batches b
-         LEFT JOIN approval_snapshots p ON p.product_id = b.product_id
+         LEFT JOIN LATERAL (
+           SELECT title FROM approval_snapshots WHERE product_id = b.product_id ORDER BY created_at DESC LIMIT 1
+         ) p ON true
          ORDER BY b.created_at DESC LIMIT 50`
       );
       generationRecords = genRes.rows.map((row) => ({
@@ -90,20 +92,6 @@ export class MiaoshouSyncService {
       }));
     } catch {
       // safe fallback
-    }
-
-    if (generationRecords.length === 0 && items.length > 0) {
-      generationRecords = items.map((item, idx) => ({
-        batchId: `batch_${item.syncId.slice(0, 10)}`,
-        productId: item.productId ?? `prod_${idx + 1}`,
-        title: item.title ?? `跨境热销商品 #${idx + 1}`,
-        categoryKey: "默认类目模版",
-        requestedCount: 5,
-        successfulCount: item.state === "succeeded" ? 5 : 4,
-        state: item.state === "succeeded" ? "succeeded" : "partial",
-        providerRoute: "SiliconFlow / Qwen3-VL-8B + Z-Image",
-        createdAt: item.createdAt ?? new Date().toISOString()
-      }));
     }
 
     return {
