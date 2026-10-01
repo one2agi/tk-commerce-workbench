@@ -120,5 +120,12 @@
   - **CSS 架构铁律**：前端未挂载 Tailwind 构建编译器，所有新增样式必须在 `apps/web/src/app/globals.css` 维护语义化 `.tk-*` 类名；
   - **Vitest 环境隔离**：JSDOM 测试需在 `vitest.jsdom.config.ts` 注册，严禁在文件头加 `/** @vitest-environment jsdom */` 导致 vmThreads 死锁超时；
   - **SSR Hydration 一致性**：时间日期显示使用确定性 ISO 字符串切片，杜绝客户端本地时区与服务端 UTC 不一致引发的水合报错。
+* **导航高响应度与页面切换性能基线 (2026-10-01)**：
+  - **根本成因**：Next.js App Router 页面切换运行在 `startTransition` 中，目标页面 SSR 期间旧页面保持完全冻结且 `pathname` 不变；若无即时视觉反馈，用户会产生 400~800ms 的“死机假象”并导致重复连击；
+  - **核心方案**：
+    1. `<Sidebar>` 引入客户端即时 Pending 激活态（点击 30ms 内触发 `.is-pending` 柔和高亮）；
+    2. 根布局挂载全局 2.5px 极简流光进度条 `<NavigationProgressBar />`（跨页面无感流转）；
+    3. 注入根级 `apps/web/src/app/loading.tsx` 骨架屏（杜绝旧页面冻结）；
+    4. 纯静态页面 `/processing-rules` 剔除 `force-dynamic`，启用客户端瞬时缓存。
 
 
