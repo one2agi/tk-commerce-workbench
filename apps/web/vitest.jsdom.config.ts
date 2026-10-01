@@ -11,6 +11,7 @@ export default defineConfig({
     name: "@tk/web-jsdom",
     include: [
       "src/components/settings/__tests__/**/*.{test,spec}.{ts,tsx}",
+      "src/components/write-records/__tests__/**/*.{test,spec}.{ts,tsx}",
       "src/components/tasks/task-table.test.tsx",
       "src/app/tasks/page.test.tsx"
     ],

@@ -198,7 +198,39 @@ export type MiaoshouSyncStatusV1 = Readonly<{
   remoteDetailId: MiaoshouDetailId | null;
   lastReconciledAt: string | null;
   error: ExternalFailure | null;
+  productId?: string | null;
+  title?: string | null;
+  thumbnailUrl?: string | null;
+  sourceCanonicalUrl?: string | null;
+  sourcePlatform?: string | null;
+  imageCount?: number | null;
+  createdAt?: string | null;
 }>;
+
+export type GenerationAuditRecordV1 = Readonly<{
+  batchId: string;
+  productId: string;
+  title: string;
+  categoryKey: string;
+  requestedCount: number;
+  successfulCount: number;
+  state: "succeeded" | "partial" | "generating" | "failed" | string;
+  providerRoute: string;
+  createdAt: string;
+}>;
+
+export type WriteRecordsOverviewV1 = Readonly<{
+  items: ReadonlyArray<MiaoshouSyncStatusV1>;
+  metrics?: {
+    todayCollected: number;
+    todayWritten: number;
+    todaySuccess: number;
+    todayFailed: number;
+    todayImages: number;
+  };
+  generationRecords?: ReadonlyArray<GenerationAuditRecordV1>;
+}>;
+
 
 export type ImageGenerationSlotViewV1 = Readonly<{
   slotId: string;
