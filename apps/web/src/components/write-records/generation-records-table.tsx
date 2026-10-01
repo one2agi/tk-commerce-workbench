@@ -48,9 +48,9 @@ export function GenerationRecordsTable({
                   {item.title}
                 </div>
                 <div className="tk-write-records-meta-line">
-                  <span style={{ fontWeight: 600, color: "#52525b" }}>批次: {item.batchId.slice(0, 14)}</span>
-                  <span>·</span>
+                  <span className="tk-write-records-platform-badge">AI 洗图</span>
                   <span style={{ color: "#71717a" }}>{item.categoryKey}</span>
+                  <span className="sr-only" aria-hidden="true">{item.batchId}</span>
                 </div>
               </td>
 

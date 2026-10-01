@@ -68,7 +68,7 @@ describe("WriteRecordsWorkspace", () => {
     render(<WriteRecordsWorkspace data={mockData} />);
 
     expect(screen.getByText("写入记录与算力流水")).toBeInTheDocument();
-    expect(screen.getByText("MIAOSHOU ERP · SYNC & GENERATION LEDGER")).toBeInTheDocument();
+    expect(screen.getByText("妙手 ERP · 写入记录与生成审计")).toBeInTheDocument();
 
     // Bento metrics
     expect(screen.getByText("今日采集")).toBeInTheDocument();

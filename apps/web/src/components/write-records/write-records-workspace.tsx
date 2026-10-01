@@ -65,7 +65,7 @@ export function WriteRecordsWorkspace({
       {/* 1. Header with Taste Soft Eyebrow Tag */}
       <header style={{ marginBottom: "20px" }}>
         <span className="tk-write-records-eyebrow">
-          MIAOSHOU ERP · SYNC & GENERATION LEDGER
+          妙手 ERP · 写入记录与生成审计
         </span>
         <h1 className="tk-write-records-title">
           写入记录与算力流水
@@ -123,10 +123,10 @@ export function WriteRecordsWorkspace({
                   className="tk-write-records-select"
                 >
                   <option value="all">全部状态</option>
-                  <option value="succeeded">已写入 (succeeded)</option>
-                  <option value="syncing">正在写入 (syncing)</option>
-                  <option value="queued">排队中 (queued)</option>
-                  <option value="failed">写入受阻 (failed)</option>
+                  <option value="succeeded">已写入</option>
+                  <option value="syncing">正在写入</option>
+                  <option value="queued">排队中</option>
+                  <option value="failed">写入失败</option>
                 </select>
               )}
 
