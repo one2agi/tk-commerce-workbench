@@ -5197,5 +5197,34 @@ select.tk-igen-category:focus-visible {
   border-width: 0;
 }
 
+.tk-page-skeleton {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  width: 100%;
+  padding: 24px 0;
+  animation: tk-skeleton-pulse 1.5s ease-in-out infinite;
+}
 
+.tk-skeleton-block {
+  background: #e2e8f0;
+  border-radius: 8px;
+}
 
+.tk-skeleton-header {
+  height: 64px;
+  width: 40%;
+  background: #f1f5f9;
+}
+
+.tk-skeleton-body {
+  height: 380px;
+  width: 100%;
+  background: #f8fafc;
+  border: 1px solid #e2e8f0;
+}
+
+@keyframes tk-skeleton-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.6; }
+}
