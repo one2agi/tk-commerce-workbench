@@ -73,6 +73,24 @@ button:disabled {
   outline-offset: 2px;
 }
 
+.tk-progress-bar {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 2.5px;
+  z-index: 9999;
+  pointer-events: none;
+  background: transparent;
+}
+
+.tk-progress-bar__fill {
+  height: 100%;
+  background: linear-gradient(90deg, #3b82f6, #2563eb, #1d4ed8);
+  box-shadow: 0 0 8px rgba(37, 99, 235, 0.4);
+  transition: width 200ms ease, opacity 250ms ease;
+}
+
 .tk-app {
   display: grid;
   grid-template-columns: clamp(192px, 16vw, 220px) minmax(0, 1fr);
@@ -620,18 +638,21 @@ button:disabled {
   overflow: hidden;
 }
 
-.tk-progress-bar {
+.tk-progress-track .tk-progress-bar {
+  position: static;
   height: 100%;
   border-radius: 3px;
   background: #3b82f6;
   transition: width 200ms ease;
+  z-index: auto;
+  pointer-events: auto;
 }
 
-.tk-progress-bar.is-complete {
+.tk-progress-track .tk-progress-bar.is-complete {
   background: #10b981;
 }
 
-.tk-progress-bar.is-running {
+.tk-progress-track .tk-progress-bar.is-running {
   background: linear-gradient(90deg, #3b82f6 0%, #60a5fa 50%, #3b82f6 100%);
   background-size: 200% 100%;
   animation: tk-shimmer 2s infinite linear;
