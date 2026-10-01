@@ -84,89 +84,355 @@ button:disabled {
   top: 0;
   align-self: start;
   height: 100vh;
-  padding: 24px 14px;
-  border-right: 1px solid #263449;
-  background: #111c2d;
+  padding: 16px 12px;
+  border-right: 1px solid #e2e8f0;
+  background: #ffffff;
 }
 
-.tk-sidebar::before {
-  display: block;
-  margin: 0 10px 24px;
-  color: #f8fafc;
-  font-size: 16px;
-  font-weight: 750;
-  letter-spacing: 0.02em;
-  content: "TK 商品自动化";
+.tk-sidebar__brand {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 6px 8px 18px;
+  margin-bottom: 8px;
+  border-bottom: 1px solid #f1f5f9;
 }
 
-.tk-sidebar ul {
+.tk-sidebar__logo-badge {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  border-radius: 8px;
+  background: #eff6ff;
+  border: 1px solid #dbeafe;
+  color: #2563eb;
+  flex-shrink: 0;
+}
+
+.tk-sidebar__brand-meta {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+
+.tk-sidebar__brand-title {
+  color: #0f172a;
+  font-size: 14.5px;
+  font-weight: 700;
+  letter-spacing: -0.01em;
+}
+
+.tk-sidebar__brand-tag {
+  color: #94a3b8;
+  font-size: 11px;
+  font-weight: 500;
+}
+
+.tk-sidebar ul,
+.tk-sidebar__nav-list {
   display: grid;
-  gap: 6px;
+  gap: 4px;
   margin: 0;
   padding: 0;
   list-style: none;
 }
 
-.tk-sidebar a {
-  display: block;
-  padding: 10px 12px;
+.tk-sidebar a,
+.tk-sidebar__link {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 12px;
   border-radius: 8px;
-  color: #cbd5e1;
-  font-size: 14px;
-  font-weight: 600;
+  color: #475569;
+  font-size: 13.5px;
+  font-weight: 550;
   text-decoration: none;
+  transition: background 120ms ease, color 120ms ease;
 }
 
 .tk-sidebar a:hover,
-.tk-sidebar a:focus-visible {
-  color: #fff;
-  background: #24334a;
+.tk-sidebar a:focus-visible,
+.tk-sidebar__link:hover,
+.tk-sidebar__link:focus-visible {
+  color: #0f172a;
+  background: #f1f5f9;
+}
+
+.tk-sidebar a.is-active,
+.tk-sidebar__link.is-active {
+  color: #2563eb;
+  background: #eff6ff;
+  font-weight: 650;
+}
+
+.tk-sidebar__icon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  color: currentColor;
 }
 
 .tk-app__main {
   min-width: 0;
-  padding: 24px;
+  padding: 20px 24px;
+  background: #f8fafc;
 }
 
 .tk-product-workbench {
   display: grid;
-  gap: 18px;
+  gap: 12px;
   min-width: 0;
   max-width: 1600px;
   margin: 0 auto;
 }
 
-.tk-stage-overview {
-  display: grid;
-  grid-template-columns: repeat(6, minmax(0, 1fr));
+/* 顶部业务条 */
+.tk-workbench-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 2px;
+}
+
+.tk-workbench-title {
+  margin: 0;
+  font-size: 19px;
+  font-weight: 750;
+  color: #0f172a;
+  letter-spacing: -0.01em;
+}
+
+.tk-context-bar {
+  display: flex;
+  align-items: center;
   gap: 10px;
-  min-width: 0;
 }
 
-.tk-stage-card {
-  min-width: 0;
-  min-height: 64px;
-  padding: 10px 8px;
-  border-color: #d9e0e9;
-  box-shadow: 0 1px 2px rgb(15 23 42 / 5%);
-  color: #526174;
+.tk-context-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 10px;
+  border-radius: 6px;
+  background: #f0fdf4;
+  border: 1px solid #bbf7d0;
+  color: #166534;
+  font-size: 12.5px;
+  font-weight: 500;
+}
+
+.tk-context-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 10px;
+  border-radius: 6px;
+  background: #ffffff;
+  border: 1px solid #e2e8f0;
+  color: #475569;
+  font-size: 12.5px;
+  text-decoration: none;
+  transition: all 120ms ease;
+}
+
+.tk-context-link:hover {
+  background: #f8fafc;
+  color: #0f172a;
+  border-color: #cbd5e1;
+}
+
+/* 搜索与筛选工具栏 */
+.tk-filter-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.tk-search-box {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 12px;
+  background: #ffffff;
+  border: 1px solid #cbd5e1;
+  border-radius: 6px;
+  width: 280px;
+  color: #94a3b8;
+  transition: border-color 120ms ease;
+}
+
+.tk-search-box:focus-within {
+  border-color: #3b82f6;
+  box-shadow: 0 0 0 2px rgba(59, 130, 246, 0.15);
+}
+
+.tk-search-input {
+  border: none;
+  outline: none;
   font-size: 13px;
+  width: 100%;
+  color: #0f172a;
+  background: transparent;
+}
+
+.tk-select-source {
+  padding: 6px 12px;
+  background: #ffffff;
+  border: 1px solid #cbd5e1;
+  border-radius: 6px;
+  font-size: 13px;
+  color: #334155;
+  cursor: pointer;
+  outline: none;
+}
+
+.tk-select-source:focus {
+  border-color: #3b82f6;
+}
+
+.tk-btn-subtle {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 12px;
+  background: #ffffff;
+  border: 1px solid #cbd5e1;
+  border-radius: 6px;
+  font-size: 13px;
+  color: #334155;
+  cursor: pointer;
+  min-height: auto;
+  transition: all 120ms ease;
+}
+
+.tk-btn-subtle:hover {
+  background: #f8fafc;
+  border-color: #94a3b8;
+  color: #0f172a;
+}
+
+/* 紧凑下划线 Tab 栏与快捷按钮 */
+.tk-tabs-action-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  border-bottom: 1px solid #e2e8f0;
+  padding-bottom: 0;
+  margin-top: 4px;
+}
+
+.tk-stage-tabs {
+  margin: 0;
+}
+
+.tk-stage-tabs__list {
+  display: flex;
+  align-items: center;
+  gap: 20px;
+}
+
+.tk-stage-tab {
+  background: none;
+  border: none;
+  border-bottom: 2px solid transparent;
+  padding: 8px 2px 10px;
+  font-size: 13.5px;
+  font-weight: 550;
+  color: #64748b;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  border-radius: 0;
+  min-height: auto;
+  transition: color 120ms ease, border-color 120ms ease;
+}
+
+.tk-stage-tab:hover {
+  color: #0f172a;
+  border-bottom-color: #cbd5e1;
+  background: transparent;
+}
+
+.tk-stage-tab.is-active {
+  color: #2563eb;
+  border-bottom-color: #2563eb;
   font-weight: 650;
-  text-align: center;
+  background: transparent;
+  box-shadow: none;
 }
 
-.tk-stage-card.is-active {
-  border-color: #2563eb;
-  box-shadow: inset 0 0 0 1px #2563eb, 0 4px 12px rgb(37 99 235 / 12%);
-  color: #1749ad;
+.tk-stage-tab__count {
+  font-size: 11px;
+  font-weight: 600;
+  padding: 1px 6px;
+  border-radius: 10px;
+  background: #f1f5f9;
+  color: #64748b;
+}
+
+.tk-stage-tab.is-active .tk-stage-tab__count {
+  background: #dbeafe;
+  color: #1d4ed8;
+}
+
+.tk-tabs-action-buttons {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.tk-btn-outline-blue {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 14px;
   background: #eff6ff;
+  border: 1px solid #bfdbfe;
+  color: #1d4ed8;
+  font-size: 13px;
+  font-weight: 600;
+  border-radius: 6px;
+  cursor: pointer;
+  min-height: auto;
+  transition: all 120ms ease;
 }
 
-.tk-stage-card__label {
-  display: block;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+.tk-btn-outline-blue:hover:not(:disabled) {
+  background: #dbeafe;
+  border-color: #93c5fd;
+}
+
+.tk-btn-solid-green {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 16px;
+  background: #10b981;
+  border: 1px solid #059669;
+  color: #ffffff;
+  font-size: 13px;
+  font-weight: 600;
+  border-radius: 6px;
+  cursor: pointer;
+  min-height: auto;
+  box-shadow: 0 1px 2px rgba(16, 185, 129, 0.2);
+  transition: all 120ms ease;
+}
+
+.tk-btn-solid-green:hover:not(:disabled) {
+  background: #059669;
+  border-color: #047857;
+}
+
+.tk-btn-outline-blue:disabled,
+.tk-btn-solid-green:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
 }
 
 .tk-product-workbench__body {
@@ -176,36 +442,33 @@ button:disabled {
   min-width: 0;
 }
 
+/* 高密度 5 列极简表格 */
 .tk-product-table {
   flex: 1 1 auto;
   min-width: 0;
   overflow: hidden;
-  border: 1px solid #d9e0e9;
-  border-radius: 12px;
+  border: 1px solid #e2e8f0;
+  border-radius: 8px 8px 0 0;
   background: #fff;
-  box-shadow: 0 5px 18px rgb(15 23 42 / 5%);
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.02);
 }
 
 .tk-product-table__scroll {
   max-width: 100%;
-  overflow-x: auto;
-  scrollbar-color: #aeb9c8 transparent;
+  overflow-x: hidden;
 }
 
 .tk-product-table table {
   width: 100%;
-  min-width: 660px;
   border-spacing: 0;
-  border-collapse: separate;
-  table-layout: fixed;
+  border-collapse: collapse;
   font-size: 13px;
 }
 
 .tk-product-table th,
 .tk-product-table td {
-  padding: 11px 10px;
-  border-bottom: 1px solid #e7ebf0;
-  overflow-wrap: anywhere;
+  padding: 10px 14px;
+  border-bottom: 1px solid #f1f5f9;
   vertical-align: middle;
   text-align: left;
 }
@@ -214,41 +477,330 @@ button:disabled {
   position: sticky;
   top: 0;
   z-index: 1;
-  color: #526174;
+  color: #64748b;
   font-size: 12px;
-  font-weight: 700;
-  letter-spacing: 0.025em;
+  font-weight: 600;
+  background: #f8fafc;
+  border-bottom: 1px solid #e2e8f0;
+}
+
+.tk-th-product { width: 40%; min-width: 280px; }
+.tk-th-images { width: 16%; min-width: 130px; }
+.tk-th-status { width: 15%; min-width: 120px; }
+.tk-th-time { width: 11%; min-width: 95px; }
+.tk-th-actions { width: 18%; min-width: 155px; }
+
+.tk-product-table tbody tr:hover {
   background: #f8fafc;
 }
 
-.tk-product-table th:first-child,
-.tk-product-table td:first-child {
-  width: 58px;
-  text-align: center;
-}
-
-.tk-product-table th:nth-child(2),
-.tk-product-table td:nth-child(2) {
-  width: 34%;
-}
-
-.tk-product-table th:nth-child(3),
-.tk-product-table td:nth-child(3) {
-  width: 15%;
-}
-
-.tk-product-table th:last-child,
-.tk-product-table td:last-child {
-  width: 92px;
-}
-
-.tk-product-table tbody tr:last-child td {
-  border-bottom: 0;
-}
-
-.tk-product-table tbody tr:hover,
 .tk-product-table tbody tr[aria-selected="true"] {
-  background: #f7faff;
+  background: #f0f7ff;
+}
+
+/* 商品元数据首列聚合 */
+.tk-product-meta-cell {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.tk-product-table__thumb-link {
+  display: block;
+  flex-shrink: 0;
+  width: 48px;
+  height: 48px;
+  border-radius: 6px;
+  overflow: hidden;
+  border: 1px solid #e2e8f0;
+  background: #f8fafc;
+}
+
+.tk-product-table__thumb-link img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.tk-product-info-col {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+}
+
+.tk-product-title {
+  color: #0f172a;
+  font-size: 13px;
+  font-weight: 600;
+  text-decoration: none;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 420px;
+}
+
+.tk-product-title:hover {
+  color: #2563eb;
+  text-decoration: underline;
+}
+
+.tk-product-tags-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.tk-badge-platform {
+  display: inline-flex;
+  align-items: center;
+  padding: 1px 6px;
+  border-radius: 4px;
+  font-size: 11px;
+  font-weight: 600;
+  background: #ffedd5;
+  color: #c2410c;
+  border: 1px solid #fed7aa;
+}
+
+.tk-badge-price {
+  display: inline-flex;
+  align-items: center;
+  padding: 1px 6px;
+  border-radius: 4px;
+  font-size: 11px;
+  font-weight: 600;
+  background: #f1f5f9;
+  color: #334155;
+  border: 1px solid #e2e8f0;
+}
+
+.tk-text-collected {
+  font-size: 11px;
+  color: #94a3b8;
+}
+
+/* 图片进度条 */
+.tk-image-progress-group {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  max-width: 130px;
+}
+
+.tk-image-progress-header {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+}
+
+.tk-image-progress-label {
+  color: #64748b;
+}
+
+.tk-image-progress-count {
+  font-weight: 650;
+  color: #0f172a;
+}
+
+.tk-progress-track {
+  width: 100%;
+  height: 6px;
+  border-radius: 3px;
+  background: #e2e8f0;
+  overflow: hidden;
+}
+
+.tk-progress-bar {
+  height: 100%;
+  border-radius: 3px;
+  background: #3b82f6;
+  transition: width 200ms ease;
+}
+
+.tk-progress-bar.is-complete {
+  background: #10b981;
+}
+
+.tk-progress-bar.is-running {
+  background: linear-gradient(90deg, #3b82f6 0%, #60a5fa 50%, #3b82f6 100%);
+  background-size: 200% 100%;
+  animation: tk-shimmer 2s infinite linear;
+}
+
+@keyframes tk-shimmer {
+  0% { background-position: 200% 0; }
+  100% { background-position: -200% 0; }
+}
+
+.tk-sku-subtext {
+  font-size: 11px;
+  color: #94a3b8;
+}
+
+/* 状态药丸 */
+.tk-status-group {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.tk-status-pill {
+  display: inline-flex;
+  align-items: center;
+  padding: 2px 8px;
+  border-radius: 4px;
+  font-size: 12px;
+  font-weight: 600;
+  width: fit-content;
+}
+
+.tk-status-pill.is-review {
+  background: #eff6ff;
+  color: #2563eb;
+  border: 1px solid #dbeafe;
+}
+
+.tk-status-pill.is-processing {
+  background: #f5f3ff;
+  color: #7c3aed;
+  border: 1px solid #ede9fe;
+}
+
+.tk-status-pill.is-synced {
+  background: #f0fdf4;
+  color: #16a34a;
+  border: 1px solid #dcfce7;
+}
+
+.tk-status-pill.is-needs_attention {
+  background: #fef2f2;
+  color: #dc2626;
+  border: 1px solid #fee2e2;
+}
+
+.tk-status-pill.is-pending {
+  background: #f8fafc;
+  color: #64748b;
+  border: 1px solid #e2e8f0;
+}
+
+.tk-status-issue {
+  font-size: 11px;
+  color: #ef4444;
+  max-width: 140px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.tk-time-label {
+  font-size: 12px;
+  color: #64748b;
+}
+
+/* 操作列样式 */
+.tk-btn-action-green {
+  display: inline-flex;
+  align-items: center;
+  padding: 4px 10px;
+  border-radius: 6px;
+  background: #ffffff;
+  border: 1px solid #10b981;
+  color: #10b981;
+  font-size: 12px;
+  font-weight: 600;
+  text-decoration: none;
+  transition: all 120ms ease;
+}
+
+.tk-btn-action-green:hover {
+  background: #f0fdf4;
+  color: #059669;
+}
+
+/* 底部分页与统计栏 */
+.tk-workbench-footer-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 10px 16px;
+  background: #ffffff;
+  border: 1px solid #e2e8f0;
+  border-top: none;
+  border-radius: 0 0 8px 8px;
+  font-size: 12.5px;
+  color: #64748b;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.02);
+}
+
+.tk-footer-summary strong {
+  color: #0f172a;
+  font-weight: 650;
+}
+
+.tk-footer-summary a {
+  color: #2563eb;
+  text-decoration: none;
+}
+
+.tk-footer-summary a:hover {
+  text-decoration: underline;
+}
+
+.tk-footer-bullet {
+  margin: 0 6px;
+  color: #cbd5e1;
+}
+
+.tk-footer-pagination {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.tk-page-size-label {
+  font-size: 12px;
+  color: #64748b;
+}
+
+.tk-page-size-select {
+  padding: 3px 8px;
+  border: 1px solid #cbd5e1;
+  border-radius: 4px;
+  background: #ffffff;
+  font-size: 12px;
+  color: #334155;
+  cursor: pointer;
+}
+
+.tk-pagination-control {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.tk-pagination-nav-btn {
+  width: 24px;
+  height: 24px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid #e2e8f0;
+  border-radius: 4px;
+  background: #ffffff;
+  color: #64748b;
+  cursor: pointer;
+  min-height: auto;
+  padding: 0;
+  font-size: 13px;
+}
+
+.tk-pagination-page {
+  font-size: 12px;
+  padding: 0 6px;
+  color: #334155;
 }
 
 .tk-product-table__checkbox {
@@ -1604,16 +2156,78 @@ button:disabled {
 }
 
 .tk-product-workbench__footer {
+  position: fixed;
+  bottom: 24px;
+  left: 50%;
+  transform: translateX(-50%) translateY(0);
+  z-index: 50;
   display: flex;
   align-items: center;
   gap: 16px;
   min-width: 0;
-  min-height: 58px;
-  padding: 10px 14px;
-  border: 1px solid #d9e0e9;
-  border-radius: 12px;
-  background: #fff;
-  box-shadow: 0 3px 12px rgb(15 23 42 / 4%);
+  max-width: calc(100vw - 48px);
+  padding: 8px 18px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.88);
+  backdrop-filter: blur(20px) saturate(180%);
+  -webkit-backdrop-filter: blur(20px) saturate(180%);
+  border: 1px solid rgba(10, 10, 10, 0.08);
+  box-shadow:
+    0 1px 0 rgba(255, 255, 255, 0.6) inset,
+    0 20px 40px -15px rgba(0, 0, 0, 0.12),
+    0 0 0 1px rgba(0, 0, 0, 0.04);
+  transition: transform 450ms cubic-bezier(0.32, 0.72, 0, 1), opacity 350ms ease;
+}
+
+.tk-product-workbench__footer.is-hidden {
+  transform: translateX(-50%) translateY(160%);
+  opacity: 0;
+  pointer-events: none;
+}
+
+.tk-product-workbench__footer.is-visible {
+  transform: translateX(-50%) translateY(0);
+  opacity: 1;
+}
+
+.tk-product-workbench__batch-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.tk-btn-batch-primary {
+  border-radius: 999px;
+  padding: 7px 18px;
+  background: #0a0a0a !important;
+  color: #fdfbf7 !important;
+  border: none !important;
+  font-weight: 600;
+  font-size: 13px;
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.15);
+  cursor: pointer;
+  transition: transform 200ms cubic-bezier(0.16, 1.16, 0.3, 1);
+}
+
+.tk-btn-batch-primary:hover:not(:disabled) {
+  transform: scale(1.02);
+  background: #27272a !important;
+}
+
+.tk-btn-batch-action {
+  border-radius: 999px;
+  padding: 7px 14px;
+  background: rgba(10, 10, 10, 0.04);
+  color: #18181b;
+  border: 1px solid rgba(10, 10, 10, 0.08);
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: background 150ms ease;
+}
+
+.tk-btn-batch-action:hover:not(:disabled) {
+  background: rgba(10, 10, 10, 0.08);
 }
 
 .tk-product-workbench__footer > button {
@@ -1624,6 +2238,61 @@ button:disabled {
   min-width: 0;
   color: #64748b;
   font-size: 13px;
+  padding: 0 8px;
+}
+
+.tk-automation-progress {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  list-style: none;
+  margin: 0;
+  padding: 0 0 0 12px;
+  border-left: 1px solid rgba(0, 0, 0, 0.08);
+}
+
+.tk-automation-progress li {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  font-weight: 500;
+  color: #64748b;
+  white-space: nowrap;
+}
+
+.tk-automation-progress__dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 9999px;
+  background-color: #cbd5e1;
+}
+
+.tk-automation-progress li[data-state="ready"] {
+  color: #0f172a;
+}
+.tk-automation-progress li[data-state="ready"] .tk-automation-progress__dot {
+  background-color: #10b981;
+}
+
+.tk-automation-progress li[data-state="running"] {
+  color: #2563eb;
+  font-weight: 600;
+}
+.tk-automation-progress li[data-state="running"] .tk-automation-progress__dot {
+  background-color: #2563eb;
+  box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.2);
+}
+
+.tk-automation-progress li[data-state="failed"] {
+  color: #ef4444;
+}
+.tk-automation-progress li[data-state="failed"] .tk-automation-progress__dot {
+  background-color: #ef4444;
+}
+
+.tk-automation-progress li[data-state="pending"] {
+  color: #94a3b8;
 }
 
 @media (max-width: 1100px) {
@@ -2833,3 +3502,1659 @@ select.tk-igen-category:focus-visible {
     grid-template-columns: 1fr;
   }
 }
+
+/* ==========================================================================
+   Web Prototype: Soft Taste Design System (Double-Bezel & Micro-Interactions)
+   ========================================================================== */
+
+/* Primary Action Cell (Table Consolidation) */
+.tk-product-table__primary-action-cell {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: nowrap;
+}
+
+.tk-btn-action-start,
+.tk-btn-action-review {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 12px;
+  border-radius: 6px;
+  font-size: 12.5px;
+  font-weight: 600;
+  text-decoration: none;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: all 120ms ease;
+  min-height: auto;
+}
+
+.tk-btn-action-start {
+  background: #ffffff !important;
+  color: #1e293b !important;
+  border: 1px solid #cbd5e1 !important;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.04);
+}
+
+.tk-btn-action-start:hover:not(:disabled) {
+  background: #f8fafc !important;
+  border-color: #94a3b8 !important;
+  color: #0f172a !important;
+}
+
+.tk-btn-action-start:disabled {
+  background: #f1f5f9 !important;
+  color: #94a3b8 !important;
+  border-color: #e2e8f0 !important;
+  cursor: not-allowed;
+}
+
+.tk-btn-action-review {
+  background: #f0fdf4 !important;
+  color: #166534 !important;
+  border: 1px solid #86efac !important;
+  box-shadow: 0 1px 2px rgba(16, 185, 129, 0.1);
+}
+
+.tk-btn-action-review:hover {
+  background: #dcfce7 !important;
+  border-color: #4ade80 !important;
+  color: #14532d !important;
+}
+
+.tk-btn-arrow {
+  display: none;
+}
+
+.tk-btn-action-link {
+  display: inline-flex;
+  align-items: center;
+  padding: 4px 10px;
+  border-radius: 6px;
+  background: #ffffff;
+  color: #334155;
+  font-size: 12.5px;
+  font-weight: 500;
+  text-decoration: none;
+  border: 1px solid #cbd5e1;
+  white-space: nowrap;
+  min-height: auto;
+  transition: all 120ms ease;
+}
+
+.tk-btn-action-link:hover {
+  background: #f8fafc;
+  border-color: #94a3b8;
+  color: #0f172a;
+}
+
+.tk-product-table__sub-link {
+  font-size: 12px;
+  color: #64748b;
+  text-decoration: none;
+  padding: 4px 8px;
+  border-radius: 6px;
+  transition: color 150ms ease, background 150ms ease;
+}
+
+.tk-product-table__sub-link:hover {
+  color: #0f172a;
+  background: rgba(10, 10, 10, 0.05);
+}
+
+/* Graceful Thumbnail Fallback */
+.tk-product-table__thumb-fallback {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 44px;
+  height: 44px;
+  border-radius: 12px;
+  background: #f1f3f5;
+  color: #94a3b8;
+  border: 1px solid rgba(10, 10, 10, 0.06);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.6);
+}
+
+/* Eyebrows, Badges & Micro Tags */
+.tk-eyebrow-pill {
+  display: inline-block;
+  padding: 3px 10px;
+  border-radius: 999px;
+  background: rgba(10, 10, 10, 0.05);
+  color: #57575a;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.15em;
+  text-transform: uppercase;
+  margin-bottom: 8px;
+  border: 1px solid rgba(10, 10, 10, 0.05);
+}
+
+.tk-badge-locale {
+  display: inline-flex;
+  align-items: center;
+  padding: 3px 10px;
+  border-radius: 999px;
+  background: #eff6ff;
+  color: #1e40af;
+  font-size: 12px;
+  font-weight: 600;
+  border: 1px solid rgba(30, 64, 175, 0.15);
+}
+
+.tk-review__tech-subtext {
+  font-size: 12px;
+  color: #64748b;
+  font-weight: 500;
+}
+
+/* Technical Details Collapsible (Desensitization) */
+.tk-review__tech-details {
+  margin-top: 24px;
+  padding: 12px 18px;
+  border-radius: 16px;
+  background: rgba(10, 10, 10, 0.02);
+  border: 1px solid rgba(10, 10, 10, 0.06);
+  color: #64748b;
+  font-size: 13px;
+  transition: background 200ms ease;
+}
+
+.tk-review__tech-details[open] {
+  background: rgba(10, 10, 10, 0.03);
+}
+
+.tk-review__tech-details summary {
+  cursor: pointer;
+  font-weight: 500;
+  color: #475569;
+  user-select: none;
+  outline: none;
+}
+
+.tk-review__tech-details summary:hover {
+  color: #0f172a;
+}
+
+.tk-review__tech-grid {
+  margin-top: 12px;
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 12px;
+  padding-top: 12px;
+  border-top: 1px solid rgba(10, 10, 10, 0.06);
+}
+
+.tk-review__tech-grid div {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.tk-review__tech-grid span {
+  font-size: 11px;
+  color: #94a3b8;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+.tk-review__tech-grid code {
+  font-size: 12px;
+  background: rgba(10, 10, 10, 0.04);
+  padding: 3px 8px;
+  border-radius: 6px;
+  color: #334155;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+
+/* Image Workbench & Sequencer Double-Bezel Aesthetics */
+.tk-review__image-workbench {
+  border-radius: 28px;
+  background: #ffffff;
+  padding: 24px;
+  box-shadow: 0 10px 30px -10px rgba(0, 0, 0, 0.04), 0 0 0 1px rgba(10, 10, 10, 0.06);
+  margin-bottom: 24px;
+}
+
+.tk-igen-final-order ol {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 16px;
+  padding: 0;
+  list-style: none;
+}
+
+.tk-igen-final-order li {
+  flex: 0 0 auto;
+  width: 170px;
+  padding: 6px;
+  border-radius: 20px;
+  background: rgba(10, 10, 10, 0.03);
+  border: 1px solid rgba(10, 10, 10, 0.06);
+  box-shadow: 0 8px 24px -6px rgba(0, 0, 0, 0.05);
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.tk-igen-final-order li img {
+  width: 100%;
+  aspect-ratio: 1 / 1;
+  object-fit: cover;
+  border-radius: 14px;
+  background: #f8fafc;
+}
+
+.tk-igen-final-order li > span {
+  font-size: 12px;
+  font-weight: 600;
+  color: #1e293b;
+  padding: 0 4px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.tk-igen-final-order li > div {
+  display: flex;
+  gap: 4px;
+  padding: 0 2px 4px;
+}
+
+.tk-igen-final-order li .tk-igen-btn--sm {
+  flex: 1;
+  border-radius: 999px;
+  font-size: 11px;
+  padding: 4px 6px;
+}
+
+/* ==========================================================================
+   商品详情与质检放行页 (Soft Minimalist Review Workspace)
+   秉持极简主义、舒适感、有呼吸感，拒绝高密度，零默认表情符号
+   ========================================================================== */
+
+.tk-review {
+  min-height: 100vh;
+  background-color: #fafaf9 !important;
+  padding-bottom: 140px !important;
+  max-width: 100% !important;
+}
+
+.tk-review__container {
+  max-width: 1060px;
+  margin: 0 auto;
+  padding: 32px 24px 60px;
+}
+
+/* 顶部页面标题区 (Serene Heading) */
+.tk-review__heading {
+  margin-bottom: 28px !important;
+  background: transparent !important;
+  border: none !important;
+  box-shadow: none !important;
+  padding: 0 !important;
+}
+
+.tk-review__heading-main {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.tk-review__heading-nav {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.tk-review__back-link {
+  display: inline-flex !important;
+  align-items: center !important;
+  gap: 6px !important;
+  padding: 6px 14px !important;
+  border: 1px solid rgba(0, 0, 0, 0.08) !important;
+  border-radius: 9999px !important;
+  color: #475569 !important;
+  font-size: 13px !important;
+  font-weight: 600 !important;
+  text-decoration: none !important;
+  background: #ffffff !important;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.04) !important;
+  transition: all 0.2s ease !important;
+}
+
+.tk-review__back-link:hover {
+  color: #0f172a !important;
+  background: #f8fafc !important;
+  border-color: rgba(0, 0, 0, 0.14) !important;
+}
+
+.tk-review__heading h1 {
+  margin: 4px 0 0 !important;
+  color: #0f172a !important;
+  font-size: 26px !important;
+  font-weight: 700 !important;
+  letter-spacing: -0.025em !important;
+  line-height: 1.35 !important;
+}
+
+.tk-review__meta-row {
+  display: flex !important;
+  flex-wrap: wrap !important;
+  align-items: center !important;
+  gap: 10px !important;
+  margin-top: 6px !important;
+}
+
+.tk-review__source-title {
+  max-width: 520px;
+  padding: 4px 12px;
+  border-radius: 9999px;
+  color: #64748b;
+  font-size: 12px;
+  font-weight: 500;
+  background: #f1f5f9;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* 核心视觉展台：大图画廊与缩略序列 */
+.tk-review__image-workbench {
+  background: #ffffff !important;
+  border: 1px solid rgba(0, 0, 0, 0.06) !important;
+  border-radius: 28px !important;
+  padding: 32px !important;
+  box-shadow: 0 12px 32px -12px rgba(0, 0, 0, 0.04) !important;
+  margin-bottom: 28px !important;
+}
+
+.tk-review__image-header {
+  display: flex !important;
+  align-items: center !important;
+  justify-content: space-between !important;
+  margin-bottom: 24px !important;
+}
+
+.tk-review__image-header p {
+  margin: 0 !important;
+  color: #94a3b8 !important;
+  font-size: 11px !important;
+  font-weight: 700 !important;
+  text-transform: uppercase !important;
+  letter-spacing: 0.08em !important;
+}
+
+.tk-review__image-header h2 {
+  margin: 2px 0 0 !important;
+  color: #0f172a !important;
+  font-size: 19px !important;
+  font-weight: 700 !important;
+  letter-spacing: -0.015em !important;
+}
+
+.tk-review__image-header > span {
+  padding: 4px 12px !important;
+  border-radius: 9999px !important;
+  color: #0369a1 !important;
+  font-size: 12px !important;
+  font-weight: 600 !important;
+  background: #f0f9ff !important;
+  border: 1px solid #e0f2fe !important;
+}
+
+/* Hero 大展台 */
+.tk-gallery-hero {
+  display: flex;
+  justify-content: center;
+  margin-bottom: 24px;
+}
+
+.tk-gallery-hero__frame {
+  position: relative;
+  width: 100%;
+  max-width: 480px;
+  aspect-ratio: 1 / 1;
+  border-radius: 24px;
+  overflow: hidden;
+  background: #f8fafc;
+  border: 1px solid rgba(0, 0, 0, 0.06);
+  box-shadow: 0 16px 36px -12px rgba(0, 0, 0, 0.08);
+}
+
+.tk-gallery-hero__image {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+
+.tk-gallery-hero__badge {
+  position: absolute;
+  top: 14px;
+  left: 14px;
+  padding: 5px 12px;
+  background: rgba(15, 23, 42, 0.72);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  color: #ffffff;
+  font-size: 12px;
+  font-weight: 600;
+  border-radius: 9999px;
+  letter-spacing: 0.02em;
+}
+
+.tk-gallery-hero__actions {
+  position: absolute;
+  bottom: 14px;
+  right: 14px;
+  display: flex;
+  gap: 8px;
+}
+
+.tk-gallery-hero__action-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 14px;
+  background: rgba(255, 255, 255, 0.9);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  border: 1px solid rgba(0, 0, 0, 0.08);
+  border-radius: 9999px;
+  color: #1e293b;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.08);
+  transition: all 0.2s ease;
+}
+
+.tk-gallery-hero__action-btn:hover {
+  background: #ffffff;
+  transform: translateY(-1px);
+  box-shadow: 0 6px 16px rgba(0, 0, 0, 0.12);
+}
+
+/* 缩略图序列 (Curated Thumbnail Strip) */
+.tk-product-image-gallery__section.is-processed {
+  display: block !important;
+  border: none !important;
+  background: transparent !important;
+  padding: 0 !important;
+  box-shadow: none !important;
+}
+
+.tk-product-image-gallery__section.is-processed .tk-product-image-gallery__label,
+.tk-product-image-gallery__section.is-processed .tk-product-image-gallery__controls,
+.tk-product-image-gallery__section.is-processed .tk-product-image-gallery__track {
+  display: none !important;
+}
+
+.tk-product-image-gallery__section.is-processed .tk-product-image-gallery__scroller {
+  width: 100% !important;
+  overflow: visible !important;
+}
+
+.tk-product-image-gallery__section.is-processed .tk-product-image-gallery__strip {
+  display: flex !important;
+  justify-content: center !important;
+  gap: 14px !important;
+  padding: 6px 0 16px !important;
+  width: 100% !important;
+}
+
+.tk-product-image-gallery__section.is-processed .tk-product-image-gallery__tile {
+  position: relative;
+  width: 90px !important;
+  height: 90px !important;
+  border-radius: 18px !important;
+  overflow: hidden !important;
+  cursor: pointer !important;
+  border: 2px solid transparent !important;
+  background: #f8fafc !important;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.04) !important;
+  transition: all 0.2s cubic-bezier(0.32, 0.72, 0, 1) !important;
+}
+
+.tk-product-image-gallery__section.is-processed .tk-product-image-gallery__tile:hover {
+  transform: translateY(-2px) !important;
+  box-shadow: 0 6px 16px rgba(0, 0, 0, 0.08) !important;
+}
+
+.tk-product-image-gallery__section.is-processed .tk-product-image-gallery__tile.is-active {
+  border-color: #059669 !important;
+  box-shadow: 0 0 0 3px rgba(5, 150, 105, 0.2) !important;
+}
+
+.tk-product-image-gallery__section.is-processed .tk-product-image-gallery__preview {
+  width: 100% !important;
+  height: 100% !important;
+  padding: 0 !important;
+  border: none !important;
+  background: transparent !important;
+  cursor: pointer !important;
+}
+
+.tk-product-image-gallery__section.is-processed .tk-product-image-gallery__preview img {
+  width: 100% !important;
+  height: 100% !important;
+  object-fit: cover !important;
+  display: block !important;
+}
+
+.tk-tile-badge {
+  position: absolute;
+  bottom: 4px;
+  right: 4px;
+  padding: 2px 6px;
+  background: rgba(15, 23, 42, 0.75);
+  color: #fff;
+  font-size: 10px;
+  font-weight: 600;
+  border-radius: 9999px;
+  backdrop-filter: blur(8px);
+}
+
+/* 1688 原厂底图折叠抽屉 */
+.tk-product-image-gallery__original-drawer {
+  margin-top: 24px;
+  border: 1px solid rgba(0, 0, 0, 0.06);
+  border-radius: 20px;
+  background: #f8fafc;
+  overflow: hidden;
+  transition: all 0.25s ease;
+}
+
+.tk-product-image-gallery__drawer-toggle {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 14px 20px;
+  cursor: pointer;
+  user-select: none;
+  font-size: 13px;
+  font-weight: 600;
+  color: #475569;
+  list-style: none;
+}
+
+.tk-product-image-gallery__drawer-toggle::-webkit-details-marker {
+  display: none;
+}
+
+.tk-product-image-gallery__toggle-label {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.tk-product-image-gallery__toggle-hint {
+  color: #94a3b8;
+  font-size: 12px;
+  font-weight: 500;
+}
+
+.tk-product-image-gallery__drawer-content {
+  padding: 16px 20px 20px;
+  border-top: 1px solid rgba(0, 0, 0, 0.05);
+  background: #ffffff;
+}
+
+/* 下半部布局：文本质检与核验 */
+.tk-review__lower {
+  display: grid !important;
+  grid-template-columns: minmax(0, 1.45fr) minmax(320px, 1fr) !important;
+  align-items: start !important;
+  gap: 24px !important;
+}
+
+.tk-panel {
+  border: 1px solid rgba(0, 0, 0, 0.06) !important;
+  border-radius: 24px !important;
+  background: #ffffff !important;
+  padding: 24px !important;
+  box-shadow: 0 10px 28px -12px rgba(0, 0, 0, 0.04) !important;
+}
+
+.tk-review__content {
+  display: flex !important;
+  flex-direction: column !important;
+  gap: 20px !important;
+}
+
+.tk-review__panel-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 16px;
+}
+
+.tk-review__panel-title-group {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: #0f172a;
+}
+
+.tk-review__panel-title-group h2,
+.tk-review__panel-header h2 {
+  margin: 0;
+  font-size: 17px;
+  font-weight: 700;
+  color: #0f172a;
+}
+
+/* 双语 Listing 对照卡片 */
+.tk-review__generated-grid {
+  display: grid !important;
+  grid-template-columns: repeat(2, minmax(0, 1fr)) !important;
+  gap: 16px !important;
+  margin-bottom: 16px !important;
+}
+
+.tk-review__info-card {
+  min-width: 0 !important;
+  padding: 18px !important;
+  border: 1px solid #e2e8f0 !important;
+  border-radius: 18px !important;
+  background: #f8fafc !important;
+  display: flex !important;
+  flex-direction: column !important;
+  gap: 8px !important;
+}
+
+.tk-review__info-card.is-primary {
+  border-color: #bbf7d0 !important;
+  background: #f0fdf4 !important;
+}
+
+.tk-review__card-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.tk-review__card-header p {
+  margin: 0 !important;
+  color: #64748b !important;
+  font-size: 11px !important;
+  font-weight: 700 !important;
+  text-transform: uppercase !important;
+}
+
+.tk-review__info-card h3 {
+  margin: 4px 0 0 !important;
+  color: #0f172a !important;
+  font-size: 15px !important;
+  font-weight: 700 !important;
+  line-height: 1.45 !important;
+}
+
+.tk-review__desc-text {
+  color: #475569;
+  font-size: 12px;
+  line-height: 1.6;
+}
+
+.tk-review__info-list {
+  display: grid !important;
+  grid-template-columns: repeat(3, minmax(0, 1fr)) !important;
+  gap: 12px !important;
+  padding-top: 14px !important;
+  border-top: 1px solid #f1f5f9 !important;
+}
+
+.tk-review__info-list dt {
+  color: #94a3b8 !important;
+  font-size: 11px !important;
+  font-weight: 600 !important;
+}
+
+.tk-review__info-list dd {
+  margin: 2px 0 0 !important;
+  color: #334155 !important;
+  font-size: 13px !important;
+  font-weight: 600 !important;
+}
+
+/* SKU 商业参数 Pills */
+.tk-review__sku-metrics {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+.tk-sku-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 14px;
+  background: #f8fafc;
+  border: 1px solid #e2e8f0;
+  border-radius: 9999px;
+  font-size: 13px;
+}
+
+.tk-sku-pill dt {
+  color: #64748b;
+  font-weight: 500;
+}
+
+.tk-sku-pill dd {
+  margin: 0;
+  color: #0f172a;
+  font-weight: 600;
+}
+
+.tk-sku-note {
+  margin-left: 4px;
+  color: #059669;
+  font-size: 11px;
+  font-weight: 500;
+}
+
+/* 下一步面板 */
+.tk-review__next-step {
+  background: #f8fafc !important;
+}
+
+.tk-review__next-step h2 {
+  margin: 4px 0 2px !important;
+  font-size: 16px !important;
+  font-weight: 700 !important;
+  color: #0f172a !important;
+}
+
+.tk-review__next-step span {
+  color: #64748b !important;
+  font-size: 12px !important;
+}
+
+.tk-review__next-step dl {
+  display: flex !important;
+  gap: 20px !important;
+  margin-top: 12px !important;
+  padding-top: 12px !important;
+  border-top: 1px solid #e2e8f0 !important;
+}
+
+.tk-review__next-step dt {
+  color: #94a3b8 !important;
+  font-size: 11px !important;
+}
+
+.tk-review__next-step dd {
+  margin: 2px 0 0 !important;
+  color: #334155 !important;
+  font-size: 13px !important;
+  font-weight: 600 !important;
+}
+
+/* 折叠技术抽屉 */
+.tk-review__raw-details,
+.tk-review__tech-details {
+  border: 1px solid rgba(0, 0, 0, 0.06) !important;
+  border-radius: 18px !important;
+  background: #ffffff !important;
+  overflow: hidden !important;
+}
+
+.tk-review__raw-details summary,
+.tk-review__tech-details summary {
+  padding: 14px 18px !important;
+  color: #475569 !important;
+  font-size: 13px !important;
+  font-weight: 600 !important;
+  cursor: pointer !important;
+  background: #f8fafc !important;
+}
+
+.tk-review__raw-details[open] .tk-review__raw-listings {
+  padding: 16px !important;
+  display: grid !important;
+  grid-template-columns: repeat(2, minmax(0, 1fr)) !important;
+  gap: 16px !important;
+}
+
+/* 检查结果与操作侧栏 */
+.tk-review__decision {
+  display: flex !important;
+  flex-direction: column !important;
+  gap: 20px !important;
+  position: sticky !important;
+  top: 24px !important;
+}
+
+.tk-review__check {
+  border-color: #bbf7d0 !important;
+  background: #f7fef9 !important;
+}
+
+.tk-review__check-title {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  color: #059669;
+}
+
+.tk-review__check-title h2 {
+  margin: 2px 0 0;
+  font-size: 16px;
+  font-weight: 700;
+  color: #0f172a;
+}
+
+.tk-check-pass-text {
+  margin: 8px 0 0;
+  color: #059669;
+  font-size: 12px;
+  font-weight: 500;
+}
+
+.tk-review__writeback-summary {
+  display: grid !important;
+  grid-template-columns: 76px 1fr !important;
+  gap: 14px !important;
+  padding: 14px !important;
+  border: 1px solid #e2e8f0 !important;
+  border-radius: 16px !important;
+  background: #f8fafc !important;
+  margin-top: 12px !important;
+}
+
+.tk-review__writeback-summary img {
+  width: 76px !important;
+  height: 76px !important;
+  border-radius: 12px !important;
+  object-fit: cover !important;
+}
+
+.tk-review__writeback-actions {
+  margin-top: 16px !important;
+  display: flex !important;
+  flex-direction: column !important;
+  gap: 8px !important;
+}
+
+.tk-review__actions .tk-review__primary-action {
+  width: 100% !important;
+  display: inline-flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+  gap: 8px !important;
+  min-height: 44px !important;
+  border-radius: 12px !important;
+  border: none !important;
+  background: #059669 !important;
+  color: #ffffff !important;
+  font-size: 14px !important;
+  font-weight: 600 !important;
+  cursor: pointer !important;
+  transition: all 0.2s ease !important;
+}
+
+.tk-review__actions .tk-review__primary-action:hover:not(:disabled) {
+  background: #047857 !important;
+}
+
+.tk-review__actions .tk-review__primary-action:disabled {
+  background: #e2e8f0 !important;
+  color: #94a3b8 !important;
+  cursor: not-allowed !important;
+}
+
+/* ==========================================================================
+   底部悬浮放行操作岛 (Floating Action Island)
+   ========================================================================== */
+
+.tk-floating-island {
+  position: fixed;
+  bottom: 24px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 999;
+  display: flex;
+  align-items: center;
+  gap: 20px;
+  padding: 8px 14px 8px 22px;
+  background: rgba(255, 255, 255, 0.94);
+  backdrop-filter: blur(20px);
+  -webkit-backdrop-filter: blur(20px);
+  border: 1px solid rgba(0, 0, 0, 0.08);
+  border-radius: 9999px;
+  box-shadow: 0 20px 40px -10px rgba(0, 0, 0, 0.12), 0 0 0 1px rgba(255, 255, 255, 0.6) inset;
+  animation: tk-float-in 0.35s cubic-bezier(0.32, 0.72, 0, 1);
+}
+
+@keyframes tk-float-in {
+  from {
+    opacity: 0;
+    transform: translate(-50%, 20px);
+  }
+  to {
+    opacity: 1;
+    transform: translate(-50%, 0);
+  }
+}
+
+.tk-floating-island__status {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 13px;
+  font-weight: 500;
+  color: #334155;
+  white-space: nowrap;
+}
+
+.tk-floating-island__dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: #10b981;
+  box-shadow: 0 0 0 3px rgba(16, 185, 129, 0.2);
+}
+
+.tk-floating-island__dot.is-succeeded {
+  background: #059669;
+}
+
+.tk-floating-island__actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.tk-floating-island__btn-confirm {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 22px;
+  background: #059669;
+  color: #ffffff;
+  font-size: 14px;
+  font-weight: 600;
+  border: none;
+  border-radius: 9999px;
+  cursor: pointer;
+  box-shadow: 0 4px 14px rgba(5, 150, 105, 0.3);
+  transition: all 0.2s cubic-bezier(0.32, 0.72, 0, 1);
+  white-space: nowrap;
+}
+
+.tk-floating-island__btn-confirm:hover:not(:disabled) {
+  background: #047857;
+  transform: translateY(-1px);
+  box-shadow: 0 6px 18px rgba(5, 150, 105, 0.4);
+}
+
+.tk-floating-island__btn-confirm:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+  background: #94a3b8;
+  box-shadow: none;
+}
+
+.tk-floating-island__btn-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 9px 18px;
+  background: #f1f5f9;
+  color: #0f172a;
+  font-size: 13px;
+  font-weight: 600;
+  border-radius: 9999px;
+  text-decoration: none;
+  transition: all 0.2s ease;
+  white-space: nowrap;
+}
+
+.tk-floating-island__btn-link:hover {
+  background: #e2e8f0;
+}
+
+/* 生图参数与顺序微调折叠抽屉 */
+.tk-image-tuning-drawer {
+  margin-top: 14px;
+  background: #ffffff;
+  border: 1px solid rgba(0, 0, 0, 0.06);
+  border-radius: 16px;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.02);
+  overflow: hidden;
+  transition: all 0.2s ease;
+}
+
+.tk-image-tuning-drawer:hover {
+  border-color: rgba(0, 0, 0, 0.1);
+}
+
+.tk-image-tuning-drawer__summary {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 13px 20px;
+  cursor: pointer;
+  user-select: none;
+  font-size: 13.5px;
+  font-weight: 550;
+  color: #334155;
+  background: #ffffff;
+  transition: background 0.15s ease;
+}
+
+.tk-image-tuning-drawer__summary::-webkit-details-marker {
+  display: none;
+}
+
+.tk-image-tuning-drawer__summary:hover {
+  background: #fafaf9;
+}
+
+.tk-image-tuning-drawer__summary-left {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.tk-image-tuning-drawer__summary-left svg {
+  color: #059669;
+}
+
+.tk-badge-ready-pill {
+  background: #ecfdf5;
+  color: #059669;
+  border: 1px solid #a7f3d0;
+  font-size: 11px;
+  font-weight: 600;
+  padding: 1px 8px;
+  border-radius: 9999px;
+}
+
+.tk-badge-warn-pill {
+  background: #fffbeb;
+  color: #d97706;
+  border: 1px solid #fde68a;
+  font-size: 11px;
+  font-weight: 600;
+  padding: 1px 8px;
+  border-radius: 9999px;
+}
+
+.tk-image-tuning-drawer__summary-right {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12.5px;
+  color: #64748b;
+}
+
+.tk-image-tuning-drawer__summary-right svg {
+  transition: transform 0.2s ease;
+}
+
+.tk-image-tuning-drawer[open] .tk-image-tuning-drawer__summary-right svg {
+  transform: rotate(180deg);
+}
+
+.tk-image-tuning-drawer__content {
+  padding: 20px;
+  border-top: 1px solid rgba(0, 0, 0, 0.05);
+  background: #fafaf9;
+}
+
+/* 抽屉内部 ImageGenerationPanel 极简现代化覆盖 */
+.tk-image-tuning-drawer__content .tk-igen-panel {
+  border: none;
+  background: transparent;
+  padding: 0;
+  box-shadow: none;
+}
+
+.tk-image-tuning-drawer__content .tk-igen-slots-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+  gap: 10px;
+}
+
+.tk-image-tuning-drawer__content .tk-igen-slot-card {
+  background: #ffffff;
+  border: 1px solid rgba(0, 0, 0, 0.06);
+  border-radius: 12px;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.02);
+  transition: all 0.15s ease;
+}
+
+.tk-image-tuning-drawer__content .tk-igen-slot-card:hover {
+  border-color: rgba(0, 0, 0, 0.12);
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.04);
+}
+
+.tk-image-tuning-drawer__content .tk-igen-slot-card[data-status="succeeded"] {
+  border-color: rgba(16, 185, 129, 0.2);
+  background: #ffffff;
+}
+
+.tk-image-tuning-drawer__content .tk-igen-final-order {
+  margin-top: 14px;
+  background: #ffffff;
+  border: 1px solid rgba(0, 0, 0, 0.06);
+  border-radius: 14px;
+  padding: 16px;
+}
+
+/* ==========================================================================
+   Taste Soft — 写入记录与算力流水中心 (Write Records & Generation Ledger)
+   ========================================================================== */
+
+.tk-write-records-page {
+  max-width: 1240px;
+  margin: 0 auto;
+  padding: 32px 24px;
+  min-height: 100dvh;
+  background: #fafaf9;
+}
+
+.tk-write-records-eyebrow {
+  display: inline-block;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  letter-spacing: 0.2em;
+  font-size: 10px;
+  text-transform: uppercase;
+  color: #71717a;
+  background: rgba(0, 0, 0, 0.05);
+  padding: 3px 10px;
+  border-radius: 9999px;
+  margin-bottom: 8px;
+  font-weight: 600;
+}
+
+.tk-write-records-title {
+  font-size: 28px;
+  font-weight: 800;
+  letter-spacing: -0.035em;
+  color: #18181b;
+  margin: 0 0 8px 0;
+  line-height: 1.1;
+}
+
+.tk-write-records-desc {
+  font-size: 13.5px;
+  color: #71717a;
+  max-width: 65ch;
+  line-height: 1.6;
+  margin: 0;
+}
+
+/* Bento Metrics Grid */
+.tk-write-records-bento {
+  display: grid;
+  grid-template-columns: repeat(5, 1fr);
+  gap: 14px;
+  margin: 24px 0;
+}
+
+@media (max-width: 960px) {
+  .tk-write-records-bento {
+    grid-template-columns: repeat(2, 1fr);
+  }
+}
+
+.tk-write-records-bento-card {
+  padding: 6px;
+  border-radius: 28px;
+  background: rgba(0, 0, 0, 0.04);
+  border: 1px solid rgba(0, 0, 0, 0.04);
+  box-shadow: 0 20px 40px -15px rgba(0, 0, 0, 0.03);
+  transition: box-shadow 0.25s cubic-bezier(0.32, 0.72, 0, 1), transform 0.25s cubic-bezier(0.32, 0.72, 0, 1);
+}
+
+.tk-write-records-bento-card:hover {
+  box-shadow: 0 20px 40px -10px rgba(0, 0, 0, 0.06);
+  transform: translateY(-1px);
+}
+
+.tk-write-records-bento-card__inner {
+  border-radius: calc(28px - 6px);
+  background: #ffffff;
+  padding: 16px 18px;
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  min-height: 108px;
+  border: 1px solid rgba(0, 0, 0, 0.02);
+}
+
+.tk-write-records-bento-card__label {
+  font-family: ui-monospace, monospace;
+  letter-spacing: 0.16em;
+  font-size: 11px;
+  text-transform: uppercase;
+  color: #71717a;
+  font-weight: 600;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.tk-write-records-bento-card__dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 9999px;
+  background: #d4d4d8;
+}
+
+.tk-write-records-bento-card__val {
+  font-size: 32px;
+  font-weight: 800;
+  letter-spacing: -0.03em;
+  color: #18181b;
+  line-height: 1.1;
+}
+
+.tk-write-records-bento-card__val.is-success {
+  color: #059669;
+}
+
+.tk-write-records-bento-card__val.is-error {
+  color: #e11d48;
+}
+
+.tk-write-records-bento-card__val.is-ai {
+  color: #4f46e5;
+}
+
+.tk-write-records-bento-card__unit {
+  font-size: 12px;
+  font-weight: 500;
+  color: #a1a1aa;
+  margin-left: 4px;
+}
+
+.tk-write-records-bento-card__hint {
+  font-size: 11px;
+  color: #a1a1aa;
+  margin: 4px 0 0 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* Main Card Wrapper */
+.tk-write-records-main-card {
+  padding: 6px;
+  border-radius: 32px;
+  background: rgba(0, 0, 0, 0.04);
+  border: 1px solid rgba(0, 0, 0, 0.04);
+  box-shadow: 0 20px 40px -15px rgba(0, 0, 0, 0.03);
+  margin: 24px 0;
+}
+
+.tk-write-records-main-card__inner {
+  border-radius: calc(32px - 6px);
+  background: #ffffff;
+  padding: 22px 24px;
+  border: 1px solid rgba(0, 0, 0, 0.02);
+}
+
+.tk-write-records-controls {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding-bottom: 18px;
+  border-bottom: 1px solid rgba(0, 0, 0, 0.05);
+  flex-wrap: wrap;
+}
+
+.tk-write-records-tabs {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px;
+  background: #f4f4f5;
+  border-radius: 9999px;
+}
+
+.tk-write-records-tab-btn {
+  padding: 6px 16px;
+  border-radius: 9999px;
+  font-size: 12px;
+  font-weight: 600;
+  color: #71717a;
+  border: none;
+  background: transparent;
+  cursor: pointer;
+  transition: all 0.2s cubic-bezier(0.32, 0.72, 0, 1);
+}
+
+.tk-write-records-tab-btn:hover {
+  color: #18181b;
+}
+
+.tk-write-records-tab-btn.is-active {
+  background: #ffffff;
+  color: #18181b;
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.05);
+}
+
+.tk-write-records-filter-group {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.tk-write-records-search-box {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+}
+
+.tk-write-records-search-input {
+  padding: 7px 14px 7px 32px;
+  border-radius: 9999px;
+  font-size: 12px;
+  background: #f4f4f5;
+  border: 1px solid transparent;
+  width: 220px;
+  color: #18181b;
+  outline: none;
+  transition: border-color 0.2s, background 0.2s;
+}
+
+.tk-write-records-search-input:focus {
+  background: #ffffff;
+  border-color: #18181b;
+}
+
+.tk-write-records-search-icon {
+  position: absolute;
+  left: 10px;
+  color: #a1a1aa;
+  font-size: 12px;
+  pointer-events: none;
+}
+
+.tk-write-records-select {
+  padding: 6px 14px;
+  border-radius: 9999px;
+  font-size: 12px;
+  background: #f4f4f5;
+  border: 1px solid transparent;
+  color: #3f3f46;
+  font-weight: 500;
+  cursor: pointer;
+  outline: none;
+}
+
+.tk-write-records-select:focus {
+  border-color: #18181b;
+}
+
+.tk-write-records-reset-btn {
+  padding: 6px 12px;
+  border-radius: 9999px;
+  font-size: 12px;
+  color: #71717a;
+  background: transparent;
+  border: none;
+  cursor: pointer;
+}
+
+.tk-write-records-reset-btn:hover {
+  color: #18181b;
+}
+
+/* Table Architecture */
+.tk-write-records-table-wrap {
+  overflow-x: auto;
+  margin-top: 12px;
+}
+
+.tk-write-records-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+}
+
+.tk-write-records-table th {
+  border-bottom: 1px solid rgba(0, 0, 0, 0.06);
+  text-align: left;
+  font-family: ui-monospace, monospace;
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+  color: #a1a1aa;
+  padding: 12px 12px;
+  font-weight: 500;
+}
+
+.tk-write-records-table td {
+  padding: 13px 12px;
+  border-bottom: 1px solid rgba(0, 0, 0, 0.04);
+  vertical-align: middle;
+}
+
+.tk-write-records-table th:last-child,
+.tk-write-records-table td:last-child {
+  padding-right: 16px;
+}
+
+.tk-write-records-table tr:hover td {
+  background: #fafaf9;
+}
+
+/* Product Media Layout */
+.tk-write-records-product-cell {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  max-width: 320px;
+}
+
+.tk-write-records-thumb {
+  width: 48px;
+  height: 48px;
+  min-width: 48px;
+  max-width: 48px;
+  border-radius: 12px;
+  object-fit: cover;
+  background: #f4f4f5;
+  border: 1px solid rgba(0, 0, 0, 0.06);
+  flex-shrink: 0;
+}
+
+.tk-write-records-thumb-placeholder {
+  width: 48px;
+  height: 48px;
+  min-width: 48px;
+  border-radius: 12px;
+  background: #f4f4f5;
+  border: 1px solid rgba(0, 0, 0, 0.06);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-family: ui-monospace, monospace;
+  font-size: 10px;
+  color: #a1a1aa;
+  flex-shrink: 0;
+}
+
+.tk-write-records-product-title {
+  font-size: 13px;
+  font-weight: 600;
+  color: #18181b;
+  line-height: 1.35;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.tk-write-records-meta-line {
+  font-family: ui-monospace, monospace;
+  font-size: 11px;
+  color: #a1a1aa;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 3px;
+}
+
+.tk-write-records-platform-badge {
+  background: #f4f4f5;
+  color: #52525b;
+  padding: 1px 6px;
+  border-radius: 4px;
+  font-weight: 600;
+  font-size: 10.5px;
+}
+
+.tk-write-records-source-link {
+  color: #71717a;
+  text-decoration: none;
+  max-width: 120px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.tk-write-records-source-link:hover {
+  color: #18181b;
+  text-decoration: underline;
+}
+
+/* Status Pills */
+.tk-write-records-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 10px;
+  border-radius: 9999px;
+  font-size: 11.5px;
+  font-weight: 600;
+  line-height: 1;
+  white-space: nowrap;
+}
+
+.tk-write-records-pill.is-success {
+  background: #ecfdf5;
+  color: #047857;
+  border: 1px solid rgba(5, 150, 105, 0.12);
+}
+
+.tk-write-records-pill.is-syncing {
+  background: #eff6ff;
+  color: #1d4ed8;
+  border: 1px solid rgba(37, 99, 235, 0.12);
+}
+
+.tk-write-records-pill.is-failed {
+  background: #fff1f2;
+  color: #be123c;
+  border: 1px solid rgba(225, 29, 72, 0.12);
+}
+
+.tk-write-records-pill.is-queued {
+  background: #fffbeb;
+  color: #b45309;
+  border: 1px solid rgba(217, 119, 6, 0.12);
+}
+
+.tk-write-records-pill-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 9999px;
+  background: currentColor;
+}
+
+.tk-write-records-pill.is-syncing .tk-write-records-pill-dot {
+  animation: tk-pulse 1.4s infinite;
+}
+
+@keyframes tk-pulse {
+  0%, 100% { opacity: 1; transform: scale(1); }
+  50% { opacity: 0.4; transform: scale(0.85); }
+}
+
+/* Detail ID Link */
+.tk-write-records-detail-link {
+  color: #18181b;
+  font-weight: 600;
+  text-decoration: underline;
+  text-underline-offset: 4px;
+  text-decoration-color: #d4d4d8;
+  transition: color 0.15s, text-decoration-color 0.15s;
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+}
+
+.tk-write-records-detail-link:hover {
+  color: #2563eb;
+  text-decoration-color: #2563eb;
+}
+
+/* Button-in-Button CTA */
+.tk-btn-retry {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 10px 6px 14px;
+  border-radius: 9999px;
+  font-size: 12px;
+  font-weight: 600;
+  background: #18181b;
+  color: #ffffff;
+  border: none;
+  cursor: pointer;
+  transition: all 0.2s cubic-bezier(0.32, 0.72, 0, 1);
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.05);
+}
+
+.tk-btn-retry:hover:not(:disabled) {
+  background: #27272a;
+}
+
+.tk-btn-retry:active:not(:disabled) {
+  transform: scale(0.97);
+}
+
+.tk-btn-retry:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.tk-btn-retry__icon {
+  width: 20px;
+  height: 20px;
+  border-radius: 9999px;
+  background: rgba(255, 255, 255, 0.15);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: transform 0.2s cubic-bezier(0.32, 0.72, 0, 1);
+}
+
+.tk-btn-retry:hover:not(:disabled) .tk-btn-retry__icon {
+  transform: translateX(1px);
+}
+
+.tk-write-records-footer {
+  margin-top: 20px;
+  padding-top: 14px;
+  border-top: 1px solid rgba(0, 0, 0, 0.05);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  font-family: ui-monospace, monospace;
+  font-size: 11.5px;
+  color: #a1a1aa;
+}
+
+
+

@@ -61,16 +61,16 @@ export function WriteRecordsWorkspace({
   const hasActiveFilters = searchQuery.trim().length > 0 || statusFilter !== "all";
 
   return (
-    <div className="max-w-[1240px] mx-auto py-8 px-4 sm:px-6">
+    <div className="tk-write-records-page">
       {/* 1. Header with Taste Soft Eyebrow Tag */}
-      <header className="mb-6">
-        <span className="font-mono tracking-[0.2em] text-[10px] uppercase text-zinc-500 bg-zinc-200/60 rounded-full px-2.5 py-0.5 inline-block mb-3">
+      <header style={{ marginBottom: "20px" }}>
+        <span className="tk-write-records-eyebrow">
           MIAOSHOU ERP · SYNC & GENERATION LEDGER
         </span>
-        <h1 className="text-3xl sm:text-4xl font-extrabold tracking-tight text-zinc-900">
+        <h1 className="tk-write-records-title">
           写入记录与算力流水
         </h1>
-        <p className="mt-2 text-sm text-zinc-500 max-w-[65ch] leading-relaxed">
+        <p className="tk-write-records-desc">
           这里展示确认后写回妙手 canonical 公共采集箱商品的记录，不展示 TikTok 发布入口。支持查看 AI 电商营销生图算力流水与出图审计。
         </p>
       </header>
@@ -79,47 +79,39 @@ export function WriteRecordsWorkspace({
       <WriteRecordsBento metrics={metrics} />
 
       {/* 3. Main Double-Bezel Card */}
-      <div className="p-1.5 rounded-[2rem] bg-zinc-200/40 border border-black/5 shadow-[0_20px_40px_-15px_rgba(0,0,0,0.03)] my-6">
-        <div className="rounded-[calc(2rem-0.375rem)] bg-white p-5 sm:p-6">
+      <div className="tk-write-records-main-card">
+        <div className="tk-write-records-main-card__inner">
           {/* Controls Bar: Tabs & Search / Filter */}
-          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pb-5 border-b border-black/5">
+          <div className="tk-write-records-controls">
             {/* Tabs */}
-            <div className="flex items-center gap-1.5 p-1 bg-zinc-100 rounded-full w-fit">
+            <div className="tk-write-records-tabs">
               <button
                 type="button"
                 onClick={() => setActiveTab("sync")}
-                className={`px-4 py-1.5 rounded-full text-xs font-semibold transition-all duration-200 ${
-                  activeTab === "sync"
-                    ? "bg-white text-zinc-900 shadow-sm"
-                    : "text-zinc-500 hover:text-zinc-900"
-                }`}
+                className={`tk-write-records-tab-btn ${activeTab === "sync" ? "is-active" : ""}`}
               >
                 写入记录 ({data.items.length})
               </button>
               <button
                 type="button"
                 onClick={() => setActiveTab("generation")}
-                className={`px-4 py-1.5 rounded-full text-xs font-semibold transition-all duration-200 ${
-                  activeTab === "generation"
-                    ? "bg-white text-zinc-900 shadow-sm"
-                    : "text-zinc-500 hover:text-zinc-900"
-                }`}
+                className={`tk-write-records-tab-btn ${activeTab === "generation" ? "is-active" : ""}`}
               >
                 生成记录 ({data.generationRecords?.length ?? 0})
               </button>
             </div>
 
             {/* Filter Tools */}
-            <div className="flex items-center gap-2.5 flex-wrap">
-              <div className="relative">
+            <div className="tk-write-records-filter-group">
+              <div className="tk-write-records-search-box">
                 <input
                   type="text"
                   value={searchQuery}
                   onChange={(e) => setSearchQuery(e.target.value)}
                   placeholder="搜索商品名称 / ID..."
-                  className="pl-8 pr-3 py-1.5 text-xs rounded-full bg-zinc-100 border-none focus:ring-2 focus:ring-zinc-900 text-zinc-800 placeholder-zinc-400 w-[180px] sm:w-[220px]"
+                  className="tk-write-records-search-input"
                 />
-                <span className="absolute left-2.5 top-2 text-zinc-400 text-xs pointer-events-none" aria-hidden="true">
+                <span className="tk-write-records-search-icon" aria-hidden="true">
                   🔍
                 </span>
               </div>
@@ -128,7 +120,7 @@ export function WriteRecordsWorkspace({
                 <select
                   value={statusFilter}
                   onChange={(e) => setStatusFilter(e.target.value)}
-                  className="text-xs rounded-full bg-zinc-100 border-none px-3 py-1.5 text-zinc-700 font-medium focus:ring-2 focus:ring-zinc-900 cursor-pointer"
+                  className="tk-write-records-select"
                 >
                   <option value="all">全部状态</option>
                   <option value="succeeded">已写入 (succeeded)</option>
@@ -145,7 +137,7 @@ export function WriteRecordsWorkspace({
                     setSearchQuery("");
                     setStatusFilter("all");
                   }}
-                  className="text-xs text-zinc-400 hover:text-zinc-700 px-2 py-1 transition-colors"
+                  className="tk-write-records-reset-btn"
                 >
                   重置
                 </button>
@@ -154,7 +146,7 @@ export function WriteRecordsWorkspace({
           </div>
 
           {/* Active Table */}
-          <div className="mt-4">
+          <div style={{ marginTop: "14px" }}>
             {activeTab === "sync" ? (
               <SyncRecordsTable items={filteredSyncItems} />
             ) : (
@@ -163,12 +155,12 @@ export function WriteRecordsWorkspace({
           </div>
 
           {/* Footer Metadata */}
-          <div className="mt-6 pt-4 border-t border-black/5 flex flex-col sm:flex-row items-center justify-between text-xs text-zinc-400 font-mono gap-2">
+          <div className="tk-write-records-footer">
             <div>
               <span>显示 {activeTab === "sync" ? filteredSyncItems.length : filteredGenItems.length} 条记录</span>
-              {hasActiveFilters && <span className="ml-1 text-zinc-500">(已应用筛选)</span>}
+              {hasActiveFilters && <span style={{ marginLeft: "4px", color: "#71717a" }}>(已应用筛选)</span>}
             </div>
-            <div className="flex items-center gap-3">
+            <div style={{ display: "flex", alignItems: "center", gap: "10px" }}>
               <span>通道: 妙手 OpenAPI (Canonical)</span>
               <span>·</span>
               <span>状态: 正常运行</span>
