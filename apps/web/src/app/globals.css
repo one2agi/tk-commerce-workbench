@@ -168,6 +168,14 @@ button:disabled {
   font-weight: 650;
 }
 
+.tk-sidebar a.is-pending,
+.tk-sidebar__link.is-pending {
+  color: #2563eb;
+  background: #eff6ff;
+  opacity: 0.85;
+  position: relative;
+}
+
 .tk-sidebar__icon {
   display: flex;
   align-items: center;

@@ -10,4 +10,10 @@ describe("Sidebar", () => {
     expect(html).toContain('href="/templates"');
     expect(html).toContain("生图模板");
   });
+
+  it("supports rendering with explicit prefetch enabled", () => {
+    const html = renderToStaticMarkup(<Sidebar />);
+    expect(html).toContain('data-tk-nav="true"');
+  });
 });
+

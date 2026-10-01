@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import type { ReactElement } from "react";
+import { type ReactElement, useEffect, useState } from "react";
 
 type SidebarItem = Readonly<{
   href: string;
@@ -84,6 +84,11 @@ const ITEMS: ReadonlyArray<SidebarItem> = [
 
 export function Sidebar(): ReactElement {
   const pathname = usePathname();
+  const [pendingHref, setPendingHref] = useState<string | null>(null);
+
+  useEffect(() => {
+    setPendingHref(null);
+  }, [pathname]);
 
   return (
     <nav aria-label="主导航" className="tk-sidebar">
@@ -106,13 +111,19 @@ export function Sidebar(): ReactElement {
           const active = item.href === "/"
             ? pathname === "/" || pathname?.startsWith("/products")
             : pathname?.startsWith(item.href);
+          const isPending = pendingHref === item.href;
           return (
             <li key={item.href}>
               <Link
                 href={item.href}
+                prefetch={true}
+                data-tk-nav="true"
                 aria-label={item.ariaLabel}
-                className={`tk-sidebar__link${active ? " is-active" : ""}`}
+                className={`tk-sidebar__link${active ? " is-active" : ""}${isPending ? " is-pending" : ""}`}
                 aria-current={active ? "page" : undefined}
+                onClick={() => {
+                  setPendingHref(item.href);
+                }}
               >
                 <span className="tk-sidebar__icon" aria-hidden="true">
                   {item.icon(Boolean(active))}
