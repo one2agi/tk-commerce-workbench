@@ -110,6 +110,7 @@ export function SyncRecordsTable({
                 key={item.syncId}
                 data-sync-id={item.syncId}
                 data-approval-snapshot-id={item.approvalSnapshotId}
+                data-state={item.state}
               >
                 {/* 1. 商品信息 */}
                 <td>
@@ -153,9 +154,6 @@ export function SyncRecordsTable({
                           </a>
                         )}
                       </div>
-                      {/* Hidden text for backwards-compatible test assertions */}
-                      <span className="sr-only" aria-hidden="true">{item.syncId}</span>
-                      <span className="sr-only" aria-hidden="true">{item.approvalSnapshotId}</span>
                     </div>
                   </div>
                 </td>
@@ -196,8 +194,6 @@ export function SyncRecordsTable({
                       {formatStateText(item.state)}
                     </span>
                   )}
-                  {/* Hidden text for backwards-compatible test assertions */}
-                  <span className="sr-only" aria-hidden="true">{item.state}</span>
                   {item.error?.safeMessage && (
                     <div style={{ fontSize: "11px", color: "#e11d48", marginTop: "4px", maxWidth: "200px", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }} title={item.error.safeMessage}>
                       {item.error.safeMessage}

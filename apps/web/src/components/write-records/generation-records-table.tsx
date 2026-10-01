@@ -41,7 +41,7 @@ export function GenerationRecordsTable({
         </thead>
         <tbody>
           {items.map((item) => (
-            <tr key={item.batchId}>
+            <tr key={item.batchId} data-batch-id={item.batchId}>
               {/* 1. 批次 / 商品 */}
               <td>
                 <div className="tk-write-records-product-title">
@@ -50,7 +50,6 @@ export function GenerationRecordsTable({
                 <div className="tk-write-records-meta-line">
                   <span className="tk-write-records-platform-badge">AI 洗图</span>
                   <span style={{ color: "#71717a" }}>{item.categoryKey}</span>
-                  <span className="sr-only" aria-hidden="true">{item.batchId}</span>
                 </div>
               </td>
 
